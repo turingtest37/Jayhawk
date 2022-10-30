@@ -1,0 +1,13 @@
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix dc: <http://purl.org/dc/elements/1.1/> .
+@prefix ex: <http://example.org/stuff/1.0/> .
+
+<http://www.w3.org/TR/rdf-syntax-grammar>
+dc:title "RDF/XML Syntax Specification (Revised)" ;
+ex:editor _:b1 ;
+ex:revised "2014-02-25"^^xsd:date .
+
+_:b1
+ex:fullname "Dave Beckett" ;
+ex:homePage <http://purl.org/net/dajobe/> ;
+ex:birthyear 1964 .
