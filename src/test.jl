@@ -163,7 +163,10 @@ end
 
 function make_any(t::Triple)
     s, p, o = t.subject, t.predicate, t.object
+    typnm = Symbol(makeqname(o))
     fnm = Symbol(makeqname(p))
+    # Do nothing if the function has already been defined.
+    isempty(methodswith(Type{eval(typnm)}, eval(fnm))) || return
     @eval $fnm($s, $o)
 end
 
