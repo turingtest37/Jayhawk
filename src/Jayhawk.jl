@@ -251,7 +251,7 @@ end
 # These are not Types yet.
 function build_subclasses()
     fnm = tempna me()
-    write(fnm, runsparql(query))
+    write(fnm, runsparql(loadsubclasses))
     stmts, pfxs, buri = read_rdf_file(fnm)
     # stmts, pfxs, buri = qsparql(loadsubclasses)
     @show stmts pfxs buri
