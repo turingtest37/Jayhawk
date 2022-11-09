@@ -8,6 +8,8 @@ using Serd
 using Serd.RDF
 using .RDFSupport
 
+using InteractiveUtils: methodswith
+
 # Jayhawk provides the framework for building applications that are graph-based and data-centric.
 
 # Model-driven applet framework
@@ -250,10 +252,7 @@ end
 # Select RDF and create a vector of objects of rdfs:subClassOf statements
 # These are not Types yet.
 function build_subclasses()
-    fnm = tempname()
-    write(fnm, runsparql(loadsubclasses))
-    stmts = read_rdf_file(fnm)
-    # stmts, pfxs, buri = qsparql(loadsubclasses)
+    stmts = qsparql(loadsubclasses)
     @show stmts
     make_subclass.(stmts)
 end
@@ -261,27 +260,27 @@ end
 # Select RDF and create a Julia Type for owl:Class
 # Previously stored subclasses are added to the Type constructor
 function build_classes()
-    stmts, pfxs, buri = qsparql(loadclasses)
-    @show stmts pfxs buri
+    stmts = qsparql(loadclasses)
+    @show stmts
     make_type.(stmts)        
 end
 
 # Select RDF and create functions for each owl:ObjectProperty
 function build_obj_props()
-    stmts, pfxs, buri = qsparql(loadobjprops)
-    @show stmts pfxs buri
+    stmts = qsparql(loadobjprops)
+    @show stmts
     make_any.(stmts)            
 end
 
 # Select RDF and create functions for each owl:DatatypeProperty
 function build_data_props()
-    stmts, pfxs, buri = qsparql(loaddataprops)
+    stmts = qsparql(loaddataprops)
     make_any.(stmts)            
 end
 
 # Select RDF and create instances from the ontology
 function build_model_instances()
-    stmts, pfxs, buri = qsparql(load_model_instances)
+    stmts = qsparql(load_model_instances)
     make_any.(stmts)            
 end
 
@@ -301,6 +300,6 @@ end
 
 export build_subclasses, build_classes, build_data_props, 
 build_obj_props, build_model_instances, process_rdf_data, 
-qsparql, usparql
+qsparql, usparql, resource_dict
 
 end # module Jayhawk
