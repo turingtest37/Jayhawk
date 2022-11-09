@@ -91,6 +91,10 @@ function qsparql(query::String)
     read_rdf_file(fnm)
 end
 
+function usparql(upd::String; dict=Dict())
+    runsparql(upd, true, dict)
+end
+
 # For now, assume no blank nodes will show up from our queries...
 #
 # struct BlankNode
@@ -289,6 +293,8 @@ function process_rdf_data(t::Triple)
     @eval $propnm($s, $o)
 end
 
-export build_subclasses, build_classes, build_data_props, build_obj_props, build_model_instances, process_rdf_data
+export build_subclasses, build_classes, build_data_props, 
+build_obj_props, build_model_instances, process_rdf_data, 
+qsparql, usparql
 
 end # module Jayhawk
