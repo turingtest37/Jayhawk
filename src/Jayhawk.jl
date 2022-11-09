@@ -250,7 +250,7 @@ end
 # Select RDF and create a vector of objects of rdfs:subClassOf statements
 # These are not Types yet.
 function build_subclasses()
-    fnm = tempna me()
+    fnm = tempname()
     write(fnm, runsparql(loadsubclasses))
     stmts, pfxs, buri = read_rdf_file(fnm)
     # stmts, pfxs, buri = qsparql(loadsubclasses)
