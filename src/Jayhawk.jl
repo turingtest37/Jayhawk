@@ -86,7 +86,7 @@ end
 Unknown(uri::String) = Unknown(uri,Dict(),Dict(),ResourceURI[])
 
 function qsparql(query::String)
-    fnm = tempname()
+    fnm = tempna me()
     write(fnm, runsparql(query))
     read_rdf_file(fnm)
 end
@@ -250,7 +250,10 @@ end
 # Select RDF and create a vector of objects of rdfs:subClassOf statements
 # These are not Types yet.
 function build_subclasses()
-    stmts, pfxs, buri = qsparql(loadsubclasses)
+    fnm = tempna me()
+    write(fnm, runsparql(query))
+    stmts, pfxs, buri = read_rdf_file(fnm)
+    # stmts, pfxs, buri = qsparql(loadsubclasses)
     @show stmts pfxs buri
     make_subclass.(stmts)
 end
