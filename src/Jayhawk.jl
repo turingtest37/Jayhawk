@@ -251,6 +251,7 @@ end
 # These are not Types yet.
 function build_subclasses()
     stmts, pfxs, buri = qsparql(loadsubclasses)
+    @show stmts pfxs buri
     make_subclass.(stmts)
 end
 
@@ -258,12 +259,14 @@ end
 # Previously stored subclasses are added to the Type constructor
 function build_classes()
     stmts, pfxs, buri = qsparql(loadclasses)
+    @show stmts pfxs buri
     make_type.(stmts)        
 end
 
 # Select RDF and create functions for each owl:ObjectProperty
 function build_obj_props()
     stmts, pfxs, buri = qsparql(loadobjprops)
+    @show stmts pfxs buri
     make_any.(stmts)            
 end
 
