@@ -86,7 +86,7 @@ end
 Unknown(uri::String) = Unknown(uri,Dict(),Dict(),ResourceURI[])
 
 function qsparql(query::String)
-    fnm = tempna me()
+    fnm = tempname()
     write(fnm, runsparql(query))
     read_rdf_file(fnm)
 end
