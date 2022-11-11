@@ -4,8 +4,9 @@ include("sparqlclient.jl")
 include("rdf.jl")
 include("sparql.jl")
 
+using Reexport
 using Serd
-using Serd.RDF
+@reexport using Serd.RDF
 using .RDFSupport
 using Logging
 using InteractiveUtils: methodswith
@@ -236,6 +237,15 @@ function rdfs_subClassOf(s::ResourceURI, o::ResourceURI)
     o_type = get(resource_dict, o, Unknown(o))
     rdfs_subClassOf(s_type, o_type)
 end
+
+function owl_sameAs(s::ResourceURI, o::ResourceURI)
+    s_type = get(resource_dict, s, Unknown(s))
+    o_type = get(resource_dict, o, Unknown(o))
+
+    
+end
+
+
 
 function make_type_or_instance(t::Triple)
     s, p, o = t.subject, t.predicate, t.object
