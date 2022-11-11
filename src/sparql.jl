@@ -15,7 +15,8 @@ CONSTRUCT
 WHERE
 {
     GRAPH <urn:ontology> { 
-        ?s a owl:Class . 
+        ?s a owl:Class .
+        FILTER(!ISBLANK(?s))
     }
 }
 """

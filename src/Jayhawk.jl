@@ -7,7 +7,7 @@ include("sparql.jl")
 using Serd
 using Serd.RDF
 using .RDFSupport
-
+using Logging
 using InteractiveUtils: methodswith
 
 # Jayhawk provides the framework for building applications that are graph-based and data-centric.
@@ -75,7 +75,8 @@ resource_dict = Dict{Union{ResourceURI,Blank},Any}()
 # 1. Fetch subclasses, put each in a dictionary
 # 2. Fetch classes. For each subject class, look up its URI in the subclass table
 # 3. Build the type using eval, adding in the vector of subclasses for each subject
-subclasses = Dict{ResourceURI,Vector{ResourceURI}}()
+# subclasses = Dict{ResourceURI,Vector{ResourceURI}}()
+superclasses = Dict{ResourceURI,Vector{ResourceURI}}()
 
 # The Unknown Type is used when a statement is encountered for which
 # we do not have the type of the object.
@@ -86,6 +87,7 @@ struct Unknown <: Node
     super::Vector{ResourceURI}
 end
 Unknown(uri::String) = Unknown(uri,Dict(),Dict(),ResourceURI[])
+Unknown(u::ResourceURI) = Unknown(u.uri)
 
 function qsparql(query::String)
     fnm = tempname()
@@ -110,26 +112,39 @@ end
 # e.g. 'http://www.w3.org/2002/07/owl#Class' becomes 'owl_Class'.
 function makeqname(s::ResourceURI)
     namesp = ns(s.uri)
+    if !haskey(pfx_dict, namesp)
+        pfx = randstring('a':'z', 5) * ':'
+        pfx_dict[namesp] = pfx
+        rpfx_dict[pfx] = namesp
+        @warn "Creating prefix '$pfx' for unknown namespace '$namesp'"
+    end
     pfx = replace(pfx_dict[namesp],':'=>'_')
     lnm = localname(s.uri)
     pfx*lnm
 end
 
 # Create a Julia type from an owl:Class
-function rdf_type(s::ResourceURI, ::Type{owl_Class}, sc = ResourceURI[])
+function rdf_type(s::ResourceURI, ::Type{owl_Class})
     nm = Symbol(makeqname(s))
-    @debug "rdf_type $s owl_Class $sc"
+    @debug "rdf_type($s owl_Class)"
     eval(
         quote
             struct $nm
-            uri::String
-            in::Dict{ResourceURI, Union{ResourceURI,Blank}}
-            out::Dict{ResourceURI, Node}
-            super::Vector{ResourceURI}
+                uri::String
+                in::Dict{ResourceURI, Union{ResourceURI,Blank}}
+                out::Dict{ResourceURI, Node}
+                super::Vector{ResourceURI}
             end
-            # constructor
-            $nm(uri::String) = $nm(uri,Dict(),Dict(),$sc)
-            # convert an Unknown into the new type
+
+            function $nm(uri::String, in::Dict, out::Dict)
+                supclasses = get(resource_dict, ResourceURI(uri), ResourceURI[])
+                $nm(uri,in,out,supclasses)
+            end
+
+            # convenience constructors
+            $nm(uri::String) = $nm(uri,Dict(),Dict())
+            $nm(u::ResourceURI) = $nm(u.uri)            
+            # constructor to convert an Unknown into the new type
             $nm(u::Unknown) = $nm(u.uri, u.in, u.out, u.super)
         
             # store newly created class in dict
@@ -139,7 +154,7 @@ function rdf_type(s::ResourceURI, ::Type{owl_Class}, sc = ResourceURI[])
             # If the subject was previously seen and stored as an Unknown,
             # convert into the new type.
             function rdf_type(r::ResourceURI, ::Type{$nm})
-                @debug "rdf_type $r $nm"
+                # @debug "rdf_type($r Type{$nm})"
                 # if we have already seen this URI, fetch it from the dictionary. It might be an Unknown
                 _u = get(resource_dict, r, Unknown(r.uri))
                 if typeof(_u) == Unknown
@@ -159,12 +174,11 @@ end
 
 # Transform a ObjectProperty into a Julia function
 function rdf_type(s::ResourceURI, ::Type{owl_ObjectProperty})
-    @debug "rdf_type $s owl_ObjectProperty"
+    @debug "rdf_type($s Type{owl_ObjectProperty})"
     nm = Symbol(makeqname(s))
-    eval(
+        eval(
         quote
             function $nm(subj::Union{ResourceURI,Blank}, obj::Union{ResourceURI,Blank})
-                @debug "$nm($subj, $obj)"
                 #fetch instantiated type from resource dictionary, else Unknown
                 # @TODO the next lines will break on a blank node
                 s_obj = get(resource_dict, subj, Unknown(subj.uri))
@@ -178,17 +192,17 @@ function rdf_type(s::ResourceURI, ::Type{owl_ObjectProperty})
                 resource_dict[obj] = o_obj
             end
         end
-    ) 
+        )
 end
 
 # Transform a DatatypeProperty into a Julia function
 function rdf_type(s::ResourceURI, ::Type{owl_DatatypeProperty})
+    @debug "rdf_type($s, Type{owl_DatatypeProperty})"
     nm = Symbol(makeqname(s))
-    @show s nm
     eval(
         quote
             function $nm(subj::Union{ResourceURI,Blank}, obj::Literal)
-                @show subj obj    
+                @debug $nm subj obj
                 s_obj = get(resource_dict, subj, Unknown(subj.uri))
                 s_obj.out[$s] = obj
                 resource_dict[subj] = s_obj
@@ -198,47 +212,49 @@ function rdf_type(s::ResourceURI, ::Type{owl_DatatypeProperty})
 end
 
 function rdf_type(s::ResourceURI, o::ResourceURI)
-    @show "rdf_type $s $o"
+    @debug "rdf_type($s, $o)"
     onm = Symbol(makeqname(o))
     oclass = @eval $onm
+    @debug "Calling rdf_type($s, $oclass) ..."
     rdf_type(s, oclass)
 end
 
 rdf_type(s::ResourceURI, ::Type{Blank}) = @debug "rdf_type $s ::Blank"
 rdf_type(b::Blank, ::Type{owl_Class}) = @debug "rdf_type ::Blank ::owl_Class"
-rdf_type(b::Blank, ::Type{owl_Class}, ::Vector{ResourceURI}) = @debug "rdf_type ::Blank ::owl_Class []"
+rdf_type(b::Blank, o::ResourceURI) = @debug "rdf_type $b $o"
 
+
+# Unused for now...
 function rdfs_subClassOf(s::ResourceURI, o::ResourceURI)
-    s_type = resource_dict[s]
-    o_type = resource_dict[o]
+    @debug "rdfs_subClassOf($s, $o)"
+    s_type = get(resource_dict, s, Unknown(s))
+    o_type = get(resource_dict, o, Unknown(o))
     rdfs_subClassOf(s_type, o_type)
 end
 
-function make_type(t::Triple)
+function make_type_or_instance(t::Triple)
     s, p, o = t.subject, t.predicate, t.object
     (p == ResourceURI(rpfx_dict["rdf:"]*"type")) || error("Expected rdf:type for predicate.")
-    cnm = Symbol(makeqname(o))
-    objclass = @eval $cnm
-    # fetch any previously created subclasses to add to the new type
-    sc = get(subclasses, s, ResourceURI[])
-    rdf_type(s, objclass, sc)
+    rdf_type(s,o)
 end
 
-function make_any(t::Triple)
+function make_obj_dt_prop(t::Triple)
     s, p, o = t.subject, t.predicate, t.object
-    typnm = Symbol(makeqname(o))
-    fnm = Symbol(makeqname(p))
-    # Do nothing if the function has already been defined.
-    isempty(methodswith(Type{eval(typnm)}, eval(fnm))) || return
-    @eval $fnm($s, $o)
+    typenm = Symbol(makeqname(o))
+    try
+        rdf_type(s, eval(typenm))
+    catch e
+        @warn "Failed to call rdf_type($s, eval($typenm)" e
+    end
 end
 
+# @todo make this call rdfs_subClassOf
 function make_subclass(t::Triple)
     s, p, o = t.subject, t.predicate, t.object
     (p == ResourceURI(rpfx_dict["rdfs:"]*"subClassOf")) || error("Expected rdfs:subClassOf for predicate.")
-    sc = get(subclasses, s, ResourceURI[])
-    push!(sc, o)
-    subclasses[s] = sc
+    supc = get(superclasses, s, ResourceURI[])
+    push!(supc, o)
+    superclasses[s] = supc
 end
 
 # 
@@ -253,7 +269,6 @@ end
 # These are not Types yet.
 function build_subclasses()
     stmts = qsparql(loadsubclasses)
-    @show stmts
     make_subclass.(stmts)
 end
 
@@ -261,27 +276,27 @@ end
 # Previously stored subclasses are added to the Type constructor
 function build_classes()
     stmts = qsparql(loadclasses)
-    @show stmts
-    make_type.(stmts)        
+    make_type_or_instance.(stmts)        
 end
 
 # Select RDF and create functions for each owl:ObjectProperty
 function build_obj_props()
     stmts = qsparql(loadobjprops)
-    @show stmts
-    make_any.(stmts)            
+    @debug "build_obj_props" stmts
+    make_obj_dt_prop.(stmts)            
 end
 
 # Select RDF and create functions for each owl:DatatypeProperty
 function build_data_props()
     stmts = qsparql(loaddataprops)
-    make_any.(stmts)            
+    @debug "build_data_props" stmts
+    make_obj_dt_prop.(stmts)            
 end
 
 # Select RDF and create instances from the ontology
 function build_model_instances()
     stmts = qsparql(load_model_instances)
-    make_any.(stmts)            
+    process_rdf_data.(stmts)            
 end
 
 # Don't think I need this just yet
@@ -295,6 +310,7 @@ end
 function process_rdf_data(t::Triple)
     s, p, o = t.subject, t.predicate, t.object
     propnm = Symbol(makeqname(p))
+    @debug "Calling $propnm($s, $o)..."
     @eval $propnm($s, $o)
 end
 
