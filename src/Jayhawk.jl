@@ -57,6 +57,7 @@ using InteractiveUtils: methodswith
 
 
 struct owl_Class end
+struct owl_Thing end
 struct owl_ObjectProperty end
 struct owl_DatatypeProperty end
 
