@@ -158,17 +158,14 @@ function rdf_type(s::ResourceURI, ::Type{owl_Class})
             function rdf_type(r::ResourceURI, ::Type{$nm})
                 # @debug "rdf_type($r Type{$nm})"
                 # if we have already seen this URI, fetch it from the dictionary. It might be an Unknown
-                _u = get(resource_dict, r, Unknown(r.uri))
-                if typeof(_u) == Unknown
+                _instance = get!(resource_dict, r) do
                     # make a new instance and copy the Unknown stuff into it
                     # This also covers the case of a completely new, never seen before instance
-                    _instance = $nm(_u)
-                    resource_dict[r] = _instance
-                else
-                    # take the instance that was already created
-                    _instance = _u
+                    $nm(r)
                 end
-                _instance
+                if typeof(_instance) == Jayhawk.Unknown
+                    resource_dict[r] = $nm(_instance)
+                end
             end
         end
     ) 
