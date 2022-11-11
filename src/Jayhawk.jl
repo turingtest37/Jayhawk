@@ -220,6 +220,10 @@ function rdf_type(s::ResourceURI, o::ResourceURI)
     rdf_type(s, oclass)
 end
 
+function rdf_type(s::ResourceURI, ::Type{owl_Thing})
+    @debug "rdf_type $s ::owl_Thing"
+end
+
 rdf_type(s::ResourceURI, ::Type{Blank}) = @debug "rdf_type $s ::Blank"
 rdf_type(b::Blank, ::Type{owl_Class}) = @debug "rdf_type ::Blank ::owl_Class"
 rdf_type(b::Blank, o::ResourceURI) = @debug "rdf_type $b $o"
