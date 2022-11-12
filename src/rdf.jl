@@ -16,9 +16,15 @@ hash(u::URI) = hash(u.uri)
 MaybeURI = Union{URI,Nothing}
 MaybeString = Union{String,Nothing}
 
-localname(uri::URI) = isempty(uri.fragment) ? last(split(uri.path, "/")) : uri.fragment
-localname(s::String) = localname(URI(s))
-ns(u::URI) = isempty(u.fragment) ? u.uri[1:first(findlast("/",u.uri))] : u.uri[1:first(findlast("#",u.uri))]
+function localname(u::URI)
+  u.scheme == "urn" && return u.path
+  isempty(u.fragment) ? last(split(u.path, "/")) : u.fragment
+end
+  localname(s::String) = localname(URI(s))
+function ns(u::URI)
+  u.scheme == "urn" && return "urn:"
+  isempty(u.fragment) ? u.uri[1:first(findlast("/",u.uri))] : u.uri[1:first(findlast("#",u.uri))]
+end
 ns(s::String) = ns(URI(s))
 
 macro U_str(s::String)

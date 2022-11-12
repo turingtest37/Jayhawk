@@ -68,7 +68,8 @@ pfx_dict = Dict(
     "http://www.w3.org/1999/02/22-rdf-syntax-ns#" => "rdf:",
     "http://www.w3.org/2002/07/owl#" => "owl:",
     "http://www.w3.org/2001/XMLSchema#" => "xsd:",
-    "http://www.w3.org/2000/01/rdf-schema#" => "rdfs:"
+    "http://www.w3.org/2000/01/rdf-schema#" => "rdfs:",
+    "urn:" => "urn:"
 )
 rpfx_dict = Dict(values(pfx_dict) .=> keys(pfx_dict))
 
@@ -121,7 +122,7 @@ function makeqname(s::ResourceURI)
         @warn "Creating prefix '$pfx' for unknown namespace '$namesp'"
     end
     pfx = replace(pfx_dict[namesp],':'=>'_')
-    lnm = localname(s.uri)
+    lnm = replace(localname(s.uri),':'=>'_')
     pfx*lnm
 end
 
