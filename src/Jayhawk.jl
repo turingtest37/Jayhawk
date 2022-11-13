@@ -182,19 +182,21 @@ function rdf_type(s::ResourceURI, ::Type{owl_ObjectProperty}, d::T) where {T<:Ab
     nm = Symbol(makeqname(s))
         eval(
         quote
-            function $nm(subj::Union{ResourceURI,Blank}, obj::Union{ResourceURI,Blank}, dict::TT) where {TT<:AbstractDict}
+            function $nm(subj::Union{ResourceURI,Blank}, obj::Union{ResourceURI,Blank}, dict::T) where {T<:AbstractDict}
                 #fetch instantiated type from resource dictionary, else Unknown
                 # @TODO the next lines will break on a blank node
-                s_obj = get(dict, subj, Unknown(subj))
-                o_obj = get(dict, obj, Unknown(obj))
+                subj_type = get!(dict, subj) do 
+                    Unknown(subj)
+                end 
+                obj_type = get!(dict, obj) do 
+                    Unknown(obj) 
+                end
 
                 # link the subject and object by the property URI, in both directions
-                s_obj.out[$s] = obj
-                o_obj.in[$s] = subj
-
-                dict[subj] = s_obj
-                dict[obj] = o_obj
+                subj_type.out[$s] = obj
+                obj_type.in[$s] = subj
             end
+            # register new function in resource dictionary``
             $d[$s] = $nm
             export $nm
         end
@@ -207,11 +209,12 @@ function rdf_type(s::ResourceURI, ::Type{owl_DatatypeProperty}, d::T) where {T<:
     nm = Symbol(makeqname(s))
     eval(
         quote
-            function $nm(subj::Union{ResourceURI,Blank}, obj::Literal, dict::T) where {T<:AbstractDict}
+            function $nm(subj::ResourceURI, obj::Literal, dict::T) where {T<:AbstractDict}
                 @debug $nm subj obj
-                s_obj = get(dict, subj, Unknown(subj))
-                s_obj.out[$s] = obj
-                dict[subj] = s_obj
+                subj_type = get!(dict, subj) do 
+                    Unknown(subj)
+                end
+                subj_type.out[$s] = obj
             end
             $d[$s] = $nm
             export $nm
@@ -315,7 +318,7 @@ end
 # Select RDF and create instances from the ontology
 function build_model_instances()
     stmts = qsparql(load_model_instances)
-    process_rdf_data.(stmts, Ref(resource_dict))            
+    process_rdf_data.(stmts)            
 end
 
 # Don't think I need this just yet
@@ -326,7 +329,7 @@ end
 # end
 
 
-function process_rdf_data(t::Triple, d::T) where {T<:AbstractDict}
+function process_rdf_data(t::Triple; d::T = resource_dict) where {T<:AbstractDict}
     s, p, o = t.subject, t.predicate, t.object
     propnm = Symbol(makeqname(p))
     @debug "Calling $propnm($s, $o)..."
