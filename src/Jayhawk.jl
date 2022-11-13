@@ -127,7 +127,7 @@ function makeqname(s::ResourceURI)
 end
 
 # Create a Julia type from an owl:Class
-function rdf_type(s::ResourceURI, ::Type{owl_Class})
+function rdf_type(s::ResourceURI, ::Type{owl_Class}, d::T) where {T<:AbstractDict}
     nm = Symbol(makeqname(s))
     @debug "rdf_type($s owl_Class)"
     eval(
@@ -153,85 +153,87 @@ function rdf_type(s::ResourceURI, ::Type{owl_Class})
             export $nm
 
             # store newly created class in dict
-            $resource_dict[$s] = $nm
+            $d[$s] = $nm
 
             # create function to instantiate the new type and store it.
             # If the subject was previously seen and stored as an Unknown,
             # convert into the new type.
-            function rdf_type(r::ResourceURI, ::Type{$nm})
+            function rdf_type(r::ResourceURI, ::Type{$nm}, dict::T) where {T<:AbstractDict}
                 @debug "rdf_type" r Type{$nm}
                 # if we have already seen this URI, fetch it from the dictionary. It might be an Unknown
-                _instance = get!(resource_dict, r) do
+                _instance = get!(dict, r) do
                     # make a new instance and copy the Unknown stuff into it
                     # This also covers the case of a completely new, never seen before instance
                     $nm(r)
                 end
                 @debug "retrieved from dict:" _instance
                 if typeof(_instance) == Jayhawk.Unknown
-                    resource_dict[r] = $nm(_instance)
+                    dict[r] = $nm(_instance)
                 end
-                @debug "new instance is " resource_dict[r]
+                @debug "new instance is " dict[r]
             end
         end
     ) 
 end
 
 # Transform a ObjectProperty into a Julia function
-function rdf_type(s::ResourceURI, ::Type{owl_ObjectProperty})
+function rdf_type(s::ResourceURI, ::Type{owl_ObjectProperty}, d::T) where {T<:AbstractDict}
     @debug "rdf_type($s Type{owl_ObjectProperty})"
     nm = Symbol(makeqname(s))
         eval(
         quote
-            function $nm(subj::Union{ResourceURI,Blank}, obj::Union{ResourceURI,Blank})
+            function $nm(subj::Union{ResourceURI,Blank}, obj::Union{ResourceURI,Blank}, dict::TT) where {TT<:AbstractDict}
                 #fetch instantiated type from resource dictionary, else Unknown
                 # @TODO the next lines will break on a blank node
-                s_obj = get(resource_dict, subj, Unknown(subj))
-                o_obj = get(resource_dict, obj, Unknown(obj))
+                s_obj = get(dict, subj, Unknown(subj))
+                o_obj = get(dict, obj, Unknown(obj))
 
                 # link the subject and object by the property URI, in both directions
                 s_obj.out[$s] = obj
                 o_obj.in[$s] = subj
 
-                resource_dict[subj] = s_obj
-                resource_dict[obj] = o_obj
+                dict[subj] = s_obj
+                dict[obj] = o_obj
             end
+            $d[$s] = $nm
             export $nm
         end
         )
 end
 
 # Transform a DatatypeProperty into a Julia function
-function rdf_type(s::ResourceURI, ::Type{owl_DatatypeProperty})
+function rdf_type(s::ResourceURI, ::Type{owl_DatatypeProperty}, d::T) where {T<:AbstractDict}
     @debug "rdf_type($s, Type{owl_DatatypeProperty})"
     nm = Symbol(makeqname(s))
     eval(
         quote
-            function $nm(subj::Union{ResourceURI,Blank}, obj::Literal)
+            function $nm(subj::Union{ResourceURI,Blank}, obj::Literal, dict::T) where {T<:AbstractDict}
                 @debug $nm subj obj
-                s_obj = get(resource_dict, subj, Unknown(subj))
+                s_obj = get(dict, subj, Unknown(subj))
                 s_obj.out[$s] = obj
-                resource_dict[subj] = s_obj
+                dict[subj] = s_obj
             end
+            $d[$s] = $nm
             export $nm
         end
     ) 
 end
 
-function rdf_type(s::ResourceURI, o::ResourceURI)
+function rdf_type(s::ResourceURI, o::ResourceURI, d::T) where {T<:AbstractDict}
     @debug "rdf_type($s, $o)"
     onm = Symbol(makeqname(o))
     oclass = @eval $onm
     @debug "Calling rdf_type($s, $oclass) ..."
-    rdf_type(s, oclass)
+    rdf_type(s, oclass, d)
 end
 
-function rdf_type(s::ResourceURI, ::Type{owl_Thing})
+function rdf_type(s::ResourceURI, ::Type{owl_Thing}, d::T) where {T<:AbstractDict}
     @debug "rdf_type $s ::owl_Thing"
 end
 
-rdf_type(s::ResourceURI, ::Type{Blank}) = @debug "rdf_type $s ::Blank"
-rdf_type(b::Blank, ::Type{owl_Class}) = @debug "rdf_type ::Blank ::owl_Class"
-rdf_type(b::Blank, o::ResourceURI) = @debug "rdf_type $b $o"
+rdf_type(s::ResourceURI, ::Type{Blank}, d::T) where {T<:AbstractDict} = @debug "rdf_type $s ::Blank"
+rdf_type(b::Blank, ::Type{owl_Class}, d::T) where {T<:AbstractDict} = @debug "rdf_type ::Blank ::owl_Class"
+rdf_type(b::Blank, o::ResourceURI, d::T) where {T<:AbstractDict} = @debug "rdf_type $b $o"
 
 
 # Unused for now...
@@ -249,21 +251,19 @@ function owl_sameAs(s::ResourceURI, o::ResourceURI)
     
 end
 
-
-
-function make_type_or_instance(t::Triple)
+function make_type_or_instance(t::Triple, d::T) where {T<:AbstractDict}
     s, p, o = t.subject, t.predicate, t.object
     (p == ResourceURI(rpfx_dict["rdf:"]*"type")) || error("Expected rdf:type for predicate.")
-    rdf_type(s,o)
+    rdf_type(s,o,d)
 end
 
-function make_obj_dt_prop(t::Triple)
+function make_obj_dt_prop(t::Triple, d::T) where {T<:AbstractDict}
     s, p, o = t.subject, t.predicate, t.object
     typenm = Symbol(makeqname(o))
     try
-        rdf_type(s, eval(typenm))
+        rdf_type(s, eval(typenm), d)
     catch e
-        @warn "Failed to call rdf_type($s, eval($typenm)" e
+        @warn "Failed to call rdf_type($s, $(eval(typenm)) dict" e
     end
 end
 
@@ -295,27 +295,27 @@ end
 # Previously stored subclasses are added to the Type constructor
 function build_classes()
     stmts = qsparql(loadclasses)
-    make_type_or_instance.(stmts)        
+    make_type_or_instance.(stmts,Ref(resource_dict))       
 end
 
 # Select RDF and create functions for each owl:ObjectProperty
 function build_obj_props()
     stmts = qsparql(loadobjprops)
     @debug "build_obj_props" stmts
-    make_obj_dt_prop.(stmts)            
+    make_obj_dt_prop.(stmts, Ref(resource_dict))            
 end
 
 # Select RDF and create functions for each owl:DatatypeProperty
 function build_data_props()
     stmts = qsparql(loaddataprops)
     @debug "build_data_props" stmts
-    make_obj_dt_prop.(stmts)            
+    make_obj_dt_prop.(stmts, Ref(resource_dict))            
 end
 
 # Select RDF and create instances from the ontology
 function build_model_instances()
     stmts = qsparql(load_model_instances)
-    process_rdf_data.(stmts)            
+    process_rdf_data.(stmts, Ref(resource_dict))            
 end
 
 # Don't think I need this just yet
@@ -326,16 +326,16 @@ end
 # end
 
 
-function process_rdf_data(t::Triple)
+function process_rdf_data(t::Triple, d::T) where {T<:AbstractDict}
     s, p, o = t.subject, t.predicate, t.object
     propnm = Symbol(makeqname(p))
     @debug "Calling $propnm($s, $o)..."
-    @eval $propnm($s, $o)
+    @eval $propnm($s, $o, $d)
 end
 
 export build_subclasses, build_classes, build_data_props, 
 build_obj_props, build_model_instances, process_rdf_data, 
-qsparql, usparql, resource_dict
+qsparql, usparql, resource_dict, superclasses
 
 export rdf_type, rdfs_subClassOf
 
