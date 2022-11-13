@@ -216,6 +216,7 @@ function rdf_type(s::ResourceURI, ::Type{owl_DatatypeProperty}, d::T) where {T<:
                 end
                 subj_type.out[$s] = obj
             end
+            # Store the new function in the resource dictionary and export it
             $d[$s] = $nm
             export $nm
         end
@@ -260,8 +261,11 @@ function make_type_or_instance(t::Triple, d::T) where {T<:AbstractDict}
     rdf_type(s,o,d)
 end
 
+# The subject will become the function name; the object determines
+# whether to create a Datatype or Object Property.
 function make_obj_dt_prop(t::Triple, d::T) where {T<:AbstractDict}
     s, p, o = t.subject, t.predicate, t.object
+    (p == ResourceURI(rpfx_dict["rdf:"]*"type")) || error("Expected rdf:type for predicate.")
     typenm = Symbol(makeqname(o))
     try
         rdf_type(s, eval(typenm), d)
