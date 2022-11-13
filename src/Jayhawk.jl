@@ -150,6 +150,8 @@ function rdf_type(s::ResourceURI, ::Type{owl_Class})
             # constructor to convert an Unknown into the new type
             $nm(u::Unknown) = $nm(u.uri, u.in, u.out, u.super)
         
+            export $nm
+
             # store newly created class in dict
             $resource_dict[$s] = $nm
 
@@ -157,16 +159,18 @@ function rdf_type(s::ResourceURI, ::Type{owl_Class})
             # If the subject was previously seen and stored as an Unknown,
             # convert into the new type.
             function rdf_type(r::ResourceURI, ::Type{$nm})
-                # @debug "rdf_type($r Type{$nm})"
+                @debug "rdf_type" r Type{$nm}
                 # if we have already seen this URI, fetch it from the dictionary. It might be an Unknown
                 _instance = get!(resource_dict, r) do
                     # make a new instance and copy the Unknown stuff into it
                     # This also covers the case of a completely new, never seen before instance
                     $nm(r)
                 end
+                @debug "retrieved from dict:" _instance
                 if typeof(_instance) == Jayhawk.Unknown
                     resource_dict[r] = $nm(_instance)
                 end
+                @debug "new instance is " resource_dict[r]
             end
         end
     ) 
@@ -181,8 +185,8 @@ function rdf_type(s::ResourceURI, ::Type{owl_ObjectProperty})
             function $nm(subj::Union{ResourceURI,Blank}, obj::Union{ResourceURI,Blank})
                 #fetch instantiated type from resource dictionary, else Unknown
                 # @TODO the next lines will break on a blank node
-                s_obj = get(resource_dict, subj, Unknown(subj.uri))
-                o_obj = get(resource_dict, obj, Unknown(obj.uri))
+                s_obj = get(resource_dict, subj, Unknown(subj))
+                o_obj = get(resource_dict, obj, Unknown(obj))
 
                 # link the subject and object by the property URI, in both directions
                 s_obj.out[$s] = obj
@@ -191,6 +195,7 @@ function rdf_type(s::ResourceURI, ::Type{owl_ObjectProperty})
                 resource_dict[subj] = s_obj
                 resource_dict[obj] = o_obj
             end
+            export $nm
         end
         )
 end
@@ -203,10 +208,11 @@ function rdf_type(s::ResourceURI, ::Type{owl_DatatypeProperty})
         quote
             function $nm(subj::Union{ResourceURI,Blank}, obj::Literal)
                 @debug $nm subj obj
-                s_obj = get(resource_dict, subj, Unknown(subj.uri))
+                s_obj = get(resource_dict, subj, Unknown(subj))
                 s_obj.out[$s] = obj
                 resource_dict[subj] = s_obj
             end
+            export $nm
         end
     ) 
 end
@@ -330,5 +336,7 @@ end
 export build_subclasses, build_classes, build_data_props, 
 build_obj_props, build_model_instances, process_rdf_data, 
 qsparql, usparql, resource_dict
+
+export rdf_type, rdfs_subClassOf
 
 end # module Jayhawk
