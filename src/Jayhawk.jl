@@ -345,5 +345,6 @@ build_obj_props, build_model_instances, process_rdf_data,
 qsparql, usparql, resource_dict, superclasses
 
 export rdf_type, rdfs_subClassOf
+export Unknown
 
 end # module Jayhawk
