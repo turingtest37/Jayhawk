@@ -1,0 +1,621 @@
+@prefix : <http://www.semanticweb.org/doug/ontologies/jayhawk#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xml: <http://www.w3.org/XML/1998/namespace> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@base <http://www.semanticweb.org/doug/ontologies/jayhawk> .
+
+<http://www.semanticweb.org/doug/ontologies/jayhawk> rdf:type owl:Ontology ;
+                                                      owl:imports <https://ontologies.semanticarts.com/o/gistCore11.1.0> ,
+                                                                  <https://ontologies.semanticarts.com/o/gistMediaTypes11.1.0> ,
+                                                                  <https://ontologies.semanticarts.com/o/gistSW0.1.0> ,
+                                                                  <https://ontologies.semanticarts.com/o/gist/resource0.1.0> ;
+                                                      rdfs:comment "Base ontology for the Jayhawk RDF in Julia system." .
+
+#################################################################
+#    Annotation properties
+#################################################################
+
+###  http://www.w3.org/2004/02/skos/core#prefLabel
+skos:prefLabel rdf:type owl:AnnotationProperty .
+
+
+#################################################################
+#    Object Properties
+#################################################################
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#creates
+:creates rdf:type owl:ObjectProperty ;
+         rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/affects> ;
+         rdfs:comment "Represents the C in a RESTful Create Read Update Delete pattern." ;
+         rdfs:label "creates" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#deletes
+:deletes rdf:type owl:ObjectProperty ;
+         rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/affects> ;
+         rdfs:comment "The D in a RESTful Create Read Update Delete pattern." ;
+         rdfs:label "deletes" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#hasHttpAddress
+:hasHttpAddress rdf:type owl:ObjectProperty ;
+                rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/hasAddress> ;
+                rdf:type owl:FunctionalProperty ;
+                rdfs:range :HttpPath ;
+                rdfs:comment "The object is a network path that follows HTTP formatting rules and possibly contains path variables." ;
+                rdfs:label "hasHttpAddress" ;
+                skos:prefLabel "hasHttpAddress" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#reads
+:reads rdf:type owl:ObjectProperty ;
+       rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/affects> ;
+       rdfs:comment "The R in a RESTful Create Read Update Delete pattern." ;
+       rdfs:label "reads" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#renders
+:renders rdf:type owl:ObjectProperty ;
+         owl:inverseOf <https://ontologies.semanticarts.com/gist/isRenderedOn> ;
+         rdfs:comment "Subject produces a view of the object without altering it." ;
+         rdfs:label "renders" ;
+         skos:prefLabel "renders" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#triggersFunction
+:triggersFunction rdf:type owl:ObjectProperty ;
+                  rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/hasGoal> ;
+                  rdfs:comment "Calls for the execution of some Julia function." ;
+                  rdfs:label "triggersFunction" ;
+                  skos:prefLabel "triggers function" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#updates
+:updates rdf:type owl:ObjectProperty ;
+         rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/affects> ;
+         rdfs:comment "The U in a RESTful Create Read Update Delete pattern." ;
+         rdfs:label "updates" .
+
+
+###  https://ontologies.semanticarts.com/gist/isRenderedOn
+
+#################################################################
+#    Data properties
+#################################################################
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#createdDateTime
+:createdDateTime rdf:type owl:DatatypeProperty ;
+                 rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/actualEndDate> ;
+                 rdfs:comment "Timestamp for the creation of an entity." ;
+                 rdfs:isDefinedBy <jayhawk:> ;
+                 rdfs:label "createdDateTime" ;
+                 skos:prefLabel "createdDateTime" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#defaultValue
+:defaultValue rdf:type owl:DatatypeProperty ;
+              rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/containedText> ;
+              rdfs:comment "Default value for a qquery param if no value is provided." ;
+              rdfs:label "defaultValue" ;
+              skos:prefLabel "defaultValue" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#fileSuffix
+:fileSuffix rdf:type owl:DatatypeProperty ;
+            rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/containedText> ;
+            rdfs:comment "The end part of a file name that starts with a '.'" ;
+            skos:prefLabel "fileSuffix" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#juliahtml
+:juliahtml rdf:type owl:DatatypeProperty ;
+           rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/containedText> ;
+           rdfs:comment "HTML content with embedded Julia expressions for dynamic web rendering." ;
+           skos:prefLabel "Julia HTML" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#resourcePath
+:resourcePath rdf:type owl:DatatypeProperty ;
+              rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/containedText> ;
+              rdfs:comment "The actual text of an HTTP or file resource path." ;
+              rdfs:label "resourcePath" ;
+              skos:prefLabel "resource path" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#sparql
+:sparql rdf:type owl:DatatypeProperty ;
+        rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/containedText> ;
+        rdfs:comment "A string containing SPARQL expressions." ;
+        rdfs:label "sparql" .
+
+
+###  urn:data
+<urn:data> rdf:type owl:DatatypeProperty ;
+           rdfs:comment "Universal data property for Jayhawk." .
+
+
+#################################################################
+#    Classes
+#################################################################
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#AppFeatureStep
+:AppFeatureStep rdf:type owl:Class ;
+                rdfs:subClassOf <https://ontologies.semanticarts.com/gist/Component> ;
+                rdfs:comment "A tangible step in the application's workflow whose output is renderable on some media." .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#AppFeatureTemplate
+:AppFeatureTemplate rdf:type owl:Class ;
+                    rdfs:subClassOf <https://ontologies.semanticarts.com/gist/TaskTemplate> ,
+                                    [ rdf:type owl:Restriction ;
+                                      owl:onProperty :creates ;
+                                      owl:someValuesFrom :GenieResource
+                                    ] ,
+                                    [ rdf:type owl:Restriction ;
+                                      owl:onProperty :deletes ;
+                                      owl:someValuesFrom :GenieResource
+                                    ] ,
+                                    [ rdf:type owl:Restriction ;
+                                      owl:onProperty :reads ;
+                                      owl:someValuesFrom :GenieResource
+                                    ] ,
+                                    [ rdf:type owl:Restriction ;
+                                      owl:onProperty :updates ;
+                                      owl:someValuesFrom :GenieResource
+                                    ] ,
+                                    [ rdf:type owl:Restriction ;
+                                      owl:onProperty :sparql ;
+                                      owl:someValuesFrom xsd:string
+                                    ] ;
+                    rdfs:comment "Template used to define part of an application workflow such as a data entry or modification form." ;
+                    rdfs:label "AppFeatureTemplate" ;
+                    skos:prefLabel "Application Feature Template" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#ApplicationFeature
+:ApplicationFeature rdf:type owl:Class ;
+                    rdfs:subClassOf <https://ontologies.semanticarts.com/gist/Component> ,
+                                    <https://ontologies.semanticarts.com/gist/Network> ,
+                                    [ rdf:type owl:Restriction ;
+                                      owl:onProperty <https://ontologies.semanticarts.com/gist/conformsTo> ;
+                                      owl:someValuesFrom :HttpOperation
+                                    ] ,
+                                    [ rdf:type owl:Restriction ;
+                                      owl:onProperty <https://ontologies.semanticarts.com/gist/contributesTo> ;
+                                      owl:someValuesFrom :DCApplication
+                                    ] ;
+                    rdfs:comment "A course-grained part of a data-centric application, usually involving one or more steps in a workflow that Create/Read/Update/Deletes resources." ;
+                    rdfs:label "ApplicationFeature" ;
+                    skos:prefLabel "Application Feature" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#DCApplication
+:DCApplication rdf:type owl:Class ;
+               rdfs:subClassOf <https://ontologies.semanticarts.com/gist/System> ,
+                               [ rdf:type owl:Restriction ;
+                                 owl:onProperty <https://ontologies.semanticarts.com/gist/hasDirectPart> ;
+                                 owl:someValuesFrom :AppFeatureTemplate
+                               ] ;
+               rdfs:comment "A data-centric application." ;
+               rdfs:label "DCApplication" ;
+               skos:prefLabel "Data-Centric Application" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#GenieController
+:GenieController rdf:type owl:Class ;
+                 rdfs:subClassOf :JuliaModule ,
+                                 [ rdf:type owl:Restriction ;
+                                   owl:onProperty <https://ontologies.semanticarts.com/gist/hasDirectPart> ;
+                                   owl:someValuesFrom :JuliaFunction
+                                 ] ,
+                                 [ rdf:type owl:Restriction ;
+                                   owl:onProperty <https://ontologies.semanticarts.com/gist/isDirectPartOf> ;
+                                   owl:someValuesFrom :GenieResource
+                                 ] ,
+                                 [ rdf:type owl:Restriction ;
+                                   owl:onProperty :resourcePath ;
+                                   owl:someValuesFrom xsd:string
+                                 ] ;
+                 rdfs:comment "A Genie-specific Julia module that provides access to functions for routes." ;
+                 skos:prefLabel "GenieController" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#GenieResource
+:GenieResource rdf:type owl:Class ;
+               rdfs:subClassOf <https://ontologies.semanticarts.com/gist/Component> ,
+                               <https://ontologies.semanticarts.com/gist/ContentExpression> ,
+                               [ rdf:type owl:Restriction ;
+                                 owl:onProperty <https://ontologies.semanticarts.com/gist/hasDirectPart> ;
+                                 owl:someValuesFrom :GenieController
+                               ] ,
+                               [ rdf:type owl:Restriction ;
+                                 owl:onProperty <https://ontologies.semanticarts.com/gist/isRenderedOn> ;
+                                 owl:someValuesFrom :GenieView
+                               ] ,
+                               [ rdf:type owl:Restriction ;
+                                 owl:onProperty <https://ontologies.semanticarts.com/gist/produces> ;
+                                 owl:someValuesFrom :RESTResource
+                               ] ,
+                               [ rdf:type owl:Restriction ;
+                                 owl:onProperty <https://ontologies.semanticarts.com/gist/name> ;
+                                 owl:someValuesFrom xsd:string
+                               ] ;
+               rdfs:comment "Models the Genie resource which typically includes a controller and one or more views, along a convention-driven file path." ;
+               skos:prefLabel "GenieResource" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#GenieView
+:GenieView rdf:type owl:Class ;
+           owl:equivalentClass [ owl:intersectionOf ( <https://ontologies.semanticarts.com/gist/SoftwareCode>
+                                                      [ rdf:type owl:Restriction ;
+                                                        owl:onProperty <https://ontologies.semanticarts.com/gist/isExpressedIn> ;
+                                                        owl:hasValue :_Language_julia_html
+                                                      ]
+                                                    ) ;
+                                 rdf:type owl:Class
+                               ] ;
+           rdfs:subClassOf <https://ontologies.semanticarts.com/gist/MessageDefinition> ,
+                           <https://ontologies.semanticarts.com/gist/NetworkNode> ,
+                           <https://ontologies.semanticarts.com/gist/SoftwareCode> ,
+                           [ rdf:type owl:Restriction ;
+                             owl:onProperty :renders ;
+                             owl:someValuesFrom :RESTResource
+                           ] ,
+                           [ rdf:type owl:Restriction ;
+                             owl:onProperty <https://ontologies.semanticarts.com/gist/isDirectPartOf> ;
+                             owl:someValuesFrom :GenieResource
+                           ] ,
+                           [ rdf:type owl:Restriction ;
+                             owl:onProperty <https://ontologies.semanticarts.com/gist/isExpressedIn> ;
+                             owl:hasValue :_Language_julia_html
+                           ] ,
+                           [ rdf:type owl:Restriction ;
+                             owl:onProperty :juliahtml ;
+                             owl:someValuesFrom xsd:string
+                           ] ,
+                           [ rdf:type owl:Restriction ;
+                             owl:onProperty :resourcePath ;
+                             owl:someValuesFrom xsd:string
+                           ] ;
+           rdfs:comment "An HTML page template for Genie." ;
+           rdfs:label "GenieView" ;
+           skos:prefLabel "Genie View" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#HttpDeleteOperation
+:HttpDeleteOperation rdf:type owl:Class ;
+                     owl:equivalentClass [ owl:intersectionOf ( :HttpOperation
+                                                                [ rdf:type owl:Restriction ;
+                                                                  owl:onProperty :deletes ;
+                                                                  owl:allValuesFrom :RESTResource
+                                                                ]
+                                                              ) ;
+                                           rdf:type owl:Class
+                                         ] ;
+                     rdfs:subClassOf :HttpOperation ,
+                                     [ rdf:type owl:Restriction ;
+                                       owl:onProperty <https://ontologies.semanticarts.com/gist/hasGoal> ;
+                                       owl:hasValue :_deleting
+                                     ] ,
+                                     [ rdf:type owl:Restriction ;
+                                       owl:onProperty <https://ontologies.semanticarts.com/gist/isCategorizedBy> ;
+                                       owl:hasValue :_DELETE
+                                     ] .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#HttpGetOperation
+:HttpGetOperation rdf:type owl:Class ;
+                  owl:equivalentClass [ owl:intersectionOf ( :HttpOperation
+                                                             [ rdf:type owl:Restriction ;
+                                                               owl:onProperty :reads ;
+                                                               owl:allValuesFrom :RESTResource
+                                                             ]
+                                                           ) ;
+                                        rdf:type owl:Class
+                                      ] ;
+                  rdfs:subClassOf :HttpOperation ,
+                                  [ rdf:type owl:Restriction ;
+                                    owl:onProperty <https://ontologies.semanticarts.com/gist/hasGoal> ;
+                                    owl:hasValue :_reading
+                                  ] ,
+                                  [ rdf:type owl:Restriction ;
+                                    owl:onProperty <https://ontologies.semanticarts.com/gist/isCategorizedBy> ;
+                                    owl:hasValue :_GET
+                                  ] .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#HttpMethod
+:HttpMethod rdf:type owl:Class ;
+            rdfs:subClassOf <https://ontologies.semanticarts.com/gist/Behavior> ;
+            rdfs:comment "A verb defined by the HTTP specification, e.g. GET, POST, etc." ;
+            rdfs:label "HttpMethod" ;
+            skos:prefLabel "HTTP Method" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#HttpOperation
+:HttpOperation rdf:type owl:Class ;
+               rdfs:subClassOf <https://ontologies.semanticarts.com/gist/Specification> ,
+                               [ rdf:type owl:Restriction ;
+                                 owl:onProperty :hasHttpAddress ;
+                                 owl:someValuesFrom :HttpPath
+                               ] ,
+                               [ rdf:type owl:Restriction ;
+                                 owl:onProperty <https://ontologies.semanticarts.com/gist/affects> ;
+                                 owl:someValuesFrom :RESTResource
+                               ] ,
+                               [ rdf:type owl:Restriction ;
+                                 owl:onProperty <https://ontologies.semanticarts.com/gist/hasGoal> ;
+                                 owl:someValuesFrom :HypermediaTransferFunction
+                               ] ,
+                               [ rdf:type owl:Restriction ;
+                                 owl:onProperty <https://ontologies.semanticarts.com/gist/isCategorizedBy> ;
+                                 owl:someValuesFrom :HttpMethod
+                               ] ;
+               rdfs:comment "An instruction sent by HTTP to manipulate a web resource." ;
+               rdfs:label "HttpOperation" ;
+               skos:prefLabel "HTTP Operation" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#HttpPath
+:HttpPath rdf:type owl:Class ;
+          rdfs:subClassOf <https://ontologies.semanticarts.com/gist/Address> ,
+                          [ rdf:type owl:Restriction ;
+                            owl:onProperty <https://ontologies.semanticarts.com/gist/hasDirectPart> ;
+                            owl:someValuesFrom :HttpQueryParam
+                          ] ,
+                          [ rdf:type owl:Restriction ;
+                            owl:onProperty :resourcePath ;
+                            owl:someValuesFrom xsd:string
+                          ] ;
+          rdfs:comment "A character string, possibly containing template elements, that when fully rendered gives a HTTP-compatible resource path." .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#HttpPostOperation
+:HttpPostOperation rdf:type owl:Class ;
+                   owl:equivalentClass [ owl:intersectionOf ( :HttpOperation
+                                                              [ rdf:type owl:Restriction ;
+                                                                owl:onProperty :creates ;
+                                                                owl:allValuesFrom :RESTResource
+                                                              ]
+                                                            ) ;
+                                         rdf:type owl:Class
+                                       ] ;
+                   rdfs:subClassOf :HttpOperation ,
+                                   [ rdf:type owl:Restriction ;
+                                     owl:onProperty <https://ontologies.semanticarts.com/gist/hasGoal> ;
+                                     owl:hasValue :_creating
+                                   ] ,
+                                   [ rdf:type owl:Restriction ;
+                                     owl:onProperty <https://ontologies.semanticarts.com/gist/isCategorizedBy> ;
+                                     owl:hasValue :_POST
+                                   ] .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#HttpPutOperation
+:HttpPutOperation rdf:type owl:Class ;
+                  owl:equivalentClass [ owl:intersectionOf ( :HttpOperation
+                                                             [ rdf:type owl:Restriction ;
+                                                               owl:onProperty :updates ;
+                                                               owl:allValuesFrom :RESTResource
+                                                             ]
+                                                           ) ;
+                                        rdf:type owl:Class
+                                      ] ;
+                  rdfs:subClassOf :HttpOperation ,
+                                  [ rdf:type owl:Restriction ;
+                                    owl:onProperty <https://ontologies.semanticarts.com/gist/hasGoal> ;
+                                    owl:hasValue :_updating
+                                  ] ,
+                                  [ rdf:type owl:Restriction ;
+                                    owl:onProperty <https://ontologies.semanticarts.com/gist/isCategorizedBy> ;
+                                    owl:hasValue :_PUT
+                                  ] .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#HttpQueryParam
+:HttpQueryParam rdf:type owl:Class ;
+                rdfs:subClassOf <https://ontologies.semanticarts.com/gist/SchemaMetaData> ,
+                                [ rdf:type owl:Restriction ;
+                                  owl:onProperty <https://ontologies.semanticarts.com/gist/describes> ;
+                                  owl:allValuesFrom :RESTResource
+                                ] ,
+                                [ rdf:type owl:Restriction ;
+                                  owl:onProperty :defaultValue ;
+                                  owl:someValuesFrom xsd:string
+                                ] ,
+                                [ rdf:type owl:Restriction ;
+                                  owl:onProperty <https://ontologies.semanticarts.com/gist/name> ;
+                                  owl:someValuesFrom xsd:string
+                                ] ;
+                rdfs:comment "A name and default value that when rendered onto a resource path yield a Http query string usable by a route." ;
+                rdfs:label "HttpQueryParam" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#HypermediaTransferFunction
+:HypermediaTransferFunction rdf:type owl:Class ;
+                            rdfs:subClassOf <https://ontologies.semanticarts.com/gist/ComputingFunction> .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#JuliaFunction
+:JuliaFunction rdf:type owl:Class ;
+               rdfs:subClassOf <https://ontologies.semanticarts.com/gist/Function> ,
+                               <https://ontologies.semanticarts.com/gist/SoftwareCode> ,
+                               [ rdf:type owl:Restriction ;
+                                 owl:onProperty <https://ontologies.semanticarts.com/gist/isPartOf> ;
+                                 owl:someValuesFrom :JuliaModule
+                               ] ,
+                               [ rdf:type owl:Restriction ;
+                                 owl:onProperty <https://ontologies.semanticarts.com/gist/isExpressedIn> ;
+                                 owl:hasValue :_Language_julia
+                               ] ,
+                               [ rdf:type owl:Restriction ;
+                                 owl:onProperty <https://ontologies.semanticarts.com/gist/name> ;
+                                 owl:someValuesFrom xsd:string
+                               ] ;
+               rdfs:comment "A specific module, function name, and argument types for Julia to execute." .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#JuliaModule
+:JuliaModule rdf:type owl:Class ;
+             rdfs:subClassOf <https://ontologies.semanticarts.com/gist/SoftwareCode> ,
+                             [ rdf:type owl:Restriction ;
+                               owl:onProperty <https://ontologies.semanticarts.com/gist/hasDirectPart> ;
+                               owl:someValuesFrom :JuliaFunction
+                             ] ,
+                             [ rdf:type owl:Restriction ;
+                               owl:onProperty <https://ontologies.semanticarts.com/gist/isExpressedIn> ;
+                               owl:hasValue :_Language_julia
+                             ] ,
+                             [ rdf:type owl:Restriction ;
+                               owl:onProperty <https://ontologies.semanticarts.com/gist/name> ;
+                               owl:someValuesFrom xsd:string
+                             ] ;
+             rdfs:comment "A logical container for functions and variables in a Julia program." ;
+             rdfs:label "JuliaModule" ;
+             skos:prefLabel "JuliaModule" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#RESTResource
+:RESTResource rdf:type owl:Class ;
+              rdfs:subClassOf <https://ontologies.semanticarts.com/gist/ContentExpression> ,
+                              <https://ontologies.semanticarts.com/gist/NetworkNode> ,
+                              [ rdf:type owl:Restriction ;
+                                owl:onProperty :hasHttpAddress ;
+                                owl:someValuesFrom :HttpPath
+                              ] ,
+                              [ rdf:type owl:Restriction ;
+                                owl:onProperty <https://ontologies.semanticarts.com/gist/isCategorizedBy> ;
+                                owl:someValuesFrom :RestResourceType
+                              ] ;
+              rdfs:comment "An abstract web-accessible resource as defined in the REST architecture pattern." ;
+              rdfs:label "RESTResource" ;
+              skos:prefLabel "REST Resource" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#RestResourceType
+:RestResourceType rdf:type owl:Class ;
+                  rdfs:subClassOf <https://ontologies.semanticarts.com/gist/Category> ;
+                  rdfs:comment "A way to classify REST resources as single entities, lists or mashups of multiple entities." ;
+                  rdfs:label "RestResourceType" ;
+                  skos:prefLabel "REST Resource Type" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#Route
+:Route rdf:type owl:Class ;
+       rdfs:subClassOf <https://ontologies.semanticarts.com/gist/NetworkLink> ,
+                       [ rdf:type owl:Restriction ;
+                         owl:onProperty :triggersFunction ;
+                         owl:someValuesFrom :JuliaFunction
+                       ] ,
+                       [ rdf:type owl:Restriction ;
+                         owl:onProperty <https://ontologies.semanticarts.com/gist/affects> ;
+                         owl:someValuesFrom :RESTResource
+                       ] ,
+                       [ rdf:type owl:Restriction ;
+                         owl:onProperty <https://ontologies.semanticarts.com/gist/isCategorizedBy> ;
+                         owl:someValuesFrom :HttpMethod
+                       ] ,
+                       [ rdf:type owl:Restriction ;
+                         owl:onProperty <https://ontologies.semanticarts.com/gist/isRenderedOn> ;
+                         owl:allValuesFrom :GenieView
+                       ] ;
+       rdfs:comment "Provides an HTTP routing path and reference to an executable function in some module." ;
+       skos:prefLabel "Route" .
+
+
+###  http://www.w3.org/2000/01/rdf-schema#Class
+rdfs:Class rdf:type owl:Class .
+
+
+#################################################################
+#    Individuals
+#################################################################
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#_DELETE
+:_DELETE rdf:type owl:NamedIndividual ,
+                  :HttpMethod ;
+         rdfs:label "DELETE" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#_GET
+:_GET rdf:type owl:NamedIndividual ,
+               :HttpMethod ;
+      rdfs:label "GET" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#_Language_http
+:_Language_http rdf:type owl:NamedIndividual ,
+                         <https://ontologies.semanticarts.com/gist/ComputerLanguage> .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#_Language_julia
+:_Language_julia rdf:type owl:NamedIndividual ,
+                          <https://ontologies.semanticarts.com/gist/ComputerLanguage> ;
+                 :resourcePath ".jl"^^xsd:string ;
+                 rdfs:comment "The Julia language" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#_Language_julia_html
+:_Language_julia_html rdf:type owl:NamedIndividual ,
+                               <https://ontologies.semanticarts.com/gist/ComputerLanguage> ;
+                      :resourcePath ".jl.html"^^xsd:string ;
+                      rdfs:comment "A variety of HTML with embedded Julia code for dynamic rendering." .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#_PATCH
+:_PATCH rdf:type owl:NamedIndividual ,
+                 :HttpMethod ;
+        rdfs:label "PATCH" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#_POST
+:_POST rdf:type owl:NamedIndividual ,
+                :HttpMethod ;
+       rdfs:label "POST" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#_PUT
+:_PUT rdf:type owl:NamedIndividual ,
+               :HttpMethod ;
+      rdfs:label "PUT" .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#_RestResourceType_entity
+:_RestResourceType_entity rdf:type owl:NamedIndividual ,
+                                   :RestResourceType .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#_RestResourceType_list
+:_RestResourceType_list rdf:type owl:NamedIndividual ,
+                                 :RestResourceType .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#_RestResourceType_mashup
+:_RestResourceType_mashup rdf:type owl:NamedIndividual ,
+                                   :RestResourceType .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#_creating
+:_creating rdf:type owl:NamedIndividual ,
+                    :HypermediaTransferFunction .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#_deleting
+:_deleting rdf:type owl:NamedIndividual ,
+                    :HypermediaTransferFunction .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#_reading
+:_reading rdf:type owl:NamedIndividual ,
+                   :HypermediaTransferFunction .
+
+
+###  http://www.semanticweb.org/doug/ontologies/jayhawk#_updating
+:_updating rdf:type owl:NamedIndividual ,
+                    :HypermediaTransferFunction .
+
+
+###  Generated by the OWL API (version 4.5.9.2019-02-01T07:24:44Z) https://github.com/owlcs/owlapi

@@ -102,12 +102,12 @@ PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
 PREFIX sh: <http://www.w3.org/ns/shacl#>
 #PREFIX : <http://data.ebox.ca/id/>
 
-construct
+CONSTRUCT
 {
     ?s a ?class ;
       ?p ?o .
 }
-where { 
+WHERE { 
     GRAPH <urn:ontology> {
        ?s a owl:NamedIndividual, ?class ;
       ?p ?o.
@@ -117,7 +117,7 @@ where {
 
     FILTER(!STRSTARTS(STR(?o),STR(owl:)))
     FILTER(!STRSTARTS(STR(?class),STR(owl:)))
-}
+} order by ?p
 """
 
 blank_objects = """
@@ -145,4 +145,20 @@ where
 }
 
 ORDER BY ?s
+"""
+
+load_typed_obj_props = 
+"""
+CONSTRUCT { ?s ?prop ?o }
+{ 
+    GRAPH <urn:ontology> {
+        ?s rdfs:subClassOf ?rest .
+        ?rest a owl:Restriction ;
+            owl:onProperty ?prop ;
+        .
+        {?rest owl:someValuesFrom ?o} UNION {?rest owl:allValuesFrom ?o}
+        FILTER(!ISBLANK(?o))
+    }
+}
+ORDER BY ?prop ?s
 """

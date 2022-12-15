@@ -9,6 +9,7 @@ using Serd
 @reexport using Serd.RDF
 using .RDFSupport
 using Logging
+using Random
 using InteractiveUtils: methodswith
 
 # Jayhawk provides the framework for building applications that are graph-based and data-centric.
@@ -64,6 +65,7 @@ struct owl_DatatypeProperty end
 
 pfx_dict = Dict(
     "http://www.semanticweb.org/doug/ontologies/ebox#" => "ebox:",
+    "http://www.semanticweb.org/doug/ontologies/jayhawk#" => "jayhawk:",
     "https://ontologies.semanticarts.com/gist/" => "gist:",
     "http://www.w3.org/1999/02/22-rdf-syntax-ns#" => "rdf:",
     "http://www.w3.org/2002/07/owl#" => "owl:",
@@ -82,7 +84,7 @@ resource_dict = Dict{Union{ResourceURI,Blank},Any}()
 superclasses = Dict{ResourceURI,Vector{ResourceURI}}()
 
 # The Unknown Type is used when a statement is encountered for which
-# we do not have the type of the object.
+# we do not (yet) have the type of the object.
 struct Unknown <: Node
     uri::String
     in::Dict{ResourceURI, Union{ResourceURI,Blank}}
@@ -91,6 +93,43 @@ struct Unknown <: Node
 end
 Unknown(uri::String) = Unknown(uri,Dict(),Dict(),ResourceURI[])
 Unknown(u::ResourceURI) = Unknown(u.uri)
+
+s = [
+"xsd:anyURI",
+"xsd:base64Binary",
+"xsd:boolean",
+"xsd:byte",
+"xsd:dateTime",
+"xsd:dateTimeStamp",
+"xsd:decimal",
+"xsd:double",
+"xsd:float",
+"xsd:hexBinary",
+"xsd:int",
+"xsd:integer",
+"xsd:language",
+"xsd:long",
+"xsd:Name",
+"xsd:NCName",
+"xsd:negativeInteger",
+"xsd:NMTOKEN",
+"xsd:nonNegativeInteger",
+"xsd:nonPositiveInteger",
+"xsd:normalizedString",
+"xsd:positiveInteger",
+"xsd:short",
+"xsd:string",
+"xsd:token",
+"xsd:unsignedByte",
+"xsd:unsignedInt",
+"xsd:unsignedLong",
+"xsd:unsignedShort"
+]
+# Create a Julia type for each xsd type
+map(s) do v
+    s = Symbol(replace(v,':'=>'_'))
+    @eval struct $s v::String end
+end
 
 function qsparql(query::String)
     fnm = tempname()
@@ -195,6 +234,13 @@ function rdf_type(s::ResourceURI, ::Type{owl_ObjectProperty}, d::T) where {T<:Ab
                 # link the subject and object by the property URI, in both directions
                 subj_type.out[$s] = obj
                 obj_type.in[$s] = subj
+
+                # TODO How to call the "proper" method using typed arguments?
+                try
+                    eval(Expr(:call, Meta.parse($nm(subj_type, obj_type))))
+                catch e
+                    @error "Failed to call method." $nm subj_type obj_type e
+                end
             end
             # register new function in resource dictionary``
             $d[$s] = $nm
@@ -225,8 +271,8 @@ end
 
 function rdf_type(s::ResourceURI, o::ResourceURI, d::T) where {T<:AbstractDict}
     @debug "rdf_type($s, $o)"
-    onm = Symbol(makeqname(o))
-    oclass = @eval $onm
+    objnm = Symbol(makeqname(o))
+    oclass = @eval $objnm
     @debug "Calling rdf_type($s, $oclass) ..."
     rdf_type(s, oclass, d)
 end
@@ -340,8 +386,46 @@ function process_rdf_data(t::Triple; d::T = resource_dict) where {T<:AbstractDic
     @eval $propnm($s, $o, $d)
 end
 
+""" Generate a no-op method with appropriate types for the arguments
+"""
+function make_typed_obj_prop(t::Triple; d::T = resource_dict) where {T<:AbstractDict}
+    s, p, o = t.subject, t.predicate, t.object
+    @debug "make_typed_obj_prop" s p o
+    subjnm = Symbol(makeqname(s))
+    propnm = Symbol(makeqname(p))
+    objnm = Symbol(makeqname(o))
+    @debug "make_typed_obj_prop" subjnm propnm objnm
+
+    eval(
+        quote
+            $propnm(subj::$subjnm, obj::$objnm, dict::T = $d) where {T<:AbstractDict} = nothing
+            export $propnm
+        end
+    )    
+end
+
+function build_typed_obj_props()
+    stmts = qsparql(load_typed_obj_props)
+    make_typed_obj_prop.(stmts)
+end
+
+# rfdict = Dict{String,Pair{Type,Type}}()
+# function register(fn::Method, subjt::Type, objt::Type)
+#     rfdict[string(fn)] = (subjt,objt)
+# end
+
+function build_all()
+    build_classes()
+    build_subclasses()
+    build_obj_props()
+    build_data_props()
+    build_model_instances()
+    build_typed_obj_props()
+    
+end
+
 export build_subclasses, build_classes, build_data_props, 
-build_obj_props, build_model_instances, process_rdf_data, 
+build_obj_props, build_model_instances, build_typed_obj_props, build_all, process_rdf_data, 
 qsparql, usparql, resource_dict, superclasses
 
 export rdf_type, rdfs_subClassOf
