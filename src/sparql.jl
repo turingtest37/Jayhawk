@@ -150,9 +150,45 @@ ORDER BY ?s
 load_typed_obj_props = 
 """
 CONSTRUCT { ?s ?prop ?o }
+#select ?s ?prop ?o
+
 { 
     GRAPH <urn:ontology> {
-        ?s rdfs:subClassOf ?rest .
+        {   
+        ?s rdfs:subClassOf ?rest 
+        }
+        UNION
+        {
+        ?s owl:equivalentClass ?eqc .
+        ?eqc a owl:Class ;
+             owl:intersectionOf ?list .
+        ?list (rdf:first | rdf:rest)+ ?rest .
+        }
+          
+        ?rest a owl:Restriction ;
+            owl:onProperty ?prop ;
+        .
+
+        {?rest owl:someValuesFrom ?o} UNION {?rest owl:allValuesFrom ?o}
+
+        FILTER(!ISBLANK(?prop))
+        FILTER(!ISBLANK(?o))
+        FILTER(?rest != rdf:nil)
+ 
+    }
+}
+ORDER BY ?prop ?s
+"""
+
+load_typed_data_props = 
+"""
+CONSTRUCT { ?s ?prop ?o }
+{ 
+    GRAPH <urn:ontology> {
+        ?s a owl:DatatypeProperty ;
+            rdfs:range ?r .
+
+        ?s rdfs:subPropertyOf ?rest .
         ?rest a owl:Restriction ;
             owl:onProperty ?prop ;
         .

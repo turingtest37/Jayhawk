@@ -1,4 +1,5 @@
 @prefix : <http://www.semanticweb.org/doug/ontologies/jayhawk#> .
+@prefix jayhawk: <http://www.semanticweb.org/doug/ontologies/jayhawk#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix xml: <http://www.w3.org/XML/1998/namespace> .
@@ -29,6 +30,7 @@ skos:prefLabel rdf:type owl:AnnotationProperty .
 ###  http://www.semanticweb.org/doug/ontologies/jayhawk#creates
 :creates rdf:type owl:ObjectProperty ;
          rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/affects> ;
+                 rdfs:isDefinedBy jayhawk: ;
          rdfs:comment "Represents the C in a RESTful Create Read Update Delete pattern." ;
          rdfs:label "creates" .
 
@@ -36,6 +38,7 @@ skos:prefLabel rdf:type owl:AnnotationProperty .
 ###  http://www.semanticweb.org/doug/ontologies/jayhawk#deletes
 :deletes rdf:type owl:ObjectProperty ;
          rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/affects> ;
+                 rdfs:isDefinedBy jayhawk: ;
          rdfs:comment "The D in a RESTful Create Read Update Delete pattern." ;
          rdfs:label "deletes" .
 
@@ -45,6 +48,7 @@ skos:prefLabel rdf:type owl:AnnotationProperty .
                 rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/hasAddress> ;
                 rdf:type owl:FunctionalProperty ;
                 rdfs:range :HttpPath ;
+                 rdfs:isDefinedBy jayhawk: ;
                 rdfs:comment "The object is a network path that follows HTTP formatting rules and possibly contains path variables." ;
                 rdfs:label "hasHttpAddress" ;
                 skos:prefLabel "hasHttpAddress" .
@@ -53,6 +57,7 @@ skos:prefLabel rdf:type owl:AnnotationProperty .
 ###  http://www.semanticweb.org/doug/ontologies/jayhawk#reads
 :reads rdf:type owl:ObjectProperty ;
        rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/affects> ;
+                 rdfs:isDefinedBy jayhawk: ;
        rdfs:comment "The R in a RESTful Create Read Update Delete pattern." ;
        rdfs:label "reads" .
 
@@ -60,6 +65,7 @@ skos:prefLabel rdf:type owl:AnnotationProperty .
 ###  http://www.semanticweb.org/doug/ontologies/jayhawk#renders
 :renders rdf:type owl:ObjectProperty ;
          owl:inverseOf <https://ontologies.semanticarts.com/gist/isRenderedOn> ;
+                 rdfs:isDefinedBy jayhawk: ;
          rdfs:comment "Subject produces a view of the object without altering it." ;
          rdfs:label "renders" ;
          skos:prefLabel "renders" .
@@ -68,6 +74,7 @@ skos:prefLabel rdf:type owl:AnnotationProperty .
 ###  http://www.semanticweb.org/doug/ontologies/jayhawk#triggersFunction
 :triggersFunction rdf:type owl:ObjectProperty ;
                   rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/hasGoal> ;
+                 rdfs:isDefinedBy jayhawk: ;
                   rdfs:comment "Calls for the execution of some Julia function." ;
                   rdfs:label "triggersFunction" ;
                   skos:prefLabel "triggers function" .
@@ -76,6 +83,7 @@ skos:prefLabel rdf:type owl:AnnotationProperty .
 ###  http://www.semanticweb.org/doug/ontologies/jayhawk#updates
 :updates rdf:type owl:ObjectProperty ;
          rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/affects> ;
+                 rdfs:isDefinedBy jayhawk: ;
          rdfs:comment "The U in a RESTful Create Read Update Delete pattern." ;
          rdfs:label "updates" .
 
@@ -90,7 +98,7 @@ skos:prefLabel rdf:type owl:AnnotationProperty .
 :createdDateTime rdf:type owl:DatatypeProperty ;
                  rdfs:subPropertyOf <https://ontologies.semanticarts.com/gist/actualEndDate> ;
                  rdfs:comment "Timestamp for the creation of an entity." ;
-                 rdfs:isDefinedBy <jayhawk:> ;
+                 rdfs:isDefinedBy jayhawk: ;
                  rdfs:label "createdDateTime" ;
                  skos:prefLabel "createdDateTime" .
 

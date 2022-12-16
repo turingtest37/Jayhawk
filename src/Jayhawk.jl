@@ -62,6 +62,7 @@ struct owl_Class end
 struct owl_Thing end
 struct owl_ObjectProperty end
 struct owl_DatatypeProperty end
+abstract type OwlDatatype end
 
 pfx_dict = Dict(
     "http://www.semanticweb.org/doug/ontologies/ebox#" => "ebox:",
@@ -95,6 +96,8 @@ Unknown(uri::String) = Unknown(uri,Dict(),Dict(),ResourceURI[])
 Unknown(u::ResourceURI) = Unknown(u.uri)
 
 s = [
+"owl_real",
+"owl:rational",
 "xsd:anyURI",
 "xsd:base64Binary",
 "xsd:boolean",
@@ -128,7 +131,13 @@ s = [
 # Create a Julia type for each xsd type
 map(s) do v
     s = Symbol(replace(v,':'=>'_'))
-    @eval struct $s v::String end
+    eval(
+        quote    
+            struct $s <: OwlDatatype
+                v::String
+            end
+        end
+    )
 end
 
 function qsparql(query::String)
@@ -237,7 +246,9 @@ function rdf_type(s::ResourceURI, ::Type{owl_ObjectProperty}, d::T) where {T<:Ab
 
                 # TODO How to call the "proper" method using typed arguments?
                 try
-                    eval(Expr(:call, Meta.parse($nm(subj_type, obj_type))))
+                    exp = Meta.parse($nm(subj_type, obj_type))
+                    @debug "Calling typed method" exp
+                    eval(Expr(:call, exp))
                 catch e
                     @error "Failed to call method." $nm subj_type obj_type e
                 end
@@ -261,7 +272,15 @@ function rdf_type(s::ResourceURI, ::Type{owl_DatatypeProperty}, d::T) where {T<:
                     Unknown(subj)
                 end
                 subj_type.out[$s] = obj
-            end
+
+                try
+                    exp = Meta.parse($nm(subj_type, obj.value))
+                    @debug "Calling typed method" exp
+                    eval(Expr(:call, exp))
+                catch e
+                    @error "Failed to call method." $nm subj_type obj.value e
+                end
+             end
             # Store the new function in the resource dictionary and export it
             $d[$s] = $nm
             export $nm
@@ -396,9 +415,18 @@ function make_typed_obj_prop(t::Triple; d::T = resource_dict) where {T<:Abstract
     objnm = Symbol(makeqname(o))
     @debug "make_typed_obj_prop" subjnm propnm objnm
 
+    # This forces datatype objects to be declared as Any instead of their XSD or OWL type
+    otype = @eval $objnm
+    if otype <: OwlDatatype
+        objnm = :Any
+    end
+
     eval(
         quote
-            $propnm(subj::$subjnm, obj::$objnm, dict::T = $d) where {T<:AbstractDict} = nothing
+            function $propnm(subj::$subjnm, obj::$objnm, dict::T = $d) where {T<:AbstractDict}
+                @debug "Called " $propnm subj obj 
+                nothing
+            end
             export $propnm
         end
     )    
@@ -409,6 +437,27 @@ function build_typed_obj_props()
     make_typed_obj_prop.(stmts)
 end
 
+""" Generate a no-op method with appropriate types for the arguments
+"""
+function make_typed_data_prop(t::Triple; d::T = resource_dict) where {T<:AbstractDict}
+    s, p, o = t.subject, t.predicate, t.object
+    @debug "make_typed_obj_prop" s p o
+    subjnm = Symbol(makeqname(s))
+    propnm = Symbol(makeqname(p))
+    @debug "make_typed_obj_prop" subjnm propnm objnm
+
+    eval(
+        quote
+            $propnm(subj::$subjnm, obj::Any, dict::T = $d) where {T<:AbstractDict} = nothing
+            export $propnm
+        end
+    )    
+end
+
+function build_typed_data_props()
+    stmts = qsparql(load_typed_data_props)
+    make_typed_data_prop.(stmts)
+end
 # rfdict = Dict{String,Pair{Type,Type}}()
 # function register(fn::Method, subjt::Type, objt::Type)
 #     rfdict[string(fn)] = (subjt,objt)
@@ -419,8 +468,8 @@ function build_all()
     build_subclasses()
     build_obj_props()
     build_data_props()
-    build_model_instances()
     build_typed_obj_props()
+    build_model_instances()
     
 end
 
