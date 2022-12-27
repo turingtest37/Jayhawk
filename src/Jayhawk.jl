@@ -3,7 +3,7 @@ module Jayhawk
 using Reexport
 @reexport using Serd
 @reexport using Serd.RDF
-@reexport using Serd.Prefixes
+@reexport using Serd.RDF.Prefixes
 using Logging
 using URIs
 using Dates
