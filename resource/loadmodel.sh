@@ -1,7 +1,7 @@
 #! /bin/sh
 repositoryID="ebox"
 ebox="/Users/doug/dev/Ebox/public/resource/ebox.ttl"
-jayhawk="/Users/doug/dev/Ebox/public/resource/jayhawk.ttl"
+jayhawk="/Users/doug/dev/Jayhawk/resource/jayhawk.ttl"
 gistSW="/Users/doug/dev/gistSW/gistSW0_1_0.ttl"
 gistResource="/Users/doug/dev/gistSW/gistResource0_1_0.ttl"
 gistMedia="/Users/doug/dev/gist11.1.0_webDownload/gistMediaTypes11.1.0.ttl"
