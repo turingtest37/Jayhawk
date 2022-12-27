@@ -1,7 +1,6 @@
 name = "Jayhawk"
-uuid = "5fe62046-e5c7-4abf-bd4a-639ba72c21c8"
-authors = ["dbeeson <dbeeson@mit.edu>"]
-version = "0.1.0"
+authors = ["dbeeson <doug.beeson@semanticarts.com>"]
+version = "0.2.0"
 
 [deps]
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
