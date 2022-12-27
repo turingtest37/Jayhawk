@@ -22,11 +22,14 @@ include("rdf.jl")
 include("sparql.jl")
 include("build.jl")
 
-
 # Jayhawk provides the framework for building applications that are graph-based and data-centric.
 
-
 function build_all()
+    # Set up our prefixes
+    add_prefix!("urn","urn:")
+    add_prefix!("gist", "https://ontologies.semanticarts.com/gist/")
+    add_prefix!("jayhawk", "http://www.semanticweb.org/doug/ontologies/jayhawk#")
+
     build_classes()
     build_instance_classes()
     build_subclasses()
@@ -34,7 +37,6 @@ function build_all()
     build_data_props()
     build_typed_props()
     build_model_instances()
-    build_typed_instance_props()
 end
 
 

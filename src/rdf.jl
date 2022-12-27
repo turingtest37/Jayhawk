@@ -18,10 +18,10 @@ function makeqname(s::String)
     try
         pfx = prefixforuri(namesp)
         @debug "prefix for uri" namesp pfx
-    catch
+    catch e
         nm = randstring('a':'z', 5)
         pfx = add_prefix!(nm, namesp)
-        @warn "Creating prefix '$pfx' for unknown namespace '$namesp'"
+        @warn "Creating prefix '$pfx' for unknown namespace '$namesp'" e
     end
     pfx.name * '_' * lnm
 end
@@ -87,7 +87,7 @@ cleanany(s::AbstractString) = startswith(s,r"<") ? cleanuri(s) : startswith(s,r"
 # "xsd:unsignedShort"
 # ]
 # Create a Julia type for each xsd type
-for uri in keys(Serd.rdf2julia_map)
+for uri in keys(rdf2julia_map)
   @debug "Creating datatype from uri" uri
   s = Symbol(makeqname(uri))
   @debug "Creating datatype" s

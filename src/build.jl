@@ -5,9 +5,6 @@ struct owl_ObjectProperty end
 struct owl_DatatypeProperty end
 struct owl_NamedIndividual end
 
-add_prefix!("urn","urn:")
-add_prefix!("jayhawk","http://www.semanticweb.org/doug/ontologies/jayhawk#")
-
 # pfx_dict = Dict(
 #     "http://www.semanticweb.org/doug/ontologies/ebox#" => "ebox:",
 #     "http://www.semanticweb.org/doug/ontologies/jayhawk#" => "jayhawk:",
@@ -19,6 +16,7 @@ add_prefix!("jayhawk","http://www.semanticweb.org/doug/ontologies/jayhawk#")
 #     "urn:" => "urn:"
 # )
 # rpfx_dict = Dict(values(pfx_dict) .=> keys(pfx_dict))
+
 
 resource_dict = Dict{Union{ResourceURI,Blank},Any}()
 
