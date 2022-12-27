@@ -230,7 +230,7 @@ version = "0.7.0"
 
 [[deps.Serd]]
 deps = ["AutoHashEquals", "Dates", "Serd_jll", "Test", "URIs"]
-git-tree-sha1 = "dedf896840097a14d2fcabbd840963cb87d280ba"
+git-tree-sha1 = "52c93a884d02510dce614304e2a0d42b9b8d4b76"
 repo-rev = "jayhawk-1"
 repo-url = "../Serd.jl"
 uuid = "42699a24-3520-5f41-a549-6a478ed667c2"
