@@ -87,7 +87,7 @@ cleanany(s::AbstractString) = startswith(s,r"<") ? cleanuri(s) : startswith(s,r"
 # "xsd:unsignedShort"
 # ]
 # Create a Julia type for each xsd type
-for uri in keys(rdf2julia_map)
+for uri in keys(Serd.rdf2julia_map)
   @debug "Creating datatype from uri" uri
   s = Symbol(makeqname(uri))
   @debug "Creating datatype" s
