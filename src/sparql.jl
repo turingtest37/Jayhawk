@@ -22,8 +22,10 @@ CONSTRUCT
 }
 WHERE { 
     GRAPH <urn:ontology> {
-    ?s a owl:NamedIndividual, ?class .
+    ?s a owl:NamedIndividual.
+    ?s a ?class .
     FILTER(!STRSTARTS(STR(?class),STR(owl:)))
+    FILTER(!STRSTARTS(STR(?class),STR(rdfs:)))
     }
 }
 """

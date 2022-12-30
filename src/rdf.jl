@@ -4,6 +4,9 @@ import Base.isequal, Base.hash, Base.show
 isequal(u1::URI, u2::URI) = u1.uri == u2.uri
 hash(u::URI) = hash(u.uri)
 
+import Base.split
+split(u::URI) = tuple(ns(u), localname(u))
+
 abstract type OwlDatatype end
 export OwlDatatype
 
@@ -12,21 +15,24 @@ MaybeString = Union{String,Nothing}
 
 # Transform a URI into a normalized name. 
 # e.g. 'http://www.w3.org/2002/07/owl#Class' becomes 'owl_Class'.
-function makeqname(s::String)
-    namesp,lnm = split(URI(s))
+function makeqname(u::URI)
+    namesp,lnm = split(u)
     pfx = nothing
     try
         pfx = prefixforuri(namesp)
         @debug "prefix for uri" namesp pfx
+        curie = ResourceCURIE(pfx.name, lnm)
+        makeqname(curie)
     catch e
-        nm = randstring('a':'z', 5)
-        pfx = add_prefix!(nm, namesp)
-        @warn "Creating prefix '$pfx' for unknown namespace '$namesp'" e
+        # nm = randstring('a':'z', 5)
+        # pfx = add_prefix!(nm, namesp)
+        @warn "No prefix found for namespace '$namesp'"
+        s
     end
-    pfx.name * '_' * lnm
 end
-makeqname(u::URI) = makeqname(u.uri)
-makeqname(u::ResourceURI) = makeqname(u.uri)
+makeqname(uri::ResourceURI) = makeqname(URI(uri.uri))
+makeqname(curie::ResourceCURIE) = makeqname(curie.prefix,curie.name)
+makeqname(prefix::String, name::String) = prefix * "_" * name
 
 function localname(u::URI)
   u.scheme == "urn" && return u.path
@@ -39,57 +45,51 @@ function ns(u::URI)
 end
 ns(s::String) = ns(URI(s))
 
-import Base.split
-split(u::URI) = tuple(ns(u), localname(u))
-
 macro U_str(s::String)
   URI(s)
 end
 
-valueof(x::URI) = x
-valueof(v::Vector) = [valueof(x) for x in v]
-valueof(x::Nothing) = nothing
-
 cleanuri(s::AbstractString) = startswith(s,r"_:") ? BlankNode(s) : URI(strip(s, ['<','>',' ']))
 cleanany(s::AbstractString) = startswith(s,r"<") ? cleanuri(s) : startswith(s,r"_:") ? BlankNode(s) : Literal(strip(s))
 
-# s = [
-# "owl:real",
-# "owl:rational",
-# "xsd:anyURI",
-# "xsd:base64Binary",
-# "xsd:boolean",
-# "xsd:byte",
-# "xsd:dateTime",
-# "xsd:dateTimeStamp",
-# "xsd:decimal",
-# "xsd:double",
-# "xsd:float",
-# "xsd:hexBinary",
-# "xsd:int",
-# "xsd:integer",
-# "xsd:language",
-# "xsd:long",
-# "xsd:Name",
-# "xsd:NCName",
-# "xsd:negativeInteger",
-# "xsd:NMTOKEN",
-# "xsd:nonNegativeInteger",
-# "xsd:nonPositiveInteger",
-# "xsd:normalizedString",
-# "xsd:positiveInteger",
-# "xsd:short",
-# "xsd:string",
-# "xsd:token",
-# "xsd:unsignedByte",
-# "xsd:unsignedInt",
-# "xsd:unsignedLong",
-# "xsd:unsignedShort"
-# ]
+datatypes = [
+"owl:real",
+"owl:rational",
+"xsd:anyURI",
+"xsd:base64Binary",
+"xsd:boolean",
+"xsd:byte",
+"xsd:dateTime",
+"xsd:dateTimeStamp",
+"xsd:decimal",
+"xsd:double",
+"xsd:float",
+"xsd:hexBinary",
+"xsd:int",
+"xsd:integer",
+"xsd:language",
+"xsd:long",
+"xsd:Name",
+"xsd:NCName",
+"xsd:negativeInteger",
+"xsd:NMTOKEN",
+"xsd:nonNegativeInteger",
+"xsd:nonPositiveInteger",
+"xsd:normalizedString",
+"xsd:positiveInteger",
+"xsd:short",
+"xsd:string",
+"xsd:token",
+"xsd:unsignedByte",
+"xsd:unsignedInt",
+"xsd:unsignedLong",
+"xsd:unsignedShort"
+]
 # Create a Julia type for each xsd type
-for uri in keys(Serd.rdf2julia_map)
-  @debug "Creating datatype from uri" uri
-  s = Symbol(makeqname(uri))
+for x in datatypes
+  @debug "Creating datatype from uri" x
+  pfx,nm = string.(split(x,":"))
+  s = Symbol(makeqname(pfx,nm))
   @debug "Creating datatype" s
   eval(
     quote    

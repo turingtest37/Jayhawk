@@ -94,7 +94,8 @@ function rdf_type(s::ResourceURI, ::Type{owl_Class}, d::T) where {T<:AbstractDic
                 @debug "new instance is " dict[r]
             end
         end
-    ) 
+    )
+    @info "Created type $nm."
 end
 
 # Transform a ObjectProperty into a Julia function
@@ -128,6 +129,7 @@ function rdf_type(s::ResourceURI, ::Type{owl_ObjectProperty}, d::T) where {T<:Ab
             export $nm
         end
         )
+    @info "Created function $nm(subj::Union{ResourceURI,Blank}, obj::Union{ResourceURI,Blank})"
 end
 
 # Transform a DatatypeProperty into a Julia function
@@ -146,14 +148,19 @@ function rdf_type(s::ResourceURI, ::Type{owl_DatatypeProperty}, d::T) where {T<:
                 try
                     $nm(subj_type, obj.value, dict)
                 catch e
-                    @warn "Failed to call method." $nm subj_type obj.value e
+                    @warn "Failed to call method. Switching to Unknown type param." $nm subj_type obj.value e
+                    $nm(Unknown(subj), obj.value, dict)
                 end
              end
             # Store the new function in the resource dictionary and export it
+            function $nm(subj::Unknown, obj::Literal, dict::T) where {T<:AbstractDict}
+                @debug "Function called: " $nm subj obj
+            end
             $d[$s] = $nm
             export $nm
         end
-    ) 
+    )
+    @info "Created function $nm(subj::ResourceURI, obj::Literal)"
 end
 
 function rdf_type(s::ResourceURI, ::Type{owl_NamedIndividual}, d::T) where {T<:AbstractDict}
@@ -259,7 +266,8 @@ function make_typed_prop(t::Triple; d::T = resource_dict) where {T<:AbstractDict
             return make_typed_data_prop(t; d=d)
         end
     catch e
-        @warn "No type found for object name." objnm
+        @warn "No type found for object name. Forcing to Unknown." objnm
+        objnm = :Unknown
     end
 
     eval(
@@ -268,10 +276,20 @@ function make_typed_prop(t::Triple; d::T = resource_dict) where {T<:AbstractDict
                 @debug "Function called: " $propnm subj obj 
                 nothing
             end
+            function $propnm(subj::Unknown, obj::$objnm, dict::T = $d) where {T<:AbstractDict}
+                @debug "Function called: " $propnm subj obj 
+                nothing
+            end
+            function $propnm(subj::Unknown, obj::Unknown, dict::T = $d) where {T<:AbstractDict}
+                @debug "Function called: " $propnm subj obj 
+                nothing
+            end
             export $propnm
         end
     )
-    @info "Created function $propnm(::$subjnm,::$objnm)"
+    @info "Created function $propnm(::$subjnm, ::$objnm)"
+    @info "Created function $propnm(::Unknown, ::$objnm)"
+    @info "Created function $propnm(::Unknown, ::Unknown)"
 end
 
 """
@@ -298,9 +316,15 @@ function make_typed_data_prop(t::Triple; d::T = resource_dict) where {T<:Abstrac
                 @debug "Function called: " $propnm subj obj 
                 nothing
             end
+            function $propnm(subj::Unknown, obj::Any, dict::T = $d) where {T<:AbstractDict}
+                @debug "Function called: " $propnm subj obj 
+                nothing
+            end
             export $propnm
         end
     )    
+    @info "Created function $propnm(::$subjnm, ::Any)"
+    @info "Created function $propnm(::Unknown, ::Any)"
 end
 
 # Select RDF and create a Julia Type for owl:Class

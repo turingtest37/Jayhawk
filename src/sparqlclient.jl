@@ -99,27 +99,6 @@ function runsparql(spq::String, update=false; m::Dict = Dict(), qheaders=QHEADER
   return resp
 end
 
-# @todo These should be merged with constants and renamed 
-# p_rid = URI("http://ontologies.pit.mit.edu/core/rid")
-# p_rdftype = URI("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
-# p_deftype = URI("http://www.w3.org/2002/07/owl#Thing")
-# p_skosprefl = URI("http://www.w3.org/2004/02/skos/core#prefLabel")
-# p_rdfslabel = URI("http://www.w3.org/2000/01/rdf-schema#label")
-# p_gistname = URI("https://ontologies.semanticarts.com/gist/name")
-# export p_rid, p_gistname, p_hasFilePath
-
-# valforpred(d::Dict, pred::URI, def=nothing) = get(d,pred,def)
-# export valforpred
-
-# preflabel(pred::Dict) = valueof(valforpred(pred,p_skosprefl,valforpred(pred,p_rdfslabel,"")))
-# export preflabel
-
-# gistname(pred::Dict) = valueof(valforpred(pred,p_gistname))
-# export gistname
-
-# hasFilePath(pred::Dict) = valueof(valforpred(pred,p_hasFilePath))
-# export hasFilePath
-
 
 function objfromdict(T::Type, r::Dict)
   res = T[]
