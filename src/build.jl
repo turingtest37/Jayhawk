@@ -17,8 +17,8 @@ struct owl_NamedIndividual end
 # )
 # rpfx_dict = Dict(values(pfx_dict) .=> keys(pfx_dict))
 
-
 resource_dict = Dict{Union{ResourceURI,Blank},Any}()
+initialize() = deepcopy(resource_dict)
 
 # 1. Fetch subclasses, put each in a dictionary
 # 2. Fetch classes. For each subject class, look up its URI in the subclass table
@@ -196,12 +196,12 @@ function rdfs_subClassOf(s::ResourceURI, o::ResourceURI)
     rdfs_subClassOf(s_type, o_type)
 end
 
-function owl_sameAs(s::ResourceURI, o::ResourceURI)
-    s_type = get(resource_dict, s, Unknown(s))
-    o_type = get(resource_dict, o, Unknown(o))
+# function owl_sameAs(s::ResourceURI, o::ResourceURI)
+#     s_type = get(resource_dict, s, Unknown(s))
+#     o_type = get(resource_dict, o, Unknown(o))
 
     
-end
+# end
 
 function make_type_or_instance(t::Triple, d::T) where {T<:AbstractDict}
     s, p, o = t.subject, t.predicate, t.object

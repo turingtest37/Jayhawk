@@ -21,8 +21,7 @@ function makeqname(u::URI)
     try
         pfx = prefixforuri(namesp)
         @debug "prefix for uri" namesp pfx
-        curie = ResourceCURIE(pfx.name, lnm)
-        makeqname(curie)
+        makeqname(pfx.name, lnm)
     catch e
         # nm = randstring('a':'z', 5)
         # pfx = add_prefix!(nm, namesp)
@@ -39,6 +38,7 @@ function localname(u::URI)
   isempty(u.fragment) ? last(split(u.path, "/")) : u.fragment
 end
 localname(s::String) = localname(URI(s))
+
 function ns(u::URI)
   u.scheme == "urn" && return "urn:"
   isempty(u.fragment) ? u.uri[1:first(findlast("/",u.uri))] : u.uri[1:first(findlast("#",u.uri))]

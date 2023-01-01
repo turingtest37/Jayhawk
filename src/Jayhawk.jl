@@ -8,10 +8,10 @@ using Logging
 using URIs
 using Dates
 using Random
-using InteractiveUtils: methodswith
+# using InteractiveUtils: methodswith
 
 export build_model, build_instance_classes, build_model_instances, process_rdf_data, 
-qsparql, usparql, resource_dict, superclasses
+qsparql, usparql, superclasses
 export makeqname
 export rdf_type, rdfs_subClassOf
 export Unknown
