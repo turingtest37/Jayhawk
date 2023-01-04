@@ -136,13 +136,12 @@ PREFIX owl: <http://www.w3.org/2002/07/owl#>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 
 CONSTRUCT { ?classOfSubject ?predicate ?classOrDatatypeOfObject }
-#select *
 
 { 
     GRAPH <urn:ontology> {
         
         ?classOfSubject rdfs:subClassOf* ?classWithRestriction .  # restrictions apply to all subclasses
-        ?classWithRestriction (rdfs:subClassOf|owl:equivalentClass) ?classExpression .
+        ?classWithRestriction (rdfs:subClassOf|owl:equivalentClass)* ?classExpression .
         
         {
             ?classExpression owl:oneOf ?instanceList .
@@ -176,6 +175,7 @@ CONSTRUCT { ?classOfSubject ?predicate ?classOrDatatypeOfObject }
         ?restriction owl:onDataRange ?classOrDatatypeOfObject .
         }
 
+        FILTER(isUri(?classOfSubject))        # remove subject blank nodes
         FILTER(isUri(?classOrDatatypeOfObject))        # remove intermediate blank nodes
         FILTER(?classOrDatatypeOfObject != rdf:nil)
     }

@@ -1,8 +1,8 @@
-import Base.isequal, Base.hash, Base.show
+# import Base.isequal, Base.hash, Base.show
 
 # ==(u1::URI, u2::URI) = u1.uri == u2.uri
-isequal(u1::URI, u2::URI) = u1.uri == u2.uri
-hash(u::URI) = hash(u.uri)
+# isequal(u1::URI, u2::URI) = u1.uri == u2.uri
+# hash(u::URI) = hash(u.uri)
 
 import Base.split
 split(u::URI) = tuple(ns(u), localname(u))
@@ -10,25 +10,30 @@ split(u::URI) = tuple(ns(u), localname(u))
 abstract type OwlDatatype end
 export OwlDatatype
 
-MaybeURI = Union{URI,Nothing}
-MaybeString = Union{String,Nothing}
+# MaybeURI = Union{URI,Nothing}
+# MaybeString = Union{String,Nothing}
 
-# Transform a URI into a normalized name. 
-# e.g. 'http://www.w3.org/2002/07/owl#Class' becomes 'owl_Class'.
+""" makeqname
+Transform a URI into a normalized name by looking up the registered prefix and replacing ':' with '_" in the local name part. 
+e.g. 'http://www.w3.org/2002/07/owl#Class' becomes 'owl_Class'.
+
+@see add_prefix!
+"""
 function makeqname(u::URI)
     namesp,lnm = split(u)
     pfx = nothing
-    try
-        pfx = prefixforuri(namesp)
-        @debug "prefix for uri" namesp pfx
-        makeqname(pfx.name, lnm)
-    catch e
+    # try
+      pfx = prefixforuri(namesp)
+      @debug "prefix for uri" namesp pfx
+      makeqname(pfx.name, replace(string(lnm),":"=>"_"))
+    # catch e
         # nm = randstring('a':'z', 5)
         # pfx = add_prefix!(nm, namesp)
-        @warn "No prefix found for namespace '$namesp'"
-        s
-    end
+        # @warn "No prefix found for namespace '$namesp'"
+        # s
+    # end
 end
+makeqname(s::String) = makeqname(URI(s))
 makeqname(uri::ResourceURI) = makeqname(URI(uri.uri))
 makeqname(curie::ResourceCURIE) = makeqname(curie.prefix,curie.name)
 makeqname(prefix::String, name::String) = prefix * "_" * name
@@ -49,8 +54,8 @@ macro U_str(s::String)
   URI(s)
 end
 
-cleanuri(s::AbstractString) = startswith(s,r"_:") ? BlankNode(s) : URI(strip(s, ['<','>',' ']))
-cleanany(s::AbstractString) = startswith(s,r"<") ? cleanuri(s) : startswith(s,r"_:") ? BlankNode(s) : Literal(strip(s))
+# cleanuri(s::AbstractString) = startswith(s,r"_:") ? BlankNode(s) : URI(strip(s, ['<','>',' ']))
+# cleanany(s::AbstractString) = startswith(s,r"<") ? cleanuri(s) : startswith(s,r"_:") ? BlankNode(s) : Literal(strip(s))
 
 datatypes = [
 "owl:real",

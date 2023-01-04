@@ -1,7 +1,7 @@
 name = "Jayhawk"
+uuid = "12faa926-1a3f-5f5e-81b2-8d3f7f967ea3"
 authors = ["dbeeson <doug.beeson@semanticarts.com>"]
 version = "0.2.0"
-uuid = "12faa926-1a3f-5f5e-81b2-8d3f7f967ea3" 
 
 [deps]
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
@@ -14,4 +14,5 @@ Mustache = "ffc61752-8dc7-55ee-8c37-f3e9cdd09e70"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Reexport = "189a3867-3050-52da-a836-e630ba90ab69"
 Serd = "42699a24-3520-5f41-a549-6a478ed667c2"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 URIs = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
