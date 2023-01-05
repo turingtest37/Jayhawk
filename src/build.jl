@@ -5,18 +5,6 @@ struct owl_ObjectProperty end
 struct owl_DatatypeProperty end
 struct owl_NamedIndividual end
 
-# pfx_dict = Dict(
-#     "http://www.semanticweb.org/doug/ontologies/ebox#" => "ebox:",
-#     "http://www.semanticweb.org/doug/ontologies/jayhawk#" => "jayhawk:",
-#     "https://ontologies.semanticarts.com/gist/" => "gist:",
-#     "http://www.w3.org/1999/02/22-rdf-syntax-ns#" => "rdf:",
-#     "http://www.w3.org/2002/07/owl#" => "owl:",
-#     "http://www.w3.org/2001/XMLSchema#" => "xsd:",
-#     "http://www.w3.org/2000/01/rdf-schema#" => "rdfs:",
-#     "urn:" => "urn:"
-# )
-# rpfx_dict = Dict(values(pfx_dict) .=> keys(pfx_dict))
-
 resource_dict = Dict{Union{ResourceURI,Blank},Any}()
 initialize() = deepcopy(resource_dict)
 
@@ -25,6 +13,18 @@ initialize() = deepcopy(resource_dict)
 # 3. Build the type using eval, adding in the vector of subclasses for each subject
 # subclasses = Dict{ResourceURI,Vector{ResourceURI}}()
 superclasses = Dict{ResourceURI,Vector{ResourceURI}}()
+
+struct TLogEntry
+    s::Any
+    p::Function
+    o::Any
+end
+
+struct TLog{T<:AbstractDict}
+    rd::T
+    entries::Vector{TLogEntry}
+end
+TLog(d::T) where {T<:AbstractDict} = TLog(d, TLogEntry[])
 
 # The Unknown Type is used when a statement is encountered for which
 # we do not (yet) have the type of the object.
@@ -61,7 +61,7 @@ function rdf_type(s::ResourceURI, ::Type{owl_Class}, d::T) where {T<:AbstractDic
             end
 
             function $nm(uri::String, in::Dict, out::Dict)
-                supclasses = get(resource_dict, ResourceURI(uri), ResourceURI[])
+                supclasses = get!(superclasses, ResourceURI(uri), ResourceURI[])
                 $nm(uri,in,out,supclasses)
             end
 
@@ -99,33 +99,33 @@ function rdf_type(s::ResourceURI, ::Type{owl_Class}, d::T) where {T<:AbstractDic
 end
 
 # Transform a ObjectProperty into a Julia function
-function rdf_type(s::ResourceURI, ::Type{owl_ObjectProperty}, d::T) where {T<:AbstractDict}
-    @debug "rdf_type($s Type{owl_ObjectProperty})"
-    nm = Symbol(makeqname(s))
+function rdf_type(suri::ResourceURI, ::Type{owl_ObjectProperty}, d::T) where {T<:AbstractDict}
+    @debug "rdf_type($suri Type{owl_ObjectProperty})"
+    nm = Symbol(makeqname(suri))
         eval(
         quote
-            function $nm(subj::Union{ResourceURI,Blank}, obj::Union{ResourceURI,Blank}, dict::T) where {T<:AbstractDict}
+            function $nm(suri::Union{ResourceURI,Blank}, ouri::Union{ResourceURI,Blank}, dict::T) where {T<:AbstractDict}
                 #fetch instantiated type from resource dictionary, else Unknown
                 # @TODO the next lines will break on a blank node
-                subj_type = get!(dict, subj) do 
-                    Unknown(subj)
+                subj = get!(dict, suri) do 
+                    Unknown(suri)
                 end 
-                obj_type = get!(dict, obj) do 
-                    Unknown(obj) 
+                obj = get!(dict, ouri) do 
+                    Unknown(ouri) 
                 end
 
                 # link the subject and object by the property URI, in both directions
-                subj_type.out[$s] = obj
-                obj_type.in[$s] = subj
+                subj.out[$suri] = ouri
+                obj.in[$suri] = suri
 
                 try
-                    $nm(subj_type, obj_type, dict)
+                    $nm(subj, obj, dict)
                 catch e
-                    @error "Failed to call method." $nm subj_type obj_type e
+                    @error "Failed to call method." $nm subj obj e
                 end
             end
             # register new function in resource dictionary``
-            $d[$s] = $nm
+            $d[$suri] = $nm
             export $nm
         end
         )
@@ -133,30 +133,29 @@ function rdf_type(s::ResourceURI, ::Type{owl_ObjectProperty}, d::T) where {T<:Ab
 end
 
 # Transform a DatatypeProperty into a Julia function
-function rdf_type(s::ResourceURI, ::Type{owl_DatatypeProperty}, d::T) where {T<:AbstractDict}
-    @debug "rdf_type($s, Type{owl_DatatypeProperty})"
-    nm = Symbol(makeqname(s))
+function rdf_type(suri::ResourceURI, ::Type{owl_DatatypeProperty}, d::T) where {T<:AbstractDict}
+    @debug "rdf_type($suri, Type{owl_DatatypeProperty})"
+    nm = Symbol(makeqname(suri))
     eval(
         quote
-            function $nm(subj::ResourceURI, obj::Literal, dict::T) where {T<:AbstractDict}
-                @debug $nm subj obj
-                subj_type = get!(dict, subj) do 
-                    Unknown(subj)
+            function $nm(suri::ResourceURI, obj::Literal, dict::T) where {T<:AbstractDict}
+                @debug $nm suri obj
+                subj = get!(dict, suri) do 
+                    Unknown(suri)
                 end
-                subj_type.out[$s] = obj
+                subj.out[$suri] = obj
 
                 try
-                    $nm(subj_type, obj.value, dict)
+                    $nm(subj, obj.value, dict)
                 catch e
-                    @warn "Failed to call method. Switching to Unknown type param." $nm subj_type obj.value e
-                    $nm(Unknown(subj), obj.value, dict)
+                    @warn "Failed to call method." $nm subj obj.value e
                 end
              end
             # Store the new function in the resource dictionary and export it
             function $nm(subj::Unknown, obj::Literal, dict::T) where {T<:AbstractDict}
                 @debug "Function called: " $nm subj obj
             end
-            $d[$s] = $nm
+            $d[$suri] = $nm
             export $nm
         end
     )
@@ -247,83 +246,91 @@ function build_subclasses()
     make_subclass.(stmts)
 end
 
+"""
+Push a new entry into the TLog for the given subject, function name and object
+"""
+function add_entry(tl::TLog,s,p::Function,o)
+    @debug "adding TLogEntry" s p o
+    push!(tl.entries, TLogEntry(s,p,o))
+end
+
 """ Generate a no-op method with appropriate types for the arguments
 """
-function make_typed_prop(t::Triple; d::T = resource_dict) where {T<:AbstractDict}
+function make_typed_prop(t::Triple, tl::TLog)
     @debug "make_typed_obj_prop" t
     s, p, o = t.subject, t.predicate, t.object
-    subjnm = Symbol(makeqname(s))
+    stypenm = Symbol(makeqname(s))
     propnm = Symbol(makeqname(p))
-    objnm = Symbol(makeqname(o))
-    @debug "make_typed_obj_prop" subjnm propnm objnm
+    otypenm = Symbol(makeqname(o))
+    @debug "make_typed_obj_prop" stypenm propnm otypenm
 
     # This forces datatype objects to be declared as Any instead of their XSD or OWL type
     try
-        otype = @eval $objnm
+        otype = @eval $otypenm
         @debug "object type" otype
 
         if otype <: OwlDatatype
             return make_typed_data_prop(t; d=d)
         end
     catch e
-        @warn "No type found for object name. Forcing to Unknown." objnm
-        objnm = :Unknown
+        @warn "No type found for object name. Forcing to Unknown." otypenm
+        otypenm = :Unknown
     end
 
     eval(
         quote
-            function $propnm(subj::$subjnm, obj::$objnm, dict::T = $d) where {T<:AbstractDict}
-                @debug "Function called: " $propnm subj obj 
-                nothing
+            function $propnm(subj::$stypenm, obj::$otypenm)
+                @debug "Function called: " $propnm subj obj
+                add_entry($tl, subj, $propnm, obj)
             end
-            function $propnm(subj::Unknown, obj::$objnm, dict::T = $d) where {T<:AbstractDict}
+            function $propnm(subj::Unknown, obj::$otypenm)
                 @debug "Function called: " $propnm subj obj 
-                nothing
+                add_entry($tl, subj, $propnm, obj)
             end
-            function $propnm(subj::Unknown, obj::Unknown, dict::T = $d) where {T<:AbstractDict}
+            function $propnm(subj::Unknown, obj::Unknown)
                 @debug "Function called: " $propnm subj obj 
-                nothing
+                add_entry($tl, subj, $propnm, obj)
             end
             export $propnm
         end
     )
-    @info "Created function $propnm(::$subjnm, ::$objnm)"
-    @info "Created function $propnm(::Unknown, ::$objnm)"
+    @info "Created function $propnm(::$stypenm, ::$otypenm)"
+    @info "Created function $propnm(::Unknown, ::$otypenm)"
     @info "Created function $propnm(::Unknown, ::Unknown)"
 end
 
 """
 Create either a typed object property or typed datatype property depending on the triple's type.
 """
-function make_typed_instance_prop(t::Triple; d::T = resource_dict) where {T<:AbstractDict}
+function make_typed_instance_prop(t::Triple, tl::TLog)
     s, p, o = t.subject, t.predicate, t.object
     @debug "make_typed_instance_prop" s p o
-    typeof(o) == Literal ? make_typed_data_prop(t; d=d) : make_typed_prop(t; d=d)
+    typeof(o) == Literal ? make_typed_data_prop(t, tl) : make_typed_prop(t, tl)
 end
 
 """ Generate a no-op method with appropriate types for the arguments
 """
-function make_typed_data_prop(t::Triple; d::T = resource_dict) where {T<:AbstractDict}
+function make_typed_data_prop(t::Triple, tl::TLog)
     s, p, o = t.subject, t.predicate, t.object
     @debug "make_typed_data_prop" s p o
-    subjnm = Symbol(makeqname(s))
+    stypenm = Symbol(makeqname(s))
     propnm = Symbol(makeqname(p))
-    @debug "make_typed_data_prop" subjnm propnm
+    @debug "make_typed_data_prop" stypenm propnm
 
     eval(
         quote
-            function $propnm(subj::$subjnm, obj::Any, dict::T = $d) where {T<:AbstractDict}
+            function $propnm(subj::$stypenm, obj::Any)
                 @debug "Function called: " $propnm subj obj 
-                nothing
+                add_entry($tl, subj, $propnm, obj)
             end
-            function $propnm(subj::Unknown, obj::Any, dict::T = $d) where {T<:AbstractDict}
+            function $propnm(subj::Unknown, obj::Any)
                 @debug "Function called: " $propnm subj obj 
-                nothing
+                add_entry($tl, subj, $propnm, obj)
             end
             export $propnm
         end
     )    
-    @info "Created function $propnm(::$subjnm, ::Any)"
+    @info "Created function $propnm(::$stypenm, ::Any)"
     @info "Created function $propnm(::Unknown, ::Any)"
 end
 
@@ -360,7 +367,9 @@ end
 function build_typed_props()
     @info "Building typed properties..."
     stmts = qsparql(load_typed_properties)
-    make_typed_prop.(stmts)
+    tl = TLog(resource_dict)
+    make_typed_instance_prop.(stmts, Ref(tl))
+    @show tl
 end
 
 # Select RDF and create instances from the ontology
