@@ -7,6 +7,8 @@
 import Base.split
 split(u::URI) = tuple(ns(u), localname(u))
 
+import Serd.RDF.Prefixes: prefixforuri
+
 abstract type OwlDatatype end
 export OwlDatatype
 
