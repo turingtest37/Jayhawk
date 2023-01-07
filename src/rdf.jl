@@ -23,7 +23,7 @@ function makeqname(u::URI)
     namesp,lnm = split(u)
     pfx = nothing
     # try
-      pfx = prefixforuri(namesp)
+      pfx = Serd.RDF.Prefixes.prefixforuri(namesp)
       @debug "prefix for uri" namesp pfx
       makeqname(pfx.name, replace(string(lnm),":"=>"_"))
     # catch e
