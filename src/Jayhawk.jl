@@ -8,6 +8,8 @@ using Dates
 using Random
 # using InteractiveUtils: methodswith
 
+export addprefix!
+
 export build_model, build_instance_classes, build_model_instances, process_rdf_data, 
 qsparql, usparql, superclasses
 export makeqname, set_def_prefixes
