@@ -8,6 +8,7 @@ using Dates
 using Random
 # using InteractiveUtils: methodswith
 
+addprefix!(pfx::String, uri::String) = Serd.RDF.Prefixes.addprefix!(pfx,uri)
 export addprefix!
 
 export build_model, build_instance_classes, build_model_instances, process_rdf_data, 
