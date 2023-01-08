@@ -24,7 +24,7 @@ makeqname(uri::ResourceURI) = makeqname(URI(uri.uri))
 makeqname(curie::ResourceCURIE) = makeqname(curie.prefix,curie.name)
 makeqname(prefix::String, name::String) = prefix * "_" * name
 
-prefixforuri(namesp) = Serd.RDF.Prefixes.prefixforuri(namesp)
+prefixforuri(namesp) = prefixforuri(namesp)
 export prefixforuri
 
 function localname(u::URI)
