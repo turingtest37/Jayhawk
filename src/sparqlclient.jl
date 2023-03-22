@@ -122,3 +122,13 @@ end
 
 build(T::Type, doc) = objfromdict(T, parsent(doc))
 export build
+
+function qsparql(query::String)
+  fnm = tempname()
+  write(fnm, runsparql(query))
+  read_rdf_file(fnm)
+end
+
+function usparql(upd::String; dict=Dict())
+  runsparql(upd, true, dict)
+end

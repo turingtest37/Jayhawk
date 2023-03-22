@@ -59,13 +59,14 @@ function rdf_type(s::ResourceURI, ::Type{owl_Class}, sc = ResourceURI[])
     eval(
         quote
             struct $nm
-            uri::String
-            in::Dict{ResourceURI, Union{ResourceURI,Blank}}
-            out::Dict{ResourceURI, Node}
-            super::Vector{ResourceURI}
+                uri::Resource
+                in::Dict{Resource, RORB}
+                out::Dict{Resource, Node}
+                super::Vector{Resource}
             end
             # constructor
-            $nm(uri::String) = $nm(uri,Dict(),Dict(),$sc)
+            $nm(uri::String) = $nm(ResourceURI(uri),Dict(),Dict(),$sc)
+            $nm(uri::Resource) = $nm(uri,Dict(),Dict(),$sc)
             # convert an Unknown into the new type
             $nm(u::Unknown) = $nm(u.uri, u.in, u.out, u.super)
         
@@ -75,15 +76,15 @@ function rdf_type(s::ResourceURI, ::Type{owl_Class}, sc = ResourceURI[])
             # create function to instantiate the new type and store it.
             # If the subject was previously seen and stored as an Unknown,
             # convert into the new type.
-            function rdf_type(r::ResourceURI, ::Type{$nm})
+            function rdf_type(r::Resource, ::Type{$nm}, d = $resource_dict)
                 @debug "rdf_type $r $nm"
                 # if we have already seen this URI, fetch it from the dictionary. It might be an Unknown
-                _u = get(resource_dict, r, Unknown(r.uri))
+                _u = retrieve!(d, r, Unknown(r.uri))
                 if typeof(_u) == Unknown
                     # make a new instance and copy the Unknown stuff into it
                     # This also covers the case of a completely new, never seen before instance
                     _instance = $nm(_u)
-                    resource_dict[r] = _instance
+                    d[r] = _instance
                 else
                     # take the instance that was already created
                     _instance = _u

@@ -2,6 +2,7 @@ using Test
 
 using Jayhawk
 using URIs
+using Serd, Serd.RDF, Serd.RDF.Prefixes
 
 Jayhawk.set_def_prefixes()
 
@@ -62,5 +63,86 @@ Jayhawk.set_def_prefixes()
         @test makeqname(uri) == a
     end
 
+end
 
+@testset "Parsing" begin
+    
+    t = """
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX owl: <http://www.w3.org/2002/07/owl#>
+    PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+    PREFIX ex: <http://ontologies.example.org/doug#>
+    PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+    PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+    
+    BASE <http://id.example.org/doug/>
+
+    ex:Quark rdf:type owl:Class ;
+        rdfs:label "Quark" ;
+        rdfs:comment "Murray Gel-Mann's thing" ;
+    .
+
+    ex:QuarkType rdf:type owl:Class ;
+        rdfs:label "QuarkType" ;
+        rdfs:comment "Murray Gel-Mann's thing" ;
+        skos:definition "The kind of quark in question." ;
+    .
+
+    ex:is-categorized-by rdf:type owl:ObjectProperty ;
+        skos:prefLabel "is categorized by" ;
+        skos:definition "Subject is further defined by the object category item." ;
+    .
+
+    ex:s-factor rdf:type owl:DatatypeProperty ;
+        skos:prefLabel "s-factor" ;
+        skos:definition "The reknowned s factor in RDF." ;
+        rdfs:range xsd:float ;
+    .
+
+    :_Quark_strange rdf:type ex:QuarkType ;
+        rdfs:label "Strange flavor quark." ;
+    .
+    :_abcde rdf:type ex:Quark ;
+        ex:is-categorized-by :_Quark_strange ;
+    .
+
+    """
+    stmts,pfx,buri = read_rdf_string(t)
+    # @debug "Turtle parsing unit test" stmts
+    s2 = scoobify(stmts,pfx,buri)
+    @debug "Post scoobify" s2
+    d = initialize()
+    @debug "tracelog before make_anything" d
+    # filter!(s->typeof(s)==Triple, stmts)
+    Serd.RDF.Prefixes.add_prefix!.(pfx)
+    Jayhawk.make_anything.(s2,Ref(d))
+    @debug "tracelog after make_anything" d
+    @test in(Resource("http://id.example.org/doug/_Quark_strange"), keys(d.ldict)) 
+
+end
+
+@testset "TraceLog local only" begin
+    tl = TraceLog()
+    s = ResourceURI("http://example.org/ok")
+    o = "Marvelous!"
+    store_local!(tl, o, s)
+
+    @test o == tl.ldict[s]
+end
+
+@testset "TraceLog both" begin
+    tl = TraceLog()
+    s = ResourceURI("http://example.org/ok")
+    o = "Marvelous!"
+    store_local!(tl, o, s)
+
+    @test o == tl.ldict[s]
+    
+    store_res!(tl, o, s)
+    @test o == tl.rdict[s]
+end
+
+@testset "retrieve! no default provided" begin
+    tl = TraceLog()
+    @test retrieve!(tl, ResourceURI("/bogus")) == Unknown(ResourceURI("/bogus"))
 end

@@ -1,3 +1,38 @@
+loadmodel = """
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+CONSTRUCT
+{
+    ?s ?p ?o .
+}
+WHERE { 
+    GRAPH <urn:ontology> {
+    {
+        ?s ?p ?o .
+    } 
+    # FILTER(!ISBLANK(?s))
+    }
+} order by ?s
+"""
+
+load_instance_defns = """
+CONSTRUCT
+{
+    ?s a ?class .
+}
+WHERE { 
+    GRAPH <urn:ontology> {
+    ?s a owl:NamedIndividual.
+    ?s a ?class .
+    FILTER(!STRSTARTS(STR(?class),STR(owl:)))
+    FILTER(!STRSTARTS(STR(?class),STR(rdfs:)))
+    }
+}
+"""
+
+
+
 loadclasses = """
 PREFIX owl: <http://www.w3.org/2002/07/owl#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
