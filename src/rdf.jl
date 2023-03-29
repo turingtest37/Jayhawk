@@ -65,20 +65,20 @@ e.g. 'http://www.w3.org/2002/07/owl#Class' becomes 'owl_Class'.
 """
 function makeqname(u::URI)
     namesp,lnm = split(u)
-    # @debug "prefix for uri" u namesp lnm
+    @debug "prefix for uri" u namesp lnm
     pfx = nothing
     pfx = prefixforuri(namesp)
     # @debug "prefix for namespace uri" namesp pfx
-    makeqname(pfx.name, replace(string(lnm),":"=>"_"))
+    makeqname(pfx.prefix, replace(string(lnm),":"=>"_"))
 end
 makeqname(s::String) = makeqname(URI(s))
 makeqname(uri::ResourceURI) = makeqname(URI(uri.uri))
-makeqname(curie::ResourceCURIE) = makeqname(curie.prefix, curie.name)
-makeqname(prefix::String, name::String) = prefix * "_" * name
-makeqname(b::Blank) = "Jayhawk_" * b.name
+makeqname(curie::ResourceCURIE) = makeqname(curie.prefix, curie.localname)
+makeqname(prefix::String, name::String) = string(prefix,"_",name)
+makeqname(b::Blank) = string("Jayhawk_",b.name)
 
-prefixforuri(namesp) = Serd.RDF.Prefixes.prefixforuri(namesp)
-export prefixforuri
+# prefixforuri(namesp) = Serd.RDF.Prefixes.prefixforuri(namesp)
+# export Serd.RDF.Prefixes.prefixforuri
 
 function localname(u::URI)
   u.scheme == "urn" && return u.path
@@ -160,12 +160,19 @@ Resource("owl","Ontology")
 
 function scoobify(stmts,pfx,buri)
   @debug "scoobifying" size(stmts) size(pfx) buri
-  pdict = Dict(p.name=>p.uri for p in pfx)
-  pdict[""] = (!isnothing(buri) ? buri.uri : "")
+  # pdict = Dict(p.name=>p.uri for p in pfx)
+  add_prefix!.(pfx)
+  if !isnothing(buri)
+    add_prefix!("",buri.uri)
+  end
+  pdict = prefixes()
+  # pdict[""] = (!isnothing(buri) ? buri.uri : "")
   @debug "pdict" pdict
   scoobys = Statement[]
   @debug "scoobys" scoobys
-  norm(s) = (isa(s,ResourceCURIE) ? Resource(pdict[s.prefix] * s.name) : s)
+  norm(s::ResourceCURIE) = Resource(string(pdict[s.prefix].uri, s.localname))
+  norm(s::ResourceURI) = Resource(s)
+  norm(s::Literal) = s
   for s in stmts
     if isa(s,Triple)
       push!(scoobys, Triple(norm(s.subject), norm(s.predicate), norm(s.object)))

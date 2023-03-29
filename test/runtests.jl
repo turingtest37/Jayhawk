@@ -67,82 +67,166 @@ end
 
 @testset "Parsing" begin
     
-    t = """
-    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-    PREFIX owl: <http://www.w3.org/2002/07/owl#>
-    PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-    PREFIX ex: <http://ontologies.example.org/doug#>
-    PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
-    PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+    @testset "Full, explicit calls" begin
+        
+        t = """
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX ex: <http://ontologies.example.org/doug#>
+        PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+        PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+        
+        BASE <http://id.example.org/doug/>
+
+        ex:Quark rdf:type owl:Class ;
+            rdfs:label "Quark" ;
+            rdfs:comment "Murray Gel-Mann's thing" ;
+        .
+
+        ex:QuarkType rdf:type owl:Class ;
+            rdfs:label "QuarkType" ;
+            rdfs:comment "Murray Gel-Mann's thing" ;
+            skos:definition "The kind of quark in question." ;
+        .
+
+        ex:is-categorized-by rdf:type owl:ObjectProperty ;
+            skos:prefLabel "is categorized by" ;
+            skos:definition "Subject is further defined by the object category item." ;
+        .
+
+        ex:s-factor rdf:type owl:DatatypeProperty ;
+            skos:prefLabel "s-factor" ;
+            skos:definition "The reknowned s factor in RDF." ;
+            rdfs:range xsd:float ;
+        .
+
+        :_Quark_strange rdf:type ex:QuarkType ;
+            rdfs:label "Strange flavor quark." ;
+            skos:definition "The strange quark or s quark (from its symbol, s) is the third lightest of all quarks, a type of elementary particle. Strange quarks are found in subatomic particles called hadrons." ;
+        .
+
+        :_abcde ex:is-categorized-by :_Quark_strange .
+        :_abcde ex:is-based-on :_something_difficult .
+        :_abcde rdf:type ex:Quark ;
+        .
+
+        """
+        stmts,pfx,buri = read_rdf_string(t)
+        # @debug "Turtle parsing unit test" stmts
+        s2 = scoobify(stmts,pfx,buri)
+        @debug "Post scoobify" s2
+        d = initialize()
+        @debug "tracelog before make_anything" d
+        # filter!(s->typeof(s)==Triple, stmts)
+        Serd.RDF.Prefixes.add_prefix!.(pfx)
+        Jayhawk.make_anything.(s2,Ref(d))
+        @show @__MODULE__
+        @debug "tracelog after make_anything" d
+        @test in(Resource("http://id.example.org/doug/_Quark_strange"), keys(d.ldict)) 
+
+    end
+
+    @testset "TraceLog local only" begin
+        tl = TraceLog()
+        s = ResourceURI("http://example.org/ok")
+        o = "Marvelous!"
+        store_local!(tl, o, s)
+
+        @test o == tl.ldict[s]
+    end
+
+    @testset "TraceLog both" begin
+        tl = TraceLog()
+        s = ResourceURI("http://example.org/ok")
+        o = "Marvelous!"
+        store_local!(tl, o, s)
+
+        @test o == tl.ldict[s]
+        
+        store_res!(tl, o, s)
+        @test o == tl.rdict[s]
+    end
+
+    @testset "retrieve! no default provided" begin
+        tl = TraceLog()
+        @test retrieve!(tl, ResourceURI("/bogus")) == Unknown(ResourceURI("/bogus"))
+    end
+
+    @testset "Little snippets no scooby" begin
     
-    BASE <http://id.example.org/doug/>
+        t = """
+        BASE <http://id.example.org/doug/>
 
-    ex:Quark rdf:type owl:Class ;
-        rdfs:label "Quark" ;
-        rdfs:comment "Murray Gel-Mann's thing" ;
-    .
+        :_a_thing :goes-to-washington-with :_another_thing .
+        """
+        tl = initialize()
+        stmts,pfx,buri = read_rdf_string(t)
+        Jayhawk.make_anything.(stmts, Ref(tl))
+        @test in(Resource("http://id.example.org/doug/_another_thing"), keys(tl.ldict)) broken=true
+        
+    end
 
-    ex:QuarkType rdf:type owl:Class ;
-        rdfs:label "QuarkType" ;
-        rdfs:comment "Murray Gel-Mann's thing" ;
-        skos:definition "The kind of quark in question." ;
-    .
-
-    ex:is-categorized-by rdf:type owl:ObjectProperty ;
-        skos:prefLabel "is categorized by" ;
-        skos:definition "Subject is further defined by the object category item." ;
-    .
-
-    ex:s-factor rdf:type owl:DatatypeProperty ;
-        skos:prefLabel "s-factor" ;
-        skos:definition "The reknowned s factor in RDF." ;
-        rdfs:range xsd:float ;
-    .
-
-    :_Quark_strange rdf:type ex:QuarkType ;
-        rdfs:label "Strange flavor quark." ;
-    .
-    :_abcde rdf:type ex:Quark ;
-        ex:is-categorized-by :_Quark_strange ;
-    .
-
-    """
-    stmts,pfx,buri = read_rdf_string(t)
-    # @debug "Turtle parsing unit test" stmts
-    s2 = scoobify(stmts,pfx,buri)
-    @debug "Post scoobify" s2
-    d = initialize()
-    @debug "tracelog before make_anything" d
-    # filter!(s->typeof(s)==Triple, stmts)
-    Serd.RDF.Prefixes.add_prefix!.(pfx)
-    Jayhawk.make_anything.(s2,Ref(d))
-    @debug "tracelog after make_anything" d
-    @test in(Resource("http://id.example.org/doug/_Quark_strange"), keys(d.ldict)) 
-
-end
-
-@testset "TraceLog local only" begin
-    tl = TraceLog()
-    s = ResourceURI("http://example.org/ok")
-    o = "Marvelous!"
-    store_local!(tl, o, s)
-
-    @test o == tl.ldict[s]
-end
-
-@testset "TraceLog both" begin
-    tl = TraceLog()
-    s = ResourceURI("http://example.org/ok")
-    o = "Marvelous!"
-    store_local!(tl, o, s)
-
-    @test o == tl.ldict[s]
+    @testset "Little snippets make_from_rdf" begin
     
-    store_res!(tl, o, s)
-    @test o == tl.rdict[s]
-end
+        t = """
+        BASE <http://id.example.org/doug/>
 
-@testset "retrieve! no default provided" begin
-    tl = TraceLog()
-    @test retrieve!(tl, ResourceURI("/bogus")) == Unknown(ResourceURI("/bogus"))
+        :_a_thing :goes-to-washington-with :_another_thing .
+        """
+        tl = initialize()
+        make_from_rdf(t,tl)
+        @test in(Resource("http://id.example.org/doug/_another_thing"), keys(tl.ldict)) broken=true
+        
+    end
+
+    @testset "make_from_rdf" begin
+        t = """
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX ex: <http://ontologies.example.org/doug#>
+        PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+        PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+        
+        BASE <http://id.example.org/doug/>
+
+        ex:Quark rdf:type owl:Class ;
+            rdfs:label "Quark" ;
+            rdfs:comment "Murray Gel-Mann's thing" ;
+        .
+
+        ex:QuarkType rdf:type owl:Class ;
+            rdfs:label "QuarkType" ;
+            rdfs:comment "Murray Gel-Mann's thing" ;
+            skos:definition "The kind of quark in question." ;
+        .
+
+        ex:is-categorized-by rdf:type owl:ObjectProperty ;
+            skos:prefLabel "is categorized by" ;
+            skos:definition "Subject is further defined by the object category item." ;
+        .
+
+        ex:s-factor rdf:type owl:DatatypeProperty ;
+            skos:prefLabel "s-factor" ;
+            skos:definition "The reknowned s factor in RDF." ;
+            rdfs:range xsd:float ;
+        .
+
+        :_Quark_strange rdf:type ex:QuarkType ;
+            rdfs:label "Strange flavor quark." ;
+            skos:definition "The strange quark or s quark (from its symbol, s) is the third lightest of all quarks, a type of elementary particle. Strange quarks are found in subatomic particles called hadrons." ;
+        .
+
+        :_abcde ex:is-categorized-by :_Quark_strange .
+        :_abcde ex:is-based-on :_something_difficult .
+        :_abcde rdf:type ex:Quark ;
+        .
+
+        """
+        tl = initialize()
+        make_from_rdf(t, tl)
+        @test in(Resource("http://id.example.org/doug/_Quark_strange"), keys(tl.ldict)) 
+        
+    end
 end

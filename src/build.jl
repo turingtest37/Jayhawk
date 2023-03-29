@@ -5,6 +5,11 @@
 # subclasses = Dict{ResourceURI,Vector{ResourceURI}}()
 # superclasses = Dict{Union{ResourceURI,ResourceCURIE},Vector{Union{ResourceURI,ResourceCURIE}}}()
 
+function make_from_rdf(t::String, tl::TraceLog)
+    triples = scoobify(read_rdf_string(t)...)
+    Jayhawk.make_anything.(triples, Ref(tl))
+end
+
 function make_anything(p::Prefix, tl::TraceLog)
     @debug "make_anything" p
 
@@ -39,12 +44,12 @@ function make_anything(t::Triple, tl::TraceLog)
         @eval $pname($s,$o,$tl)
     else
         @debug "pname not found. Making typed property" pname
-        make_property(t, tl)
+        pred = make_property(t, tl)
 
         # POSSIBLE ALTERNATIVE -  CREATE A SECOND PASS
-        # f = (pname, s, o)
-        # push!(tl.futures, f)
-        # @info "Queued future call to" pname s o
+        f = (pred, s, o)
+        push!(tl.futures, f)
+        @info "Queued future call : " pred s o
     end
 end
 
