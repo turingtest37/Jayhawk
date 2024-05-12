@@ -5,25 +5,30 @@
 # subclasses = Dict{ResourceURI,Vector{ResourceURI}}()
 # superclasses = Dict{Union{ResourceURI,ResourceCURIE},Vector{Union{ResourceURI,ResourceCURIE}}}()
 
+# USED
 function make_from_rdf(t::String, tl::TraceLog)
     triples = scoobify(read_rdf_string(t)...)
-    Jayhawk.make_anything.(triples, Ref(tl))
+    Jayhawk._make_anything.(triples, Ref(tl))
+    build_pass_two!(tl)
 end
 
-function make_anything(p::Prefix, tl::TraceLog)
+# USED
+function _make_anything(p::Prefix, tl::TraceLog)
     @debug "make_anything" p
 
     # Is this needed???????
     add_prefix!(p.name, p.uri)
 end
 
-function make_anything(buri::BaseURI, tl::TraceLog)
+# USED
+function _make_anything(buri::BaseURI, tl::TraceLog)
     @debug "make_anything" buri
     # tl.rdict[buri] = addPrefix!(":",buri.uri)
 end
 
+# USED
 # Starting point
-function make_anything(t::Triple, tl::TraceLog)
+function _make_anything(t::Triple, tl::TraceLog)
     s, p, o = t.subject, t.predicate, t.object
     @debug "make_anything" s p o
     # (p == ResourceURI(prefixforname("rdf")*"type")) || error("Expected rdf:type for predicate.")\
@@ -37,6 +42,57 @@ function make_anything(t::Triple, tl::TraceLog)
     # result of some iterator defined by the result of an HTTP query using the REST API to a SPARQL endpoint on some server, local or remote.
     # The statements are returned from the server as either N-Triples or Turtle. The Serd API reads the RDF text stream and creates an output stream of RDF objects: Statements, Triples, Prefixes, etc. and makes that stream available to a calling function.
     # Each of those Triples is passed into this make_anything function 
+
+# The idea here is to implement ML-driven "stored procedures", i.e. 
+construct some RDF containing data that is produced by ML, dynamically
+
+construct
+{
+    
+    :_MLAction_A1 a :MLAction ;
+        :triggeredBy :has_12_mo_probability_of_death ;
+        :input ?_age ;
+        :input ?_sex ;
+        :input ?_country ;
+        :outputtype xsd:decimal ;
+        :output <_p12d> ;
+    .
+
+    ?_person :has_12_mo_probability_of_death <_p12d> .
+
+}
+where
+{
+
+    VALUES ?ssn { 223432994 }
+    ?:_Person_patient_123 a :Person ;
+        :isIdentifiedBy [
+            a gist:ID ;
+            gist:uniqueText ?ssn ;
+            .
+        ]
+        :hasAge ?_age ;
+        :hasSex ?_sex ;
+        :livesIn ?_country ;
+    .
+
+    # :has_12_mo_probability_of_death a owl_ObjectProperty ;
+    #     :
+    # .
+
+    service <sparqlanything:content>
+    {
+        fsx:properties :datasource ?_json_data ;
+        fsx:outputformat...
+        .
+
+        BIND( AS ?_json_data)
+    }
+
+
+}
+
+
     @debug "trying..." pname
     if isdefined(@__MODULE__, pname)
         # pobj = @eval pname
@@ -53,16 +109,71 @@ function make_anything(t::Triple, tl::TraceLog)
     end
 end
 
+# USED
 """
 Create either a typed object property or typed datatype property depending on the triple's type.
 """
 function make_property(t::Triple, tl::TraceLog)
     s, p, o = t.subject, t.predicate, t.object
     @debug "make_typed_instance_prop" s p o
-    typeof(o) == Literal ? make_typed_data_prop(t, tl) : make_typed_object_prop(t, tl)
+    isa(o, Literal) ? make_typed_data_prop(t, tl) : make_typed_object_prop(t, tl)
 end
 
-""" Generate a no-op method with appropriate types for the arguments
+# USED
+""" Generate a method from the predicate IRI. This will create an object or data property without
+an rdf:type declaration for the property.
+How should this be stored?
+
+** Definitions (first time use or RDFS/OWL type declarations)
+Julia dictionary
+<IRI> => Function/Julia Datatype Type (not instance)/Unknown Type
+
+
+Resource dictionary
+<IRI> => instance of rdf_Property/owl_ObjectProperty/rdfs_Class/owl_Class/xsd_Datatype
+
+Cases:
+<s> <ns_predicate> <o>
+    define a Julia Function + methods
+    store in Julia dictionary as <user_ns>_predicate => Function
+    store in Resource dictionary as <user_ns>_predicate => rdfs_Property(iri)
+
+<s> rdf_type owl_ObjectProperty | <s> rdf_type owl_DatatypeProperty
+    define a Julia Function + methods
+    store in Julia dictionary as <user_ns>_predicate => Function
+    store in Resource dictionary as <s> => owl_ObjectProperty(iri) | owl_DatatypeProperty(iri)
+
+<s> rdf_type owl_Class | <s> rdf_type rdfs_Class
+    if <s> is already in the Julia dictionary as a Julia Datatype Type
+        store in Resource dictionary as <s> => owl_Class(s) | rdfs_Class(s)
+    elseif <s> in Julia Dictionary as Unknown(s)
+        # This would be the case if another triple has already created an 
+        define a Julia Datatype
+        store in Julia dictionary as <s> => Datatype(Unknown(s))
+        store in Resource dictionary as <s> => owl_Class(s) | rdfs_Class(s)
+    else # s is not in dictionary
+        define a Julia Datatype
+        store in Julia dictionary as <s> => Datatype
+        store in Resource dictionary as <s> => owl_Class(iri) | rdfs_Class(iri)
+    end
+
+<s> rdf_type <o>
+    if <o> in Resource Dictionary
+        create instance of Datatype as <Datatype>(o)
+        store in Julia dictionary as <o> => <Datatype>(o)
+    else
+        create instance of Unknown as Unknown(o)
+        store in Julia dictionary as <o> => Unknown(o)
+    end
+
+
+Later, if an "?s rdf:type owl:ObjectProperty" statement is encountered with this subject IRI, we replace rdf:Property with:
+<predIRI> => owl_ObjectProperty
+
+** Usage (second time + use)
+::Function(::Datatype, ::Datatype) => write(::IO, (:propnm,)) 
+::Function(::Datatype, ::Any) 
+
 """
 function make_typed_object_prop(t::Triple, tl::TraceLog)
     @debug "make_typed_obj_prop" t
@@ -125,10 +236,11 @@ function make_typed_object_prop(t::Triple, tl::TraceLog)
         end
     )
     @info "Created object property function" propnm
-    @eval :(propnm)
+    propnm
 end
 
 
+# USED
 """ Generate a no-op method with appropriate types for the arguments
 """
 function make_typed_data_prop(t::Triple, tl::TraceLog)
@@ -172,77 +284,79 @@ function make_typed_data_prop(t::Triple, tl::TraceLog)
         end
     )    
     @info "Created datatype function" propnm
-    @eval :(propnm)
+    propnm
     end
+
 
 # Select RDF and create a Julia Type for owl:Class
 # Previously stored subclasses are added to the Type constructor
-function build_classes()
-    @info "Building classes..."
-    stmts,pfx,buri = qsparql(loadclasses)   
-    make_type_or_instance.(stmts,Ref(resource_dict))    
-end
+# function build_classes()
+#     @info "Building classes..."
+#     stmts,pfx,buri = qsparql(loadclasses)   
+#     make_type_or_instance.(stmts,Ref(resource_dict))    
+# end
 
-function build_pass_one!(tl::TraceLog = initialize())
-    @info "Building model in one pass..."
-    stmts,pfx,buri = qsparql(loadmodel)
-    make_anything.(stmts, Ref(tl))
-    tl
-end
+# function build_pass_one!(tl::TraceLog = initialize())
+#     @info "Building model in one pass..."
+#     stmts,pfx,buri = qsparql(loadmodel)
+#     make_anything.(stmts, Ref(tl))
+#     tl
+# end
 
 function build_pass_two!(tl::TraceLog)
     @info "tracelog has $(length(tl.futures)) expressions for future evaluation."
     while !isempty(tl.futures)
         f = Base.pop!(tl.futures)
+        @debug "Creating expression from future " f
         e = Expr(:call, f..., tl)
-        @debug "evaluating..."  
+        @debug "Evaluating..." e  
         @eval $e
     end
     tl    
 end
 export build_pass_one!, build_pass_two!
 
-function build_instance_classes()
-    @info "Building instance classes..."
-    stmts,pfx,buri = qsparql(load_instance_defns)
-    make_type_or_instance.(stmts,Ref(resource_dict))
-end
+# function build_instance_classes()
+#     @info "Building instance classes..."
+#     stmts,pfx,buri = qsparql(load_instance_defns)
+#     make_type_or_instance.(stmts,Ref(resource_dict))
+# end
 
 # Select RDF and create functions for each owl:ObjectProperty
-function build_obj_props()
-    @info "Building object properties..."
-    stmts,pfx,buri = qsparql(loadobjprops)
-    @debug "build_obj_props" stmts
-    make_obj_dt_prop.(stmts, Ref(resource_dict))            
-end
+# function build_obj_props()
+#     @info "Building object properties..."
+#     stmts,pfx,buri = qsparql(loadobjprops)
+#     @debug "build_obj_props" stmts
+#     make_obj_dt_prop.(stmts, Ref(resource_dict))            
+# end
 
 # Select RDF and create functions for each owl:DatatypeProperty
-function build_data_props()
-    @info "Building data properties..."
-    stmts,pfx,buri = qsparql(loaddataprops)
-    @debug "build_data_props" stmts
-    make_obj_dt_prop.(stmts, Ref(resource_dict))            
-end
+# function build_data_props()
+#     @info "Building data properties..."
+#     stmts,pfx,buri = qsparql(loaddataprops)
+#     @debug "build_data_props" stmts
+#     make_obj_dt_prop.(stmts, Ref(resource_dict))            
+# end
 
-function build_typed_props()
-    @info "Building typed properties..."
-    stmts,pfx,buri = qsparql(load_typed_properties)
-    tl = TLog(resource_dict)
-    make_property.(stmts, Ref(tl))
-    @show tl
-end
+# function build_typed_props()
+#     @info "Building typed properties..."
+#     stmts,pfx,buri = qsparql(load_typed_properties)
+#     tl = TLog(resource_dict)
+#     make_property.(stmts, Ref(tl))
+#     @show tl
+# end
 
 # Select RDF and create instances from the ontology
-function build_model_instances()
-    @info "Building model instances..."
-    stmts,pfx,buri = qsparql(load_model_instances)
-    process_rdf_data.(stmts)            
-end
+# function build_model_instances()
+#     @info "Building model instances..."
+#     stmts,pfx,buri = qsparql(load_model_instances)
+#     process_rdf_data.(stmts)            
+# end
 
-function process_rdf_data(t::Triple; d::T = resource_dict) where {T<:AbstractDict}
-    @debug "process_rdf_data" t
-    s, p, o = t.subject, t.predicate, t.object
-    propnm = Symbol(makeqname(p))
-    @debug "Calling $propnm($s, $o)..."
-    @eval $propnm($s, $o, $d)
-end
+# function process_rdf_data(t::Triple; d::T = resource_dict) where {T<:AbstractDict}
+#     @debug "process_rdf_data" t
+#     s, p, o = t.subject, t.predicate, t.object
+#     propnm = Symbol(makeqname(p))
+#     @debug "Calling $propnm($s, $o)..."
+#     @eval $propnm($s, $o, $d)
+# end

@@ -34,12 +34,11 @@ function rdf_type(suri::Resource, ::Type{owl_Class}, tl::TraceLog)
                 uri::Resource
                 in::Dict
                 out::Dict
-                super::Vector{Resource}
+                types::Vector{Resource}
             end
             # Constructor for new type
             function $nm(uri::String, in::Dict, out::Dict)
-                supclasses = get!(superclasses, ResourceURI(uri), ResourceURI[])
-                $nm(uri,in,out,supclasses)
+                $nm(uri,in,out,Resource($suri))
             end
 
             # convenience constructors
@@ -57,6 +56,7 @@ function rdf_type(suri::Resource, ::Type{owl_Class}, tl::TraceLog)
             # create and store a new instance of Type{$nm}
             rdf_type(s::Unknown, ::Type{$nm}, tl::TraceLog = $tl) = store_local!(tl, $nm(s), s.uri)
 
+            # TODO FIX This
             """
             Function to instantiate the new type and store it.
             If the subject was previously seen and stored as an Unknown, convert into the new type.
@@ -87,11 +87,16 @@ function rdf_type(suri::Resource, ::Type{owl_ObjectProperty}, tl::TraceLog)
 
         eval(
         quote
+
+            # TODO Change bodies of $nm
+
+            # Entry point for calls to $nm function
             function $nm(s::Resource, o::Resource, tl::TraceLog = $tl)
                 #fetch instantiated type from resource dictionary, else Unknown
                 subj = retrieve!(tl, s)
                 obj = retrieve!(tl, o)
 
+                # TODO DOES IT EVEN MAKE SENSE TO STORE LINKS ????
                 # link the subject and object by the property URI, in both directions
                 subj.out[s] = o
                 obj.in[s] = o

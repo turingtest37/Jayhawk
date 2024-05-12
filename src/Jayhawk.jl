@@ -10,12 +10,12 @@ using AutoHashEquals
 # using InteractiveUtils: methodswith
 # need to revise this list of exports 
 export build_model, build_instance_classes, build_model_instances, process_rdf_data, 
-qsparql, usparql, superclasses
+qsparql, usparql
 export makeqname, set_def_prefixes
 export rdf_type, rdfs_subClassOf
 export Unknown
 export TraceLog
-export make_anything, retrieve!, store_res!, store_local!, make_from_rdf
+export retrieve!, store_res!, store_local!, make_from_rdf
 export initialize
 export resource_dict
 

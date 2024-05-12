@@ -65,7 +65,7 @@ Jayhawk.set_def_prefixes()
 
 end
 
-@testset "Parsing" begin
+@testset "Parsing complex" begin
     
     @testset "Full, explicit calls" begin
         
@@ -112,18 +112,9 @@ end
         .
 
         """
-        stmts,pfx,buri = read_rdf_string(t)
-        # @debug "Turtle parsing unit test" stmts
-        s2 = scoobify(stmts,pfx,buri)
-        @debug "Post scoobify" s2
-        d = initialize()
-        @debug "tracelog before make_anything" d
-        # filter!(s->typeof(s)==Triple, stmts)
-        Serd.RDF.Prefixes.add_prefix!.(pfx)
-        Jayhawk.make_anything.(s2,Ref(d))
-        @show @__MODULE__
-        @debug "tracelog after make_anything" d
-        @test in(Resource("http://id.example.org/doug/_Quark_strange"), keys(d.ldict)) 
+        tl = initialize()
+        make_from_rdf(t,tl)
+        @test in(Resource("http://id.example.org/doug/_Quark_strange"), keys(tl.ldict)) 
 
     end
 
@@ -153,20 +144,6 @@ end
         @test retrieve!(tl, ResourceURI("/bogus")) == Unknown(ResourceURI("/bogus"))
     end
 
-    @testset "Little snippets no scooby" begin
-    
-        t = """
-        BASE <http://id.example.org/doug/>
-
-        :_a_thing :goes-to-washington-with :_another_thing .
-        """
-        tl = initialize()
-        stmts,pfx,buri = read_rdf_string(t)
-        Jayhawk.make_anything.(stmts, Ref(tl))
-        @test in(Resource("http://id.example.org/doug/_another_thing"), keys(tl.ldict)) broken=true
-        
-    end
-
     @testset "Little snippets make_from_rdf" begin
     
         t = """
@@ -176,7 +153,7 @@ end
         """
         tl = initialize()
         make_from_rdf(t,tl)
-        @test in(Resource("http://id.example.org/doug/_another_thing"), keys(tl.ldict)) broken=true
+        @test in(Resource("http://id.example.org/doug/_another_thing"), keys(tl.ldict))
         
     end
 
@@ -227,6 +204,14 @@ end
         tl = initialize()
         make_from_rdf(t, tl)
         @test in(Resource("http://id.example.org/doug/_Quark_strange"), keys(tl.ldict)) 
+        
+    end
+
+    @testset "Futures" begin
+
+        @testset "Simple future" begin
+            
+        end
         
     end
 end

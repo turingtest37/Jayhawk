@@ -1,6 +1,4 @@
 
-
-
 struct TLogEntry
     s::RORB
     p::Resource
