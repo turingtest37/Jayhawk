@@ -5,6 +5,10 @@ struct TLogEntry
     o::Node
     f::Function
 end
+TLogEntry(s::Type, p::Resource, o::Node, f::Function) = TLogEntry(Resource(URIs.escapeuri(string(s))),p,o,f)
+TLogEntry(s::Type, p::Resource, o::Any, f::Function) = TLogEntry(Resource(URIs.escapeuri(string(s))),p,Resource(URIs.escapeuri(string(o))),f)
+TLogEntry(s::Function, p::Resource, o::Union{<:AbstractString, <:Number, <:Dates.AbstractTime, <:Bool}, f::Function) = TLogEntry(Resource(URIs.escapeuri(string(s))),p,Literal(string(o)),f)
+TLogEntry(s::Any, p::Resource, o::Node, f::Function) = TLogEntry(Resource(URIs.escapeuri(string(s))),p,o,f)
 
 """
 The 
@@ -38,7 +42,7 @@ function add_entry!(tl::TraceLog,s,p,o,f::Function)
     if tl.active
         @debug "adding TLogEntry" s p o f
         push!(tl.entries, TLogEntry(s,p,o,f))
-        store_local!(tl, o, s.uri)
+        store_local!(tl, o, s)
     end
 end
 
@@ -69,6 +73,10 @@ function store_local!(tl::TraceLog, value, key::RORB)
     if tl.active
         push!(tl.ldict, key => value)
     end
+end
+# Handle non-RORB keys by converting to Resource
+function store_local!(tl::TraceLog, value, key::Any)
+    store_local!(tl, value, Resource(URIs.escapeuri(string(key))))
 end
 """
 Push key => val pair to resource dictionary only if the TL is active.

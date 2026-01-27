@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(julia test:*)",
+      "Bash(julia --project=. test:*)"
+    ]
+  }
+}

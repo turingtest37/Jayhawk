@@ -170,11 +170,10 @@ function make_typed_object_prop(t::Triple, tl::TraceLog)
             # end
 
             # Both subject and object as Resources or Blanks
-            # This will become the entry point for future calls to this predicate
+            # This is the entry point for future calls - preserves original Resources for logging
             function $propnm(subj::RORB, obj::RORB, tl=$tl)
                 @debug "Function called: " $propnm subj obj
-                $propnm(retrieve!(tl, subj), retrieve!(tl, obj), tl)
-                # add_entry!(tl, subj, $propnm, obj)
+                add_entry!(tl, subj, $p, obj, $propnm)
             end
             export $propnm
 
@@ -200,29 +199,29 @@ function make_typed_data_prop(t::Triple, tl::TraceLog)
     eval(
         quote
 
-            function $propnm(subj, obj::Any, tl::TraceLog = $tl) #where {T <: RDFType}
+            # For subjects that have .uri and .out fields (Unknown, generated types)
+            function $propnm(subj::Unknown, obj::Any, tl::TraceLog = $tl)
                 @debug "Data property function called: " $propnm subj obj
                 add_entry!(tl, subj, $p, obj, $propnm)
                 store_local!(tl, obj, subj.uri)
-                subj.out[$p] = obj 
+                subj.out[$p] = obj
             end
-            function $propnm(subj::Unknown, obj::Any, tl::TraceLog = $tl)
-                @debug "Data property function called: " $propnm subj obj 
+            function $propnm(subj::$stype, obj::Any, tl::TraceLog = $tl)
+                @debug "Data property function called: " $propnm subj obj
                 add_entry!(tl, subj, $p, obj, $propnm)
                 store_local!(tl, obj, subj.uri)
-                subj.out[$p] = obj 
-            end
-            function $propnm(subj::$stype, obj::Literal, tl::TraceLog = $tl)
-                @debug "Data property function called: " $propnm subj obj 
-                $propnm(subj, obj.value, tl)
+                subj.out[$p] = obj
             end
 
-            # The entry point for future calls to this function
+            # The entry point for future calls - preserves original Resource for logging
             function $propnm(subj::RORB, obj::Literal, tl::TraceLog = $tl)
                 @debug "Data property function called: " $propnm subj obj
-                $propnm(retrieve!(tl,subj), obj.value, tl)
-                # store_local!(tl, obj.value, subj)
-                # add_entry!($tl, subj, $propnm, obj)
+                resolved = retrieve!(tl, subj)
+                add_entry!(tl, subj, $p, obj, $propnm)
+                store_local!(tl, obj.value, subj)
+                if hasfield(typeof(resolved), :out)
+                    resolved.out[$p] = obj
+                end
             end
             export $propnm
 

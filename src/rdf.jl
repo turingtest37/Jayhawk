@@ -182,6 +182,8 @@ function scoobify(stmts,pfx,buri)
   norm(s::ResourceURI) = Resource(string(s))
   norm(s::Literal) = s
   norm(s) = Resource(string(s))
+  norm(s::Type) = Resource(URI(URIs.escapeuri(string(s))))
+  norm(s::Function) = Resource(URI(URIs.escapeuri(string(s))))
 
   for s in stmts
     if isa(s,Triple)
