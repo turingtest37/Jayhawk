@@ -18,7 +18,7 @@ extract_type(s) = nothing
 
 function extract_type(t::Triple)
     s, p, o = t.subject, t.predicate, t.object
-    (p == expand("rdf:type") || return nothing
+    p == expand("rdf:type") || return nothing
     o
 end
 

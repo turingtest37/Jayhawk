@@ -24,7 +24,7 @@ export RORB
 # Main dictionary for bootstrapping types
 resource_dict = Dict{RORB, Any}()
 
-initialize() = TraceLog(resource_dict)
+initialize() = TraceLog(resource_dict, true)
 
 include("tracelog.jl")
 include("sparqlclient.jl")
@@ -32,7 +32,7 @@ include("sparql.jl")
 include("rdf.jl")
 include("rdfs.jl")
 include("rdf_type.jl")
-include("rdf_subClassOf.jl")
+include("rdfs_subClassOf.jl")
 include("build.jl")
 
 # Jayhawk provides the framework for building applications that are graph-based and data-centric.

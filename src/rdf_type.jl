@@ -18,7 +18,7 @@ function rdf_type(s::Resource, o::Resource, tl::TraceLog)
     @debug "Calling rdf_type($s, $oobj)..."
     rdf_type(s, oobj, tl)
     if (s == Serd.RDF.Resource("http://www.w3.org/2002/07/owl#TransitiveProperty"))
-        error("Stopping here.")
+        error("Can't handle transitive properties. Stopping here.")
     end
 end
 
@@ -130,8 +130,9 @@ function rdf_type(suri::Resource, ::Type{owl_DatatypeProperty}, tl::TraceLog{T})
                 @debug $nm suri obj
                 store_local!(tl, suri, obj.value)
                 subj = retrieve!(tl, suri)
+                @debug "retrieved from $suri " subj
                 # subj.out[suri] = obj.val
-
+                
                 try
                     $nm(subj, obj.value, tl)
                 catch e
@@ -182,7 +183,7 @@ function rdf_type(s::Resource, o::Blank, tl::TraceLog)
 end
 
 function rdf_type(b::Blank, ::Type{owl_Class}, tl::TraceLog)
-    @debug "rdf_type ::Blank ::owl_Class"
+    @debug "rdf_type($b , ::owl_Class)"
     store_local!(tl, owl_Class(b), b)
 end
 

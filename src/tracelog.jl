@@ -17,22 +17,33 @@ struct TraceLog{T<:AbstractDict}
     entries::Vector{TLogEntry}
     futures::Vector{Tuple}
     io::IO
+    active::Bool
 end
-TraceLog(r_dict::T, io::IO) where {T<:AbstractDict} = TraceLog(T(),deepcopy(r_dict),TLogEntry[],Tuple[],io)
-TraceLog(r_dict::T) where {T<:AbstractDict} = TraceLog(T(),deepcopy(r_dict),TLogEntry[],Tuple[],IOBuffer())
-TraceLog{T}() where {T<:AbstractDict} = TraceLog(T(),T(),TLogEntry[],Tuple[],IOBuffer())
+TraceLog{T}() where {T<:AbstractDict} = TraceLog(T(),T(),TLogEntry[],Tuple[],IOBuffer(),false)
+TraceLog{T}(active::Bool) where {T<:AbstractDict} = TraceLog(T(),T(),TLogEntry[],Tuple[],IOBuffer(),active)
+TraceLog(r_dict::T, io::IO) where {T<:AbstractDict} = TraceLog(T(),deepcopy(r_dict),TLogEntry[],Tuple[],io,false)
+TraceLog(r_dict::T, io::IO, active::Bool) where {T<:AbstractDict} = TraceLog(T(),deepcopy(r_dict),TLogEntry[],Tuple[],io,active)
+TraceLog(r_dict::T) where {T<:AbstractDict} = TraceLog(T(),deepcopy(r_dict),TLogEntry[],Tuple[],IOBuffer(),false)
+TraceLog(r_dict::T, active::Bool) where {T<:AbstractDict} = TraceLog(T(),deepcopy(r_dict),TLogEntry[],Tuple[],IOBuffer(),active)
 TraceLog() = TraceLog{Dict}()
+TraceLog(active::Bool) = TraceLog{Dict}(active)
+
 
 """
-Push a new entry into the TLog for the given subject, function name and object
+Push a new entry into the TLog for the given subject, function name and object, 
+but only if the TraceLog's 'active' field is set to true.
 """
 function add_entry!(tl::TraceLog,s,p,o,f::Function)
-    @debug "adding TLogEntry" s p o f
-    push!(tl.entries, TLogEntry(s,p,o,f))
+    @debug "add_entry!" s p o f
+    if tl.active
+        @debug "adding TLogEntry" s p o f
+        push!(tl.entries, TLogEntry(s,p,o,f))
+        store_local!(tl, o, s.uri)
+    end
 end
 
 """
-Fetch a resource object locally or globally, updating the local dictionary with Unknown and returning that if not found.
+Fetch a resource or blank node object locally or globally, updating the local dictionary with Unknown and returning that if not found.
 """
 function retrieve!(tl::TraceLog, x::RORB; default = Unknown(x))
     obj = get(tl.rdict, x, default)
@@ -52,14 +63,21 @@ Pushed key => val pair to both local and resource dictionaries.
 # end
 
 """
-Push key => val pair to local dictionary only.
+Push key => val pair to local dictionary only if the TL is active.
 """
-store_local!(tl::TraceLog, value, key::RORB) = (tl.ldict[key] = value)
-
+function store_local!(tl::TraceLog, value, key::RORB)
+    if tl.active
+        push!(tl.ldict, key => value)
+    end
+end
 """
-Push key => val pair to resource dictionary only.
+Push key => val pair to resource dictionary only if the TL is active.
 """
-store_res!(tl::TraceLog, value, key::RORB) = push!(tl.rdict, key => value)
+function store_res!(tl::TraceLog, value, key::RORB)
+    if tl.active
+        push!(tl.rdict, key => value)
+    end
+end
 
 
 # task = @async open("foo.txt", "w") do io

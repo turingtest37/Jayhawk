@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../Serd.jl"
+		}
+	],
+	"settings": {
+		"julia.additionalArgs": []
+	}
+}

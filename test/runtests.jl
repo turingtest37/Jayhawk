@@ -74,6 +74,7 @@ end
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
         PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
         PREFIX ex: <http://ontologies.example.org/doug#>
+        PREFIX : <http://ontologies.example.org/doug#>
         PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
         PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
         
@@ -119,7 +120,7 @@ end
     end
 
     @testset "TraceLog local only" begin
-        tl = TraceLog()
+        tl = TraceLog(true)
         s = ResourceURI("http://example.org/ok")
         o = "Marvelous!"
         store_local!(tl, o, s)
@@ -128,7 +129,7 @@ end
     end
 
     @testset "TraceLog both" begin
-        tl = TraceLog()
+        tl = TraceLog(true)
         s = ResourceURI("http://example.org/ok")
         o = "Marvelous!"
         store_local!(tl, o, s)
@@ -140,8 +141,8 @@ end
     end
 
     @testset "retrieve! no default provided" begin
-        tl = TraceLog()
-        @test retrieve!(tl, ResourceURI("/bogus")) == Unknown(ResourceURI("/bogus"))
+        tl = TraceLog(true)
+        @test retrieve!(tl, Resource("/bogus")) == Unknown(Resource("/bogus"))
     end
 
     @testset "Little snippets make_from_rdf" begin
@@ -153,7 +154,7 @@ end
         """
         tl = initialize()
         make_from_rdf(t,tl)
-        @test in(Resource("http://id.example.org/doug/_another_thing"), keys(tl.ldict))
+        @test in(Resource("http://id.example.org/doug/_a_thing"), keys(tl.ldict))
         
     end
 
@@ -175,7 +176,7 @@ end
 
         ex:QuarkType rdf:type owl:Class ;
             rdfs:label "QuarkType" ;
-            rdfs:comment "Murray Gel-Mann's thing" ;
+            rdfs:comment "The sort of Murray Gel-Mann's thing, e.g. up quark, strange quark" ;
             skos:definition "The kind of quark in question." ;
         .
 

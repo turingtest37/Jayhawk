@@ -3,8 +3,9 @@ abstract type RDFType end
 struct owl_Class <: RDFType
   uri::RORB
   in::Dict{RORB, RORB}
+
+  owl_Class(uri::RORB) = new(uri, Dict())
 end
-owl_Class(uri::RORB) = owl_Class(uri, Dict())
 
 struct owl_Thing <: RDFType
   uri::RORB
@@ -12,25 +13,29 @@ struct owl_Thing <: RDFType
 end
 
 struct owl_ObjectProperty <: RDFType
-  uri::RORB
+  uri::Resource
   in::Dict{RORB, RORB}
+  
+  owl_ObjectProperty(uri::RORB) = new(uri, Dict())
 end
-owl_ObjectProperty(uri::RORB) = owl_ObjectProperty(uri, Dict())
 
 struct owl_DatatypeProperty <: RDFType
-  uri::RORB
+  uri::Resource
   in::Dict{RORB, RORB}
+
+  owl_DatatypeProperty(uri::RORB) = new(uri, Dict())
 end
-owl_DatatypeProperty(uri::RORB) = owl_DatatypeProperty(uri, Dict())
 
 struct owl_NamedIndividual
-  uri::RORB
+  uri::Resource
   in::Dict{RORB, RORB}
 end
+
 struct owl_Restriction
   uri::RORB
   in::Dict{RORB, RORB}
 end
+
 struct owl_Ontology
   uri::RORB
   in::Dict{RORB, RORB}
@@ -73,9 +78,10 @@ function makeqname(u::URI)
 end
 makeqname(s::String) = makeqname(URI(s))
 makeqname(uri::ResourceURI) = makeqname(URI(uri.uri))
+makeqname(uri::Resource) = makeqname(URI(uri.uri))
 makeqname(curie::ResourceCURIE) = makeqname(curie.prefix, curie.localname)
 makeqname(prefix::String, name::String) = string(prefix,"_",name)
-makeqname(b::Blank) = string("Jayhawk_",b.name)
+makeqname(b::Blank) = makeqname("Jayhawk", string(b.name))
 
 # prefixforuri(namesp) = Serd.RDF.Prefixes.prefixforuri(namesp)
 # export Serd.RDF.Prefixes.prefixforuri
@@ -146,6 +152,7 @@ for x in datatypes
   )
 end
 
+# Need to explain this next line!
 broadcast((x)->setindex!(resource_dict, (eval ∘ Symbol ∘ makeqname)(x), x),
 (
 Resource("owl","Class"),
@@ -170,14 +177,19 @@ function scoobify(stmts,pfx,buri)
   @debug "pdict" pdict
   scoobys = Statement[]
   @debug "scoobys" scoobys
+
   norm(s::ResourceCURIE) = Resource(string(pdict[s.prefix].uri, s.localname))
-  norm(s::ResourceURI) = Resource(s)
+  norm(s::ResourceURI) = Resource(string(s))
   norm(s::Literal) = s
+  norm(s) = Resource(string(s))
+
   for s in stmts
     if isa(s,Triple)
       push!(scoobys, Triple(norm(s.subject), norm(s.predicate), norm(s.object)))
     else
       push!(scoobys, norm(s))
+      # Experimental!
+      # for s in stmts push!(scoobys, isa(s,Triple) ? Triple(norm.[s.subject, s.predicate, s.object]) : norm(s))
     end
   end
   # [push!(scoobys, (s a ResourceCURIE ? Resource(pdict[s.prefix] * s.name) : s)) for s in stmts]
