@@ -1,5 +1,6 @@
 abstract type RDFType end
 
+# TODO Generate RDFTypes dynamically from a list of types
 struct owl_Class <: RDFType
   uri::RORB
   in::Dict{RORB, RORB}
@@ -165,15 +166,16 @@ Resource("owl","Ontology")
 )
 )
 
-function scoobify(stmts,pfx,buri)
-  @debug "scoobifying" size(stmts) size(pfx) buri
-  # pdict = Dict(p.name=>p.uri for p in pfx)
+"""
+Converts Serd Statements 
+"""
+function expand_uris(stmts,pfx,buri)
+  @debug "expand_urising" size(stmts) size(pfx) buri
   add_prefix!.(pfx)
   if !isnothing(buri)
     add_prefix!("",buri.uri)
   end
   pdict = prefixes()
-  # pdict[""] = (!isnothing(buri) ? buri.uri : "")
   @debug "pdict" pdict
   scoobys = Statement[]
   @debug "scoobys" scoobys
@@ -187,7 +189,10 @@ function scoobify(stmts,pfx,buri)
 
   for s in stmts
     if isa(s,Triple)
-      push!(scoobys, Triple(norm(s.subject), norm(s.predicate), norm(s.object)))
+      @debug "expanding Triple..." s.subject s.predicate s.object
+      t = Triple(norm(s.subject), norm(s.predicate), norm(s.object))
+      @debug "produced..." t
+      push!(scoobys, t)
     else
       push!(scoobys, norm(s))
       # Experimental!
@@ -198,7 +203,7 @@ function scoobify(stmts,pfx,buri)
   @debug "scoobys now" scoobys
   scoobys
 end
-export scoobify
+export expand_uris
 
 export localname, ns, parsent, MaybeURI, MaybeString, xsdtype2j, @U_str, valueof
 export makeqname

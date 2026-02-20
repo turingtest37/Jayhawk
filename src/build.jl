@@ -7,7 +7,7 @@
 
 # USED
 function make_from_rdf(t::String, tl::TraceLog)
-    triples = scoobify(read_rdf_string(t)...)
+    triples = expand_uris(read_rdf_string(t)...)
     Jayhawk._make_anything.(triples, Ref(tl))
     build_pass_two!(tl)
 end

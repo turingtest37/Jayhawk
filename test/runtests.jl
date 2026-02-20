@@ -4,6 +4,8 @@ using Jayhawk
 using URIs
 using Serd, Serd.RDF, Serd.RDF.Prefixes
 
+ENV["JULIA_DEBUG"]=all
+
 Jayhawk.set_def_prefixes()
 
 @testset "RDF functions" begin
