@@ -718,3 +718,15 @@ end
         @test m.properties[Resource("http://conflict.example.org/o#p")].kind == :object
     end
 end
+
+# Everything above is hermetic: no network, no server, ~6 seconds. Keep it that way.
+#
+# The SPARQL integration tests need a live Apache Jena Fuseki and are therefore opt-in.
+# Without JAYHAWK_TEST_SPARQL set they are not even loaded, so a developer with no
+# server running never sees a failure from them.
+#
+#     ./resource/fuseki-test.sh start
+#     JAYHAWK_TEST_SPARQL=1 julia --project=. test/runtests.jl
+if haskey(ENV, "JAYHAWK_TEST_SPARQL")
+    include("sparql_integration.jl")
+end

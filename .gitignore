@@ -1,1 +1,2 @@
-.claude/**
+# Claude Code artefacts under .claude/ (skills, settings) are tracked deliberately --
+# they are project tooling that should travel with the repo, not scratch files.

@@ -19,11 +19,24 @@ import EzXML: XMLDocument, parsexml, findall, namespaces, namespace
 # Both are `const`, evaluated when the module loads, so the variables must be set
 # before `using Jayhawk`.
 
+# Defaults target Apache Jena Fuseki, which replaced GraphDB as this project's store.
+# The two stores spell their endpoints differently, and only the query URL is shared:
+#
+#   Fuseki    query  http://host:3030/<dataset>          update  <base>/update
+#   GraphDB   query  http://host:7200/repositories/<id>  update  <base>/statements
+#
+# Fuseki's query service really is the bare dataset path -- `<base>/sparql` returns 404
+# under FusekiMainCmd, which is what resource/fuseki-test.sh launches.
+#
+# For GraphDB, set both variables explicitly:
+#   JAYHAWK_SPARQL_SERVICE=http://127.0.0.1:7200/repositories/ebox
+#   JAYHAWK_UPDATE_SERVICE=http://127.0.0.1:7200/repositories/ebox/statements
+
 "String representation of the graph store's SPARQL query service URL."
-const spqservice = get(ENV, "JAYHAWK_SPARQL_SERVICE", "http://127.0.0.1:7200/repositories/ebox")
+const spqservice = get(ENV, "JAYHAWK_SPARQL_SERVICE", "http://localhost:3030/jayhawk")
 
 "String representation of the graph store's SPARQL update service URL."
-const spqupdservice = get(ENV, "JAYHAWK_UPDATE_SERVICE", spqservice * "/statements")
+const spqupdservice = get(ENV, "JAYHAWK_UPDATE_SERVICE", spqservice * "/update")
 
 
 # const tTurtle           = "text/turtle;charset=utf-8"
@@ -98,7 +111,9 @@ function runsparql(spq::String, update=false; m::Dict = Dict(), qheaders=QHEADER
     ct = h["Content-Type"]
     if contains(ct, "sparql-results+json")
       r = JSON.parse(resp.body |> String)
-      resp = r["results"]["bindings"]
+      # ASK returns {"head":{}, "boolean":true} -- no "results" key at all, so the
+      # unconditional r["results"]["bindings"] threw KeyError on every ASK query.
+      resp = haskey(r, "boolean") ? r["boolean"] : r["results"]["bindings"]
     elseif contains(ct, "application/rdf+xml")
       resp = parsexml(resp.body |> String)
     elseif contains(ct, "n-triples")
@@ -133,12 +148,33 @@ end
 build(T::Type, doc) = objfromdict(T, parsent(doc))
 export build
 
+"""
+    qsparql(query) -> (statements, prefixes, baseuri)
+
+Run a CONSTRUCT (or DESCRIBE) query and parse the resulting graph.
+
+Must ask for N-Triples. This used to call `runsparql(query)`, which sends the default
+`QHEADERS` -- `Accept: application/sparql-results+json` -- so the server returned a
+SPARQL results document and Serd was handed JSON to parse as Turtle, failing with
+`SERD_ERR_BAD_SYNTAX` ("bad verb" at line 1 col 5). `QHEADERSCONS` was defined for
+exactly this purpose and never used.
+
+Parses from the string rather than a temp file; the old `tempname()` was never removed.
+"""
 function qsparql(query::String)
-  fnm = tempname()
-  write(fnm, runsparql(query))
-  read_rdf_file(fnm)
+  read_rdf_string(runsparql(query; qheaders=QHEADERSCONS))
 end
 
+"""
+    usparql(update; dict=Dict())
+
+Run a SPARQL Update.
+
+`dict` supplies Mustache template bindings. It has to go to the `m` *keyword* --
+`runsparql(upd, true, dict)` passed it as a third positional argument to a function that
+accepts two, so every call to `usparql` died with a `MethodError` before reaching the
+server.
+"""
 function usparql(upd::String; dict=Dict())
-  runsparql(upd, true, dict)
+  runsparql(upd, true; m=dict)
 end
