@@ -3,6 +3,7 @@ using Test
 using Jayhawk
 using URIs
 using Serd, Serd.RDF, Serd.RDF.Prefixes
+using Logging
 
 ENV["JULIA_DEBUG"]=all
 
@@ -405,6 +406,8 @@ end
     @testset "domain and range captured" begin
         @test m.properties[K].domain == W
         @test m.properties[K].range == G
+        @test m.properties[Resource("http://an.example.org/o#weight")].range ==
+              Resource("http://www.w3.org/2001/XMLSchema#float")
     end
 
     @testset "schema declarations are not data" begin
@@ -524,5 +527,188 @@ end
         # generating and calling code in the same dynamic extent.
         @test !hasfield(TraceLog, :futures)
         @test !isdefined(Jayhawk, :build_pass_two!)
+    end
+end
+
+# QA pass over commit 3ca21e7 ("Fix the execution failures the split exposed"). That
+# commit's own diagnosis and repair check out (0/833 gistAcct triples fail, 70/70 tests
+# pass) -- these testsets are about coverage gaps found while reading the surrounding
+# pipeline, not about the commit's own claims.
+@testset "QA: gaps found while reviewing the execution-failure fix" begin
+
+    @testset "colliding sanitized names merge two distinct properties" begin
+        # KNOWN GAP, not fixed here. `sanitize_name` (src/rdf.jl) maps every
+        # non-identifier character to `_`, so `ex:a-b` and `ex:a.b` -- two distinct RDF
+        # properties -- both produce the Julia identifier `ex_a_b`. `generate` only
+        # skips a name that is already *installed*; within one `generate` call both
+        # properties still look "not yet defined" against the module, so both
+        # contribute method definitions to the same generic function. This is
+        # characterization, not approval: it should start FAILING the moment someone
+        # makes colliding names distinct (or rejects the collision outright) -- that
+        # failure is the signal to replace this test with one that checks the fix.
+        t = """
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX ex: <http://collide.example.org/o#>
+        BASE <http://collide.example.org/d/>
+
+        ex:a-b rdf:type owl:ObjectProperty .
+        ex:a.b rdf:type owl:DatatypeProperty .
+
+        :_s1 ex:a-b :_o1 .
+        :_s2 ex:a.b "literal" .
+        """
+        m = analyze(Jayhawk.expand_uris(Serd.read_rdf_string(t)...))
+        pA = Resource("http://collide.example.org/o#a-b")
+        pB = Resource("http://collide.example.org/o#a.b")
+
+        # Two distinct schema URIs really do map to the same generated identifier.
+        @test m.properties[pA].name == :ex_a_b
+        @test m.properties[pB].name == :ex_a_b
+        @test m.properties[pA].kind == :object
+        @test m.properties[pB].kind == :datatype
+
+        install!(generate(m))
+        f = Jayhawk._lookup(Jayhawk, :ex_a_b)
+        # A lone ObjectProperty generator contributes 4 methods, a lone
+        # DatatypeProperty generator 3. More than either alone would produce is
+        # direct evidence both were installed under the one shared name.
+        @test length(methods(f)) > 4
+
+        tl = initialize()
+        register!(m, tl)
+        failures = 0
+        for tr in m.data
+            try
+                Base.invokelatest(f, tr.subject, tr.object, tl)
+            catch
+                failures += 1
+            end
+        end
+        # Both triples ran through the one merged function without erroring -- the
+        # actual risk is silent wrong-property execution, not a crash. Exactly which
+        # fields end up where depends on objprop_expr's/dataprop_expr's own storage
+        # conventions (a separate, pre-existing quirk, not caused by this collision),
+        # so this deliberately doesn't assert on ldict contents.
+        @test failures == 0
+    end
+
+    @testset "run_data! survives an unexecutable triple without throwing" begin
+        # `run_data!` only reports failures via `@info`, and the existing
+        # "every gistAcct triple executes" test reimplements its loop rather than
+        # calling it -- so nothing exercises run_data!'s own tolerance for a bad
+        # triple through its real signature.
+        t = """
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX ex: <http://fail.example.org/o#>
+        BASE <http://fail.example.org/d/>
+
+        ex:good rdf:type owl:ObjectProperty .
+
+        :_a ex:good :_b .
+        """
+        m = analyze(Jayhawk.expand_uris(Serd.read_rdf_string(t)...))
+        # A predicate that was never declared or used: `_qname` resolves it fine (its
+        # namespace prefix is registered), but no method was ever generated for it.
+        bad = Triple(Resource("http://fail.example.org/d/_c"),
+                     Resource("http://fail.example.org/o#neverDeclared"),
+                     Resource("http://fail.example.org/d/_d"))
+        push!(m.data, bad)
+
+        tl = initialize()
+        install!(generate(m))
+        register!(m, tl)
+
+        logs, _ = Test.collect_test_logs() do
+            run_data!(m, tl)
+        end
+        @test any(r -> r.level == Logging.Info && occursin("did not execute", r.message),
+                  logs)
+
+        # the good triple still executed despite the bad one
+        @test haskey(tl.ldict, Resource("http://fail.example.org/d/_a"))
+    end
+
+    @testset "blank-node rdf:type for bootstrap owl types silently degrades to Unknown" begin
+        # REAL BUG, found while writing an end-to-end test for the existing
+        # "owl:Ontology, Restriction, Thing, NamedIndividual" testset (which only
+        # calls the owl_Restriction constructor directly -- nothing sent a triple
+        # through make_from_rdf). Not caused by, or fixed by, commit 3ca21e7.
+        #
+        # `resource_dict` (src/rdf.jl) is populated with `Resource("owl","Restriction")`
+        # etc -- the two-arg *CURIE* constructor, producing a `ResourceCURIE`. Every
+        # resource that survives `expand_uris` (the normal load path) is a
+        # `ResourceURI`, and `ResourceCURIE("owl","Restriction") !=
+        # ResourceURI("http://www.w3.org/2002/07/owl#Restriction")` even though they
+        # denote the same IRI -- different concrete subtypes of the abstract
+        # `Resource`, and `@auto_hash_equals` equality never crosses that boundary. So
+        # `retrieve!(tl, o)` against resource_dict/rdict never finds these seven
+        # bootstrap types via the normal path.
+        #
+        # Nobody noticed because `rdf_type(s::Resource, o::Resource, tl)` -- the entry
+        # point for *named* subjects -- has a second, redundant lookup: it re-resolves
+        # the object via `makeqname` + `_defined`/`_lookup` against the module itself,
+        # which papers over the resource_dict miss. `rdf_type(b::Blank, o::Resource,
+        # tl)` has no such fallback -- it trusts `retrieve!` alone. Blank-node typing
+        # (`_:x a owl:Restriction`, `_:x a owl:Class` -- exactly how OWL restrictions
+        # are normally written) silently becomes a plain `Unknown` instead of the
+        # intended type. `rdf_type(b::Blank, ::Type{owl_Class}, tl)` in rdf_type.jl is
+        # dead code as a result: unreachable via the standard make_from_rdf path.
+        #
+        # Not exercised by "every gistAcct triple executes": that fixture has zero
+        # blank-node owl:Restriction triples, so the existing 0-failures result says
+        # nothing about this path.
+        @test Resource("owl", "Restriction") isa ResourceCURIE
+        @test Resource("http://www.w3.org/2002/07/owl#Restriction") isa ResourceURI
+        @test Resource("owl", "Restriction") != Resource("http://www.w3.org/2002/07/owl#Restriction")
+        @test !haskey(Jayhawk.resource_dict, Resource("http://www.w3.org/2002/07/owl#Restriction"))
+
+        t = """
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+
+        _:r1 rdf:type owl:Restriction .
+        """
+        tl = initialize()
+        make_from_rdf(t, tl)
+        blanks = [k for k in keys(tl.ldict) if k isa Blank]
+        @test length(blanks) == 1
+        # This SHOULD be `owl_Restriction`. Characterization test for the bug above:
+        # once the resource_dict key mismatch is fixed (or the Blank-subject rdf_type
+        # path gains the fallback the Resource-subject path already has), this
+        # assertion flips to `isa Jayhawk.owl_Restriction` -- that failure is the
+        # signal to update this test, not a regression.
+        @test tl.ldict[blanks[1]] isa Jayhawk.Unknown
+
+        # Contrast case: identical typing on a *named* subject works today, because
+        # only the Resource-subject entry point has the redundant makeqname fallback.
+        t2 = """
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX ex: <http://named.example.org/o#>
+        ex:r1 rdf:type owl:Restriction .
+        """
+        tl2 = initialize()
+        make_from_rdf(t2, tl2)
+        @test tl2.ldict[Resource("http://named.example.org/o#r1")] isa Jayhawk.owl_Restriction
+    end
+
+    @testset "conflicting explicit property kinds: first explicit kind wins" begin
+        # `_ensure_prop!` only upgrades :inferred_* -> explicit; there is no rule for
+        # explicit -> different explicit (invalid OWL, but real files sometimes have
+        # it). Not a bug fix here -- pinning down today's actual, undocumented
+        # tie-break so a future change to `_ensure_prop!` shows up as a deliberate
+        # decision rather than a silent behavior change.
+        t = """
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX ex: <http://conflict.example.org/o#>
+
+        ex:p rdf:type owl:ObjectProperty .
+        ex:p rdf:type owl:DatatypeProperty .
+        """
+        m = analyze(Jayhawk.expand_uris(Serd.read_rdf_string(t)...))
+        @test m.properties[Resource("http://conflict.example.org/o#p")].kind == :object
     end
 end
