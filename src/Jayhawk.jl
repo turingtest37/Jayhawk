@@ -22,8 +22,23 @@ export SchemaModel, ClassSpec, PropertySpec
 
 const RORB = Union{Resource,Blank}
 export RORB
-# Main dictionary for bootstrapping types
-resource_dict = Dict{RORB, Any}()
+
+"""
+Term as it exists *after* `expand_uris`: a full-IRI resource or a blank node.
+
+`RORB` is deliberately not used for dictionary keys. `Resource` is abstract, and its two
+concrete subtypes never compare equal to each other -- `ResourceCURIE("owl","Class")` and
+`ResourceURI("http://www.w3.org/2002/07/owl#Class")` denote the same IRI but hash and
+compare differently under `@auto_hash_equals`. Keying by `RORB` therefore let the
+bootstrap types be stored in one form and looked up in the other, and every lookup missed
+silently for as long as the package has existed. Restricting the key type turns that
+class of mistake into a conversion error at the point of insertion.
+"""
+const ExpandedTerm = Union{ResourceURI,Blank}
+export ExpandedTerm
+
+# Main dictionary for bootstrapping types, keyed by expanded IRI.
+const resource_dict = Dict{ExpandedTerm, Any}()
 
 initialize() = TraceLog(resource_dict, true)
 

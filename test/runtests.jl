@@ -636,39 +636,34 @@ end
         @test haskey(tl.ldict, Resource("http://fail.example.org/d/_a"))
     end
 
-    @testset "blank-node rdf:type for bootstrap owl types silently degrades to Unknown" begin
-        # REAL BUG, found while writing an end-to-end test for the existing
-        # "owl:Ontology, Restriction, Thing, NamedIndividual" testset (which only
-        # calls the owl_Restriction constructor directly -- nothing sent a triple
-        # through make_from_rdf). Not caused by, or fixed by, commit 3ca21e7.
+    @testset "blank-node rdf:type resolves to the intended bootstrap type" begin
+        # FIXED. This was a characterization test asserting the broken behaviour; the
+        # assertions below are its inverse.
         #
-        # `resource_dict` (src/rdf.jl) is populated with `Resource("owl","Restriction")`
-        # etc -- the two-arg *CURIE* constructor, producing a `ResourceCURIE`. Every
-        # resource that survives `expand_uris` (the normal load path) is a
-        # `ResourceURI`, and `ResourceCURIE("owl","Restriction") !=
-        # ResourceURI("http://www.w3.org/2002/07/owl#Restriction")` even though they
-        # denote the same IRI -- different concrete subtypes of the abstract
-        # `Resource`, and `@auto_hash_equals` equality never crosses that boundary. So
-        # `retrieve!(tl, o)` against resource_dict/rdict never finds these seven
-        # bootstrap types via the normal path.
+        # `resource_dict` was populated with `Resource("owl","Restriction")` -- the
+        # two-arg *CURIE* constructor, producing a `ResourceCURIE`. Everything that
+        # survives `expand_uris` is a `ResourceURI`, and the two never compare equal
+        # under `@auto_hash_equals` even though they denote the same IRI, so
+        # `retrieve!` missed all 38 bootstrap entries and returned `Unknown`.
         #
-        # Nobody noticed because `rdf_type(s::Resource, o::Resource, tl)` -- the entry
-        # point for *named* subjects -- has a second, redundant lookup: it re-resolves
-        # the object via `makeqname` + `_defined`/`_lookup` against the module itself,
-        # which papers over the resource_dict miss. `rdf_type(b::Blank, o::Resource,
-        # tl)` has no such fallback -- it trusts `retrieve!` alone. Blank-node typing
-        # (`_:x a owl:Restriction`, `_:x a owl:Class` -- exactly how OWL restrictions
-        # are normally written) silently becomes a plain `Unknown` instead of the
-        # intended type. `rdf_type(b::Blank, ::Type{owl_Class}, tl)` in rdf_type.jl is
-        # dead code as a result: unreachable via the standard make_from_rdf path.
+        # Named subjects escaped it only because `rdf_type(s::Resource, o::Resource)`
+        # re-resolves the object against the module. The Blank entry point does not.
         #
-        # Not exercised by "every gistAcct triple executes": that fixture has zero
-        # blank-node owl:Restriction triples, so the existing 0-failures result says
-        # nothing about this path.
+        # The dict is now keyed by expanded IRI and typed `ExpandedTerm`
+        # (= Union{ResourceURI,Blank}), so storing a CURIE key is a conversion error
+        # rather than a silent miss.
+        #
+        # Correcting the record: the previous version of this comment claimed gistAcct
+        # "has zero blank-node owl:Restriction triples". It has 62, plus 47 blank
+        # owl:Class. "every gistAcct triple executes" passed throughout -- but only
+        # because the Unknown path does not throw, so silent degradation counted as
+        # success. That is precisely why the assertion below is about the *value*
+        # stored, not about the absence of an exception.
         @test Resource("owl", "Restriction") isa ResourceCURIE
         @test Resource("http://www.w3.org/2002/07/owl#Restriction") isa ResourceURI
         @test Resource("owl", "Restriction") != Resource("http://www.w3.org/2002/07/owl#Restriction")
-        @test !haskey(Jayhawk.resource_dict, Resource("http://www.w3.org/2002/07/owl#Restriction"))
+        @test haskey(Jayhawk.resource_dict, Resource("http://www.w3.org/2002/07/owl#Restriction"))
+        @test all(k -> k isa ResourceURI, keys(Jayhawk.resource_dict))
 
         t = """
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -680,15 +675,10 @@ end
         make_from_rdf(t, tl)
         blanks = [k for k in keys(tl.ldict) if k isa Blank]
         @test length(blanks) == 1
-        # This SHOULD be `owl_Restriction`. Characterization test for the bug above:
-        # once the resource_dict key mismatch is fixed (or the Blank-subject rdf_type
-        # path gains the fallback the Resource-subject path already has), this
-        # assertion flips to `isa Jayhawk.owl_Restriction` -- that failure is the
-        # signal to update this test, not a regression.
-        @test tl.ldict[blanks[1]] isa Jayhawk.Unknown
+        @test tl.ldict[blanks[1]] isa Jayhawk.owl_Restriction
+        @test tl.ldict[blanks[1]].uri == blanks[1]
 
-        # Contrast case: identical typing on a *named* subject works today, because
-        # only the Resource-subject entry point has the redundant makeqname fallback.
+        # the named subject keeps working
         t2 = """
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
         PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
@@ -698,6 +688,162 @@ end
         tl2 = initialize()
         make_from_rdf(t2, tl2)
         @test tl2.ldict[Resource("http://named.example.org/o#r1")] isa Jayhawk.owl_Restriction
+    end
+
+    @testset "every blank-node rdf:type in the fixtures resolves" begin
+        # The assertion that would have caught the original bug. "every gistAcct triple
+        # executes" could not: it only checks that nothing throws, and the broken path
+        # returned Unknown quietly.
+        #
+        # Checks resolution at `retrieve!` rather than the value finally left in ldict,
+        # because ldict is last-write-wins: a restriction's own owl:onProperty /
+        # owl:someValuesFrom triples overwrite its entry afterwards. That overwriting is
+        # a separate, pre-existing trait of ldict and applies to named subjects
+        # identically -- see the characterization testset below.
+        RDFTYPE = Resource("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
+        for f in ("jayhawk.ttl", "gistAcct3.0.0.ttl")
+            ttl = read(joinpath(@__DIR__, "..", "resource", f), String)
+            m = analyze(Jayhawk.expand_uris(Serd.read_rdf_string(ttl)...))
+            install!(generate(m))
+            tl = initialize()
+            register!(m, tl)
+
+            blank_typings = [t for t in m.data
+                             if t.predicate == RDFTYPE && t.subject isa Blank]
+            @test !isempty(blank_typings)
+
+            unresolved = [t for t in blank_typings
+                          if Jayhawk.retrieve!(tl, t.object) isa Unknown]
+            @test isempty(unresolved)
+        end
+    end
+
+    @testset "blank nodes as subjects of any bootstrap type" begin
+        # Once retrieve! started resolving these, blank subjects reached dispatch for
+        # real. owl_Thing / owl_Ontology / owl_NamedIndividual accepted only Resource
+        # and raised MethodError -- trading a silent wrong answer for a silently
+        # dropped triple, since run_data! catches. owl_Class had only a Blank method,
+        # so the *named* case raised instead. `_:x a _:y` matched nothing at all.
+        owl(l) = Resource("http://www.w3.org/2002/07/owl#" * l)
+        s_named = Resource("http://any.example.org/s")
+        b = Blank("x")
+
+        for (localname, T) in (("Restriction",     Jayhawk.owl_Restriction),
+                               ("Class",           Jayhawk.owl_Class),
+                               ("Thing",           Jayhawk.owl_Thing),
+                               ("Ontology",        Jayhawk.owl_Ontology),
+                               ("NamedIndividual", Jayhawk.owl_NamedIndividual))
+            tlb = initialize()
+            rdf_type(b, owl(localname), tlb)
+            @test tlb.ldict[b] isa T
+
+            tln = initialize()
+            rdf_type(s_named, owl(localname), tln)
+            @test tln.ldict[s_named] isa T
+        end
+
+        # blank subject with a blank object, and vice versa: both stored, neither throws
+        tl = initialize()
+        rdf_type(b, Blank("y"), tl)
+        @test tl.ldict[b] == Blank("y")
+        rdf_type(s_named, Blank("y"), tl)
+        @test tl.ldict[s_named] == Blank("y")
+
+        # an object in an unregistered namespace used to throw KeyError out of
+        # makeqname; the entry point now uses _qname, which returns nothing
+        rdf_type(s_named, Resource("http://nowhere.invalid/o/T"), tl)
+        @test tl.ldict[s_named] isa Unknown
+    end
+
+    @testset "blank nodes are valid instances of generated classes" begin
+        # Second, independent bug. class_expr typed the generated struct field
+        # `uri::Resource` and emitted rdf_type only for Resource and Unknown, so
+        # `_:x a ex:Widget` -- ordinary Turtle, written `[ a ex:Widget ]` -- threw
+        # MethodError and run_data! dropped the triple. Widening the method alone would
+        # not have been enough: construction would have failed instead of dispatch.
+        t = """
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX ex: <http://bnclass.example.org/o#>
+        ex:Widget rdf:type owl:Class .
+        _:anon    rdf:type ex:Widget .
+        ex:named  rdf:type ex:Widget .
+        """
+        tl = initialize()
+        make_from_rdf(t, tl)
+
+        W = Jayhawk._lookup(Jayhawk, :ex_Widget)
+        @test fieldtype(W, :uri) == RORB
+
+        b = only(k for k in keys(tl.ldict) if k isa Blank)
+        @test tl.ldict[b] isa W
+        @test tl.ldict[b].uri == b
+        @test tl.ldict[Resource("http://bnclass.example.org/o#named")] isa W
+    end
+
+    @testset "the anonymous-restriction idiom executes cleanly" begin
+        # `ex:C rdfs:subClassOf [ a owl:Restriction ; owl:onProperty ex:p ]` is how
+        # essentially every OWL ontology is written, and it exercises blank subjects
+        # for both rdf:type and ordinary properties.
+        t = """
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX ex: <http://anon.example.org/o#>
+        ex:C rdf:type owl:Class ;
+             rdfs:subClassOf [ rdf:type owl:Restriction ; owl:onProperty ex:p ] .
+        """
+        m = analyze(Jayhawk.expand_uris(Serd.read_rdf_string(t)...))
+        install!(generate(m))
+        tl = initialize()
+        register!(m, tl)
+
+        failures = Any[]
+        for tr in m.data
+            nm = Jayhawk._qname(tr.predicate)
+            (nm === nothing || !Jayhawk._defined(Jayhawk, nm)) &&
+                (push!(failures, (tr, :undefined)); continue)
+            try
+                Base.invokelatest(Jayhawk._lookup(Jayhawk, nm), tr.subject, tr.object, tl)
+            catch e
+                push!(failures, (tr, e))
+            end
+        end
+        @test isempty(failures)
+    end
+
+    @testset "KNOWN GAP: ldict is last-write-wins, and blank subClassOf edges are lost" begin
+        # Neither of these is a blank-node bug, and neither is fixed here -- but both
+        # were found while fixing one, and both would otherwise be mistaken for it.
+
+        # (1) ldict holds ONE value per key, so a node's type is overwritten by its own
+        # property triples. This hits named subjects identically, which is what shows it
+        # is not about blank nodes.
+        t = """
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX ex: <http://clobber.example.org/o#>
+        ex:r rdf:type owl:Restriction ; owl:onProperty ex:p .
+        """
+        tl = initialize()
+        make_from_rdf(t, tl)
+        # the owl_Restriction built by rdf_type has been replaced by owl:onProperty's object
+        @test !(tl.ldict[Resource("http://clobber.example.org/o#r")] isa Jayhawk.owl_Restriction)
+
+        # (2) analyze guards rdfs:subClassOf on `s isa Resource && o isa Resource`, so
+        # the standard anonymous-superclass idiom records no edge. Representing
+        # anonymous class expressions is a design question: ClassSpec.supers is a
+        # Vector{Resource} and cannot hold a Blank.
+        t2 = """
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX ex: <http://supers.example.org/o#>
+        ex:C rdf:type owl:Class ;
+             rdfs:subClassOf [ rdf:type owl:Restriction ] .
+        """
+        m2 = analyze(Jayhawk.expand_uris(Serd.read_rdf_string(t2)...))
+        @test isempty(m2.classes[Resource("http://supers.example.org/o#C")].supers)
     end
 
     @testset "conflicting explicit property kinds: first explicit kind wins" begin

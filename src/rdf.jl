@@ -163,35 +163,55 @@ datatypes = [
 "xsd:unsignedLong",
 "xsd:unsignedShort"
 ]
+"""
+    bootstrap_uri(prefix, localname) -> ResourceURI
+
+Expand a prefixed name to the full-IRI form every term takes after [`expand_uris`].
+
+`resource_dict` must be keyed the way it will be *looked up*. Terms reaching `retrieve!`
+have been through `expand_uris`, which turns every `ResourceCURIE` into a `ResourceURI`;
+a dictionary keyed by the CURIE form can therefore never be hit. See [`ExpandedTerm`].
+
+The Julia type name is still derived from the prefixed form by the callers below, not
+from this IRI: `makeqname(::ResourceURI)` would have to consult the prefix registry,
+which makes package load order significant, whereas `makeqname(prefix, name)` is pure.
+"""
+bootstrap_uri(prefix::AbstractString, localname::AbstractString) =
+    Resource(string(prefixforpfx(String(prefix)).uri, localname))
+
 # Create a Julia type for each xsd type
 for x in datatypes
   @debug "Creating datatype from uri" x
   pfx,nm = string.(split(x,":"))
   s = Symbol(makeqname(pfx,nm))
-  @debug "Creating datatype" s
+  key = bootstrap_uri(pfx, nm)
+  @debug "Creating datatype" s key
   eval(
-    quote    
+    quote
         @auto_hash_equals struct $s <: OwlDatatype
             v::String
         end
         export $s
-        $resource_dict[Resource($pfx,$nm)] = $s 
+        $resource_dict[$key] = $s
     end
   )
 end
 
-# Need to explain this next line!
-broadcast((x)->setindex!(resource_dict, (eval ∘ Symbol ∘ makeqname)(x), x),
-(
-Resource("owl","Class"),
-Resource("owl","Thing"),
-Resource("owl","ObjectProperty"),
-Resource("owl","DatatypeProperty"),
-Resource("owl","NamedIndividual"),
-Resource("owl","Restriction"),
-Resource("owl","Ontology")
-)
-)
+# Register the seven OWL types the bootstrap depends on, so that `retrieve!` can resolve
+# an incoming `rdf:type` object to the Julia type that implements it.
+#
+# This was a `broadcast` over `Resource("owl", "Class")` CURIEs whose value was recovered
+# with `(eval ∘ Symbol ∘ makeqname)`. Naming the structs directly means the compiler
+# checks them and no `eval` is involved.
+for (localname, T) in (("Class",            owl_Class),
+                       ("Thing",            owl_Thing),
+                       ("ObjectProperty",   owl_ObjectProperty),
+                       ("DatatypeProperty", owl_DatatypeProperty),
+                       ("NamedIndividual",  owl_NamedIndividual),
+                       ("Restriction",      owl_Restriction),
+                       ("Ontology",         owl_Ontology))
+    resource_dict[bootstrap_uri("owl", localname)] = T
+end
 
 """
 Converts Serd Statements 

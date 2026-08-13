@@ -14,22 +14,28 @@ Struct, constructors and rdf_type methods for one owl:Class.
 function class_expr(suri::Resource)
     nm = Symbol(makeqname(suri))
     quote
+        # `uri::RORB`, not `uri::Resource`: an instance of a user-defined class can be a
+        # blank node. `[ a ex:Widget ]` is ordinary Turtle, and `_:x a ex:Widget` used to
+        # throw MethodError and be swallowed by run_data!'s catch -- worse than the
+        # bootstrap types' silent Unknown, because the triple was dropped outright.
+        # Widening the method alone is not enough; construction would fail instead of
+        # dispatch. The hand-written bootstrap structs in rdf.jl already use RORB.
         struct $nm
-            uri::Resource
+            uri::RORB
             in::Dict
             out::Dict
             types::Vector{Resource}
         end
 
         $nm(uri::String) = $nm(Resource(uri))
-        $nm(u::Resource) = $nm(u, Dict(), Dict(), Resource[])
+        $nm(u::RORB) = $nm(u, Dict(), Dict(), Resource[])
         # convert a previously-seen Unknown into this type
         $nm(u::Unknown) = $nm(u.uri, u.in, u.out, u.super)
         export $nm
 
         rdf_type(s::Unknown, ::Type{$nm}, tl::TraceLog) = store_local!(tl, $nm(s), s.uri)
 
-        function rdf_type(r::Resource, ::Type{$nm}, tl::TraceLog)
+        function rdf_type(r::RORB, ::Type{$nm}, tl::TraceLog)
             # if this URI was seen before, reuse it -- it may still be an Unknown
             _instance = get!(tl.ldict, r) do
                 get(tl.rdict, r, $nm(r))
