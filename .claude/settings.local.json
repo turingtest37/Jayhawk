@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Bash(julia test:*)",
-      "Bash(julia --project=. test:*)"
+      "Bash(julia --project=. test:*)",
+      "Bash(time julia --project=. test/runtests.jl)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(julia --project=. test/runtests.jl)",
+      "Bash(git add *)",
+      "Bash(julia *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
