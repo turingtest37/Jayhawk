@@ -8,9 +8,7 @@ using Dates
 using Random
 using AutoHashEquals
 # using InteractiveUtils: methodswith
-# need to revise this list of exports 
-export build_model, build_instance_classes, build_model_instances, process_rdf_data, 
-qsparql, usparql
+export build_model, qsparql, usparql
 export makeqname, set_def_prefixes
 export rdf_type, rdfs_subClassOf
 export Unknown
@@ -54,16 +52,23 @@ function set_def_prefixes()
     add_prefix!("jayhawk:", "http://www.semanticweb.org/doug/ontologies/jayhawk#")
 end
 
-function build_model()
-    # Set up our prefixes
-    set_def_prefixes()
-    
-    build_classes()
-    build_subclasses()
-    build_obj_props()
-    build_data_props()
-    build_typed_props()
-end
+"""
+    build_model()
+
+Not implemented.
+
+The SPARQL-endpoint helpers this was written against -- `build_classes`,
+`build_subclasses`, `build_obj_props`, `build_data_props`, `build_typed_props` -- do not
+exist anywhere in the package, so calling this has always thrown `UndefVarError` on the
+first line of its body. It raises a useful error instead of pretending otherwise.
+
+Use [`make_from_rdf`](@ref) to load Turtle, or [`compile`](@ref) to install a schema
+without executing data.
+"""
+build_model() = error(
+    "build_model is not implemented: the build_classes/build_subclasses/build_obj_props/" *
+    "build_data_props/build_typed_props helpers it calls were never written. " *
+    "Use make_from_rdf(turtle, tracelog) or compile(turtle).")
 
 
 

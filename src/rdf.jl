@@ -11,6 +11,8 @@ end
 struct owl_Thing <: RDFType
   uri::RORB
   in::Dict{RORB, RORB}
+
+  owl_Thing(uri::RORB) = new(uri, Dict())
 end
 
 struct owl_ObjectProperty <: RDFType
@@ -34,19 +36,25 @@ struct owl_AnnotationProperty <: RDFType
   owl_AnnotationProperty(uri::RORB) = new(uri, Dict())
 end
 
-struct owl_NamedIndividual
-  uri::Resource
-  in::Dict{RORB, RORB}
-end
-
-struct owl_Restriction
+struct owl_NamedIndividual <: RDFType
   uri::RORB
   in::Dict{RORB, RORB}
+
+  owl_NamedIndividual(uri::RORB) = new(uri, Dict())
 end
 
-struct owl_Ontology
+struct owl_Restriction <: RDFType
   uri::RORB
   in::Dict{RORB, RORB}
+
+  owl_Restriction(uri::RORB) = new(uri, Dict())
+end
+
+struct owl_Ontology <: RDFType
+  uri::RORB
+  in::Dict{RORB, RORB}
+
+  owl_Ontology(uri::RORB) = new(uri, Dict())
 end
 
 # The Unknown Type is used when a statement is encountered for which
@@ -88,7 +96,19 @@ makeqname(s::String) = makeqname(URI(s))
 makeqname(uri::ResourceURI) = makeqname(URI(uri.uri))
 makeqname(uri::Resource) = makeqname(URI(uri.uri))
 makeqname(curie::ResourceCURIE) = makeqname(curie.prefix, curie.localname)
-makeqname(prefix::String, name::String) = string(prefix,"_",name)
+makeqname(prefix::String, name::String) = string(sanitize_name(prefix), "_", sanitize_name(name))
+
+"""
+    sanitize_name(s) -> String
+
+Reduce a name fragment to characters legal in a Julia identifier.
+
+Local names routinely contain `-` and `.` (`gist:is-categorized-by`), which produced
+Symbols that `eval` happily accepts but that no Julia source file could name and no
+caller could write. Since generated code is headed for a precompilable file, the names
+have to be legal.
+"""
+sanitize_name(s::AbstractString) = replace(String(s), r"[^A-Za-z0-9_]" => "_")
 makeqname(b::Blank) = makeqname("Jayhawk", string(b.name))
 
 # prefixforuri(namesp) = Serd.RDF.Prefixes.prefixforuri(namesp)
@@ -219,4 +239,4 @@ end
 export expand_uris
 
 export localname, ns, parsent, MaybeURI, MaybeString, xsdtype2j, @U_str, valueof
-export makeqname
+export makeqname, sanitize_name

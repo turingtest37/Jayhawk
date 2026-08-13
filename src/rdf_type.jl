@@ -24,6 +24,21 @@ end
 
 function rdf_type(s::Resource, ::Type{owl_NamedIndividual}, tl::TraceLog)
     @debug "rdf_type $s Type{owl_NamedIndividual}"
+    store_local!(tl, owl_NamedIndividual(s), s)
+end
+
+# owl:Ontology and owl:Restriction reach here as ordinary data -- analyze only consumes
+# the class and property declarations -- so they need methods of their own. Without one,
+# a single `<ontology> a owl:Ontology` triple threw and was silently counted as a
+# failure. Restrictions are usually blank nodes.
+function rdf_type(s::Resource, ::Type{owl_Ontology}, tl::TraceLog)
+    @debug "rdf_type $s ::owl_Ontology"
+    store_local!(tl, owl_Ontology(s), s)
+end
+
+function rdf_type(s::RORB, ::Type{owl_Restriction}, tl::TraceLog)
+    @debug "rdf_type $s ::owl_Restriction"
+    store_local!(tl, owl_Restriction(s), s)
 end
 
 # import Base.setindex!

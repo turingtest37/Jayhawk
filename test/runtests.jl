@@ -257,6 +257,99 @@ end
     @test length(tl.ldict) > 100
 end
 
+@testset "every gistAcct triple executes" begin
+    # These 24 failures were invisible before: master could not load the file at all.
+    ttl = read(joinpath(@__DIR__, "..", "resource", "gistAcct3.0.0.ttl"), String)
+    m = analyze(Jayhawk.expand_uris(Serd.read_rdf_string(ttl)...))
+    install!(generate(m))
+    tl = initialize()
+    register!(m, tl)
+
+    failures = Tuple{Any,Any}[]
+    for t in m.data
+        nm = Jayhawk._qname(t.predicate)
+        (nm === nothing || !Jayhawk._defined(Jayhawk, nm)) && (push!(failures, (t, :undefined)); continue)
+        f = Jayhawk._lookup(Jayhawk, nm)
+        try
+            Base.invokelatest(f, t.subject, t.object, tl)
+        catch e
+            push!(failures, (t, e))
+        end
+    end
+    @test isempty(failures)
+end
+
+@testset "generated names are legal Julia identifiers" begin
+    # `gist:is-categorized-by` produced the Symbol `ex_is-categorized-by`: accepted by
+    # eval, unwritable in a source file, and fatal once generate emits to disk.
+    @test Base.isidentifier(makeqname("ex", "is-categorized-by"))
+    @test makeqname("ex", "is-categorized-by") == "ex_is_categorized_by"
+    @test Base.isidentifier(makeqname("ex", "has.dotted.name"))
+
+    # the existing colon handling must survive
+    @test makeqname("urn:thanks:yourewelcome") == "urn_thanks_yourewelcome"
+
+    ttl = read(joinpath(@__DIR__, "..", "resource", "gistAcct3.0.0.ttl"), String)
+    m = analyze(Jayhawk.expand_uris(Serd.read_rdf_string(ttl)...))
+    bad = [string(s.name) for s in values(m.properties) if !Base.isidentifier(string(s.name))]
+    append!(bad, [string(s.name) for s in values(m.classes) if !Base.isidentifier(string(s.name))])
+    @test isempty(bad)
+end
+
+@testset "rdfs:subClassOf on a realised class" begin
+    # DataType has a `super` field of its own, so the generic method used to resolve to
+    # `push!(Any, o)`. A hasfield guard would not have caught it.
+    @test hasfield(DataType, :super)
+
+    t = """
+    PREFIX owl: <http://www.w3.org/2002/07/owl#>
+    PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX sc: <http://sc.example.org/o#>
+    sc:Parent rdf:type owl:Class .
+    sc:Child  rdf:type owl:Class ; rdfs:subClassOf sc:Parent .
+    """
+    tl = initialize()
+    make_from_rdf(t, tl)
+
+    # the realised class arrives as a DataType; this is the call that used to throw
+    Child = Jayhawk._lookup(Jayhawk, :sc_Child)
+    @test Child isa Type
+    @test rdfs_subClassOf(Child, Jayhawk._lookup(Jayhawk, :sc_Parent), tl) === nothing
+
+    # an Unknown still accumulates supertypes as before
+    u = Unknown(Resource("http://sc.example.org/d/_u"))
+    rdfs_subClassOf(u, Resource("http://sc.example.org/o#Parent"), tl)
+    @test length(u.super) == 1
+
+    # the edge is still recorded -- in the model, which is where it belongs
+    m = analyze(Jayhawk.expand_uris(Serd.read_rdf_string(t)...))
+    @test Resource("http://sc.example.org/o#Parent") in
+          m.classes[Resource("http://sc.example.org/o#Child")].supers
+end
+
+@testset "owl:Ontology, Restriction, Thing, NamedIndividual" begin
+    # None of these had a working single-argument constructor; owl_Thing(s) was already
+    # being called with one argument and would have thrown.
+    r = Resource("http://ctor.example.org/x")
+    @test Jayhawk.owl_Thing(r).uri == r
+    @test Jayhawk.owl_Ontology(r).uri == r
+    @test Jayhawk.owl_Restriction(r).uri == r
+    @test Jayhawk.owl_NamedIndividual(r).uri == r
+
+    t = """
+    PREFIX owl: <http://www.w3.org/2002/07/owl#>
+    PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+    PREFIX on: <http://on.example.org/o#>
+    on:MyOnt rdf:type owl:Ontology .
+    on:Bob   rdf:type owl:NamedIndividual , owl:Thing .
+    """
+    tl = initialize()
+    make_from_rdf(t, tl)
+    @test haskey(tl.ldict, Resource("http://on.example.org/o#MyOnt"))
+    @test haskey(tl.ldict, Resource("http://on.example.org/o#Bob"))
+end
+
 @testset "unprefixed terms are skipped, not fatal" begin
     # makeqname throws for an unregistered prefix (asserted above); analyze must not
     # propagate that and abandon the rest of the file.
