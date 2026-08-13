@@ -27,6 +27,13 @@ struct owl_DatatypeProperty <: RDFType
   owl_DatatypeProperty(uri::RORB) = new(uri, Dict())
 end
 
+struct owl_AnnotationProperty <: RDFType
+  uri::Resource
+  in::Dict{RORB, RORB}
+
+  owl_AnnotationProperty(uri::RORB) = new(uri, Dict())
+end
+
 struct owl_NamedIndividual
   uri::Resource
   in::Dict{RORB, RORB}
@@ -177,12 +184,18 @@ function expand_uris(stmts,pfx,buri)
   end
   pdict = prefixes()
   @debug "pdict" pdict
-  scoobys = Statement[]
-  @debug "scoobys" scoobys
+  scoobies = Statement[]
+  @debug "scoobies" scoobies
 
   norm(s::ResourceCURIE) = Resource(string(pdict[s.prefix].uri, s.localname))
-  norm(s::ResourceURI) = Resource(string(s))
+  # `string(::ResourceURI)` renders the constructor call, not the URI, so this has to
+  # read the field. Terms written as full IRIs <http://...> were being turned into the
+  # literal text `ResourceURI("http://...")`.
+  norm(s::ResourceURI) = Resource(s.uri)
   norm(s::Literal) = s
+  # Blank nodes must stay blank; the catch-all below would render them as the literal
+  # text `Blank("b1")` and wrap that in a Resource.
+  norm(s::Blank) = s
   norm(s) = Resource(string(s))
   norm(s::Type) = Resource(URI(URIs.escapeuri(string(s))))
   norm(s::Function) = Resource(URI(URIs.escapeuri(string(s))))
@@ -192,16 +205,16 @@ function expand_uris(stmts,pfx,buri)
       @debug "expanding Triple..." s.subject s.predicate s.object
       t = Triple(norm(s.subject), norm(s.predicate), norm(s.object))
       @debug "produced..." t
-      push!(scoobys, t)
+      push!(scoobies, t)
     else
-      push!(scoobys, norm(s))
+      push!(scoobies, norm(s))
       # Experimental!
-      # for s in stmts push!(scoobys, isa(s,Triple) ? Triple(norm.[s.subject, s.predicate, s.object]) : norm(s))
+      # for s in stmts push!(scoobies, isa(s,Triple) ? Triple(norm.[s.subject, s.predicate, s.object]) : norm(s))
     end
   end
-  # [push!(scoobys, (s a ResourceCURIE ? Resource(pdict[s.prefix] * s.name) : s)) for s in stmts]
-  @debug "scoobys now" scoobys
-  scoobys
+  # [push!(scoobies, (s a ResourceCURIE ? Resource(pdict[s.prefix] * s.name) : s)) for s in stmts]
+  @debug "scoobies now" scoobies
+  scoobies
 end
 export expand_uris
 

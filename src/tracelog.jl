@@ -19,16 +19,15 @@ struct TraceLog{T<:AbstractDict}
     ldict::T
     rdict::T
     entries::Vector{TLogEntry}
-    futures::Vector{Tuple}
     io::IO
     active::Bool
 end
-TraceLog{T}() where {T<:AbstractDict} = TraceLog(T(),T(),TLogEntry[],Tuple[],IOBuffer(),false)
-TraceLog{T}(active::Bool) where {T<:AbstractDict} = TraceLog(T(),T(),TLogEntry[],Tuple[],IOBuffer(),active)
-TraceLog(r_dict::T, io::IO) where {T<:AbstractDict} = TraceLog(T(),deepcopy(r_dict),TLogEntry[],Tuple[],io,false)
-TraceLog(r_dict::T, io::IO, active::Bool) where {T<:AbstractDict} = TraceLog(T(),deepcopy(r_dict),TLogEntry[],Tuple[],io,active)
-TraceLog(r_dict::T) where {T<:AbstractDict} = TraceLog(T(),deepcopy(r_dict),TLogEntry[],Tuple[],IOBuffer(),false)
-TraceLog(r_dict::T, active::Bool) where {T<:AbstractDict} = TraceLog(T(),deepcopy(r_dict),TLogEntry[],Tuple[],IOBuffer(),active)
+TraceLog{T}() where {T<:AbstractDict} = TraceLog(T(),T(),TLogEntry[],IOBuffer(),false)
+TraceLog{T}(active::Bool) where {T<:AbstractDict} = TraceLog(T(),T(),TLogEntry[],IOBuffer(),active)
+TraceLog(r_dict::T, io::IO) where {T<:AbstractDict} = TraceLog(T(),deepcopy(r_dict),TLogEntry[],io,false)
+TraceLog(r_dict::T, io::IO, active::Bool) where {T<:AbstractDict} = TraceLog(T(),deepcopy(r_dict),TLogEntry[],io,active)
+TraceLog(r_dict::T) where {T<:AbstractDict} = TraceLog(T(),deepcopy(r_dict),TLogEntry[],IOBuffer(),false)
+TraceLog(r_dict::T, active::Bool) where {T<:AbstractDict} = TraceLog(T(),deepcopy(r_dict),TLogEntry[],IOBuffer(),active)
 TraceLog() = TraceLog{Dict}()
 TraceLog(active::Bool) = TraceLog{Dict}(active)
 

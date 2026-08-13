@@ -18,6 +18,9 @@ export TraceLog
 export retrieve!, store_res!, store_local!, make_from_rdf
 export initialize
 export resource_dict
+# three-phase pipeline: analyze (pure) -> generate (pure) -> install/register/run
+export analyze, generate, install!, register!, run_data!, compile
+export SchemaModel, ClassSpec, PropertySpec
 
 const RORB = Union{Resource,Blank}
 export RORB
@@ -33,13 +36,20 @@ include("rdf.jl")
 include("rdfs.jl")
 include("rdf_type.jl")
 include("rdfs_subClassOf.jl")
+include("analyze.jl")
+include("generate.jl")
+include("execute.jl")
 include("build.jl")
 
 # Jayhawk provides the framework for building applications that are graph-based and data-centric.
 
 function set_def_prefixes()
     add_prefix!("urn:","urn:")
+    # gist moved namespaces at v12. Serd keeps a separate uri=>prefix map, so registering
+    # both spellings lets makeqname resolve legacy and current data alike; the last one
+    # registered is what gist: expands to.
     add_prefix!("gist:", "https://ontologies.semanticarts.com/gist/")
+    add_prefix!("gist:", "https://w3id.org/semanticarts/ns/ontology/gist/")
     add_prefix!("sh:", "http://www.w3.org/ns/shacl#")
     add_prefix!("jayhawk:", "http://www.semanticweb.org/doug/ontologies/jayhawk#")
 end

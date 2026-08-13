@@ -1,79 +1,95 @@
-# CLAUDE.md
+# Jayhawk — Graph Patterns as Graph-to-Graph Computation
+The Jayhawk codebase is explained in the file `CLAUDE-about.MD`.
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## What this project is
 
-## Project Overview
+Turning RDF **graph patterns into functions that take a graph and produce a graph**, and
+building that into a working computing architecture. The pattern language itself is defined
+elsewhere — `gistPatterningDefinitions.ttl` in the `SyneticSemantics/ontologies` repo (see
+its own `CLAUDE.md` / design notes for how patterns are expressed). This project is about
+**executing** those patterns: compiling, running, and reasoning over them.
 
-Jayhawk is a Julia library that bridges RDF/OWL ontologies with Julia's type system. It dynamically generates Julia types and functions from RDF data, enabling graph-based, data-centric applications using semantic web technologies.
+Organizing idea: a pattern can play the role of **I, L, or R** in a graph-rewrite span
+(L ← I → R); a rule pairs a match pattern (L) with a construct pattern (R).
 
-## Commands
+Grounding fact: RDF entailment is *already* defined as graph homomorphism (Hayes, RDF
+Semantics), so "does G entail G'" is literally the graph homomorphism problem. That is the
+seed the whole idea grows from.
 
-**Run tests:**
-```bash
-julia test/runtests.jl
-```
+## Four theoretical traditions (keep distinct)
 
-**From Julia REPL:**
-```julia
-include("test/runtests.jl")
-```
+The "graph in → function → graph out" shape has (at least) four independent formalizations,
+answering different questions with different tooling:
 
-## Architecture
+1. **Fixpoint rules** — Datalog / OWL RL / N3. "Apply rules to a fixpoint" = monotone closure
+   over a lattice of graphs (Knaster–Tarski / van Emden–Kowalski). What a real reasoner does;
+   don't reimplement by hand.
+2. **Algebraic graph transformation** — DPO / SPO rewriting via pushouts in a category of
+   graphs. The direct formalization of "pattern as I/L/R". Concerns: confluence, termination,
+   dangling condition.
+3. **Graph-native execution** — graph reduction, interaction nets, bigraphs. Locality and
+   concurrency. Least relevant so far.
+4. **Functorial data migration** — schema = category, instance = functor C→Set, migration via
+   Δ / Σ / Π (pullback / left & right Kan extension). Cleanest categorical fit for RDF-shaped
+   data. Implemented in Julia by AlgebraicJulia (Catlab.jl / ACSets.jl / AlgebraicRewriting.jl).
 
-### Two-Pass Compilation Model
+## Core architectural decision: compile patterns to SPARQL Update
 
-Jayhawk uses a two-pass approach to compile RDF into Julia:
+A SPARQL `DELETE {L∖I} INSERT {R∖I} WHERE {L}` is structurally a **single-pushout (SPO) graph
+rewrite**. So the recommended core is a **compiler** from the RDF pattern definitions to
+SPARQL Update text — not a hand-built rewriting engine. Matching, replacement, and atomicity
+then come free from any triple store.
 
-1. **First Pass**: Parses RDF/Turtle data via `make_from_rdf()`, creating Julia types and functions. Properties referencing undefined types are queued as "futures."
+- **CONSTRUCT-only** (no delete) = pure function G→G', referentially transparent, composable
+  (f∘g). Matches the monotone/fixpoint tradition.
+- **DELETE/INSERT** = stateful in-place rewrite. Closer to true SPO/DPO.
+- Make this **mode an explicit property of the rule**, not implied by which triples repeat
+  between clauses.
 
-2. **Second Pass**: `build_pass_two!()` processes all queued futures, resolving forward references after all types are defined.
+### SPO vs DPO caveat
+Plain SPARQL Update is SPO: it deletes what it's told and doesn't check for stranded
+references (no dangling condition). RDF's open world mostly tolerates this, but a rule that
+deletes a node's identity triples while other triples still reference it yields silent
+orphans. If DPO safety is wanted: add a NAC ("no other triples reference this node") or an
+explicit dangling check — or use AlgebraicRewriting.jl, where DPO's dangling condition is
+enforced for real.
 
-### Core Data Structure: TraceLog
+## Primary next task: the deterministic compiler
 
-`TraceLog` is the central state manager with:
-- `ldict`: Local dictionary mapping URIs to Julia functions/types
-- `rdict`: Resource dictionary mapping URIs to RDF resource objects (owl_Class, owl_ObjectProperty, etc.)
-- `entries`: Log of all created TLogEntry records
-- `futures`: Queue of deferred function calls (tuples of predicate, subject, object)
+Split the pattern→SPARQL work into two jobs:
+- **LLM** for authoring/interpretation: vague intent → the right `SparqlVariable` individuals
+  + `iriTemplate` strings. Judgement-heavy, fine to keep fuzzy.
+- **Deterministic code** for the mechanical step: walk the pattern graph, substitute
+  `variableText` for `SparqlVariable`-typed terms and `^^gistp:var` literals, emit BGP
+  triples, assemble the `CONSTRUCT` / `DELETE…INSERT…WHERE`. A few dozen lines, no ambiguity.
 
-### Key Entry Points
+This is the difference between "usually compiles" and "provably compiles," and the mechanical
+half needs no judgement — so it should be real code. Start here. Read the actual ttl on disk
+(don't work from summaries) so every variable and template is seen first-hand.
 
-- `initialize()` → Creates a new TraceLog with the global resource_dict
-- `make_from_rdf(turtle_string, tracelog)` → Main parsing entry point
-- `build_model()` → Builds complete model from SPARQL endpoint
-- `_make_anything(triple, tracelog)` → Dispatcher for individual RDF statements
+## Alternatives considered (compile target)
+- **SHACL-AF** (`sh:SPARQLRule` / `sh:TripleRule`) — inherit a W3C vocab + existing engines
+  (TopBraid, pySHACL) instead of a bespoke compiler+interpreter.
+- **N3 rules** (`{L} => {R}`, EYE/cwm) — standardized, monotone; best if framing as inference
+  rather than rewriting.
+- **Explicit span resources** — most theory-faithful; required if confluence or
+  dangling-condition analysis is ever wanted (needs I, L→I, R→I as real objects).
+- **Hybrid** — gist Patterning as the authorable source; two backends off the same RDF:
+  SPARQL Update for in-store execution, Catlab `Rule` for DPO guarantees / Julia-side compute.
 
-### Type Hierarchy
+## Environment notes
+- Julia RDF tooling is thin. `Serd.jl` (Patterson) for Turtle/N-Triples I/O. No mature Julia
+  SPARQL engine or OWL reasoner — shell out to Python `rdflib` via `PythonCall.jl`, or to a
+  real store (Jena, Oxigraph, Stardog, RDFox) for reasoning/materialization.
+- For fixpoint/closure work (RDFS/OWL RL), use a real reasoner as a separate process and
+  materialize its output — it's a different operation (monotone closure) from SPO/DPO
+  rewriting; don't reimplement it in the compiler.
+- AlgebraicJulia stack (Catlab.jl, ACSets.jl, AlgebraicRewriting.jl) is the route for the
+  functorial-migration or true-DPO path. API not yet stable — check current docs.
 
-- `RORB = Union{Resource, Blank}` — Used throughout for RDF subjects/objects
-- `Unknown` — Placeholder for types not yet defined
-- `owl_Class`, `owl_ObjectProperty`, `owl_DatatypeProperty` — RDF type wrappers
-
-### URI to Symbol Mapping
-
-`makeqname()` converts URIs to Julia identifiers:
-- `owl:Class` → `owl_Class`
-- `gist:Category` → `gist_Category`
-
-Requires prefix registration via `add_prefix!()`. Unregistered prefixes throw `KeyError`.
-
-### Dynamic Code Generation
-
-Uses Julia's `eval()` extensively to create types and multi-dispatch functions at runtime based on RDF predicates and their argument types.
-
-## External Dependencies
-
-- **Serd**: RDF/Turtle parsing (from Serd.jl)
-- **SPARQL endpoint**: Default at `http://127.0.0.1:7200/repositories/ebox`
-  - Configure via `JAYHAWK_SPARQL_SERVICE` and `JAYHAWK_UPDATE_SERVICE` environment variables
-
-## Source Structure
-
-- `Jayhawk.jl` — Module definition, exports, `build_model()`
-- `tracelog.jl` — TraceLog data structure
-- `build.jl` — Core compilation logic (`make_from_rdf`, `_make_anything`, property generation)
-- `rdf.jl` — RDF type definitions, URI utilities
-- `rdf_type.jl` — Handler for `rdf:type` statements (creates Julia types from owl:Class)
-- `rdfs_subClassOf.jl` — Handles inheritance relationships
-- `sparql.jl` — SPARQL query templates
-- `sparqlclient.jl` — HTTP client for SPARQL endpoints
+## Cross-reference
+Pattern-language mechanics and the ontology-level improvement backlog (add `gistp:Rule`,
+constrain `instructionText`, etc.): see the design notes / `CLAUDE.md` in
+`SyneticSemantics/ontologies`. If that repo is checked out at a known path, you can pull it in
+here with a CLAUDE.md import, e.g.:
+`@../SyneticSemantics/ontologies/CLAUDE.md` (adjust to the real relative path).
