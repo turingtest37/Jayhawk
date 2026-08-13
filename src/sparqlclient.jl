@@ -9,11 +9,21 @@ import EzXML: XMLDocument, parsexml, findall, namespaces, namespace
 # include("namespaces.jl")
 # include("constants.jl")
 # include("rdf.jl")
+# These read the environment, not `ARGS`. They used to be written
+# `("JAYHAWK_SPARQL_SERVICE" in ARGS) ? ARGS["JAYHAWK_SPARQL_SERVICE"] : default`, which
+# never threw only because `in` over `ARGS` (a Vector{String}) is always false for a
+# name=value lookup, so the ternary always took the default branch and the indexing --
+# which would have thrown, ARGS not being indexable by String -- was never reached. The
+# endpoint was therefore hardcoded no matter what the caller set.
+#
+# Both are `const`, evaluated when the module loads, so the variables must be set
+# before `using Jayhawk`.
+
 "String representation of the graph store's SPARQL query service URL."
-const spqservice = ("JAYHAWK_SPARQL_SERVICE" in ARGS) ? ARGS["JAYHAWK_SPARQL_SERVICE"] : "http://127.0.0.1:7200/repositories/ebox"
+const spqservice = get(ENV, "JAYHAWK_SPARQL_SERVICE", "http://127.0.0.1:7200/repositories/ebox")
 
 "String representation of the graph store's SPARQL update service URL."
-const spqupdservice = ("JAYHAWK_UPDATE_SERVICE" in ARGS) ? ARGS["JAYHAWK_UPDATE_SERVICE"] : spqservice * "/statements"
+const spqupdservice = get(ENV, "JAYHAWK_UPDATE_SERVICE", spqservice * "/statements")
 
 
 # const tTurtle           = "text/turtle;charset=utf-8"

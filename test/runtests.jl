@@ -5,7 +5,13 @@ using URIs
 using Serd, Serd.RDF, Serd.RDF.Prefixes
 using Logging
 
-ENV["JULIA_DEBUG"]=all
+# Debug logging stays off unless it is asked for. This line used to read
+# `ENV["JULIA_DEBUG"]=all`, where `all` is `Base.all` -- the function. It stringifies to
+# "all", which is exactly the magic value JULIA_DEBUG wants, so it worked by accident
+# and forced full @debug output on every run: ~63,000 lines burying the test summary.
+#
+# Julia reads JULIA_DEBUG from the environment on its own, so to turn it back on:
+#     JULIA_DEBUG=Jayhawk julia --project=. test/runtests.jl
 
 Jayhawk.set_def_prefixes()
 
