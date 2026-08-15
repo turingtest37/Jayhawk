@@ -157,7 +157,8 @@ function engine_cleanup()
     for g in (DATA_GRAPH, TC_GRAPH, Jayhawk.PROVENANCE_GRAPH,
               "$(RULES)PersonToEmployee_L", "$(RULES)PersonToEmployee_R",
               "http://example.org/tcrules/PartOfTransitive_L",
-              "http://example.org/tcrules/PartOfTransitive_R")
+              "http://example.org/tcrules/PartOfTransitive_R",
+              "$(RULES)PersonToEmployeeRecord_L", "$(RULES)PersonToEmployeeRecord_R")
         Jayhawk.update!("DROP SILENT GRAPH <$g>")
     end
     # the rules and their variable declarations live in the default graph
@@ -167,6 +168,10 @@ function engine_cleanup()
         DELETE WHERE { ?s <$(Jayhawk.P_MODE)> ?o } ;
         DELETE WHERE { ?s <$(Jayhawk.P_VARIABLETEXT)> ?o } ;
         DELETE WHERE { ?s <$(Jayhawk.P_IRITEMPLATE)> ?o } ;
+        DELETE WHERE { ?s <$(Jayhawk.P_HASSLOT)> ?o } ;
+        DELETE WHERE { ?s <$(Jayhawk.P_SLOTNAME)> ?o } ;
+        DELETE WHERE { ?s <$(Jayhawk.P_SLOTVALUE)> ?o } ;
+        DELETE WHERE { ?s a <$(Jayhawk.GISTP_NS)TemplateSlot> } ;
         DELETE WHERE { ?s a <$(Jayhawk.C_RULE)> } ;
         DELETE WHERE { ?s a <$(Jayhawk.C_SPARQLVAR)> } ;
         DELETE WHERE { ?s a <$(Jayhawk.GISTP_NS)SparqlPattern> }""")
@@ -220,7 +225,10 @@ end
         @test length(spec.construct) == 2
         @test spec.variables["$(RULES)_Person_1"] == "?_Person_1"
         @test spec.variables["$(RULES)_ID_1"] == "?_ID_1"
-        @test spec.templates["$(RULES)_Person_1"] == ":_Employee_{person_id}"
+        # :_Person_1 used to carry a dead ":_Employee_{person_id}". A template now declares
+        # a variable minted, and a minted variable must not be matched -- so the plain rule
+        # has none at all.
+        @test isempty(spec.mints)
 
         # the literal-position variable survived the round trip through the store
         @test any(is_var_literal(t.object) for t in spec.match)
@@ -364,6 +372,88 @@ end
 
         Jayhawk.update!("DROP SILENT GRAPH <urn:r:Bad_L>")
         Jayhawk.update!("DROP SILENT GRAPH <urn:r:Bad_R>")
+    end
+
+    @testset "minting: a rule that creates a node that did not exist" begin
+        Jayhawk.load_file!(fixture("minting_rule.trig"))
+        Jayhawk.update!("DROP SILENT GRAPH <$DATA_GRAPH>")
+        Jayhawk.update!("""
+            INSERT DATA { GRAPH <$DATA_GRAPH> {
+              <urn:p1> a <$(GIST)Person> ; <$(GIST)isIdentifiedBy> <urn:id1> .
+              <urn:id1> a <$(GIST)ID> ; <$(GIST)containedText> "E-4471" .
+              <urn:p2> a <$(GIST)Person> ; <$(GIST)isIdentifiedBy> <urn:id2> .
+              <urn:id2> a <$(GIST)ID> ; <$(GIST)containedText> "E 9902/A" .
+              <urn:p3> a <$(GIST)Person> .
+            } }""")
+        rule = "$(RULES)PersonToEmployeeRecord"
+
+        @testset "the mint spec loads out of the store" begin
+            spec = load_rule(rule)
+            @test length(spec.mints) == 1
+            m = spec.mints["$(RULES)_Employee_1"]
+            @test m.template == "http://example.org/hr/employee/{id}"
+            @test collect(keys(m.slots)) == ["id"]
+            # the slot value is a literal-position variable, so its ^^gistp:var datatype had
+            # to survive the round trip through the store
+            @test is_var_literal(m.slots["id"])
+            @test var_of(m.slots["id"], spec) == "?idText"
+            # a minted variable appears in R only
+            @test !("?_Employee_1" in vars_in(spec.match, spec))
+            @test "?_Employee_1" in vars_in(spec.construct, spec)
+        end
+
+        @testset "it compiles to a BIND the store can evaluate" begin
+            q = compile_from_store(rule)
+            @test occursin("BIND(IRI(CONCAT(", q)
+            @test occursin("ENCODE_FOR_URI(STR(?idText))", q)
+            @test occursin("AS ?_Employee_1)", q)
+        end
+
+        local fs
+        @testset "applying it mints the expected IRIs" begin
+            fs = run_rule(rule; source = [DATA_GRAPH], actor = "integration")
+            @test sum(f.count for f in fs) == 6      # two people, three triples each
+
+            subjects = Set((r["s"]::IRIRef).value
+                           for f in fs
+                           for r in select("SELECT DISTINCT ?s WHERE { GRAPH <$(f.graph)> { ?s ?p ?o } }"))
+            @test "http://example.org/hr/employee/E-4471" in subjects
+            # ENCODE_FOR_URI is RFC 6570 Level 1 exactly: space -> %20, / -> %2F,
+            # while '-' is unreserved and passes through untouched
+            @test "http://example.org/hr/employee/E%209902%2FA" in subjects
+            @test length(subjects) == 2              # p3 has no identifier, so no record
+
+            # the minted node is linked back to the person it was minted for
+            back = select("""SELECT ?p WHERE { GRAPH <$(fs[1].graph)> {
+                       <http://example.org/hr/employee/E-4471> <$(HR)isRecordFor> ?p } }""")
+            @test (back[1]["p"]::IRIRef).value == "urn:p1"
+        end
+
+        @testset "minting is deterministic, so the fixpoint converges" begin
+            # This is the whole termination argument. CONCAT/ENCODE_FOR_URI/IRI are pure, so
+            # re-applying mints byte-identical IRIs, prune_known! removes them all, and the
+            # driver stops. A non-deterministic mint (a UUID) would never converge.
+            @test length(fs) == 1                    # round 2 contributed nothing
+
+            again = run_rule(rule; source = [DATA_GRAPH, fs[1].graph], actor = "integration")
+            @test isempty(again) || all(f.count == 0 for f in again)
+        end
+
+        @testset "undo removes the minted nodes and leaves the source alone" begin
+            for f in fs
+                undo_firing!(f.graph)
+            end
+            @test graph_size(DATA_GRAPH) == 9
+            # Ask for the *minted* IRIs specifically. A blanket "no ex:Employee anywhere"
+            # would also match the rule's own declarations: :_Employee_1 is typed
+            # ex:Employee in the default graph, because a variable carries its domain type
+            # -- that is what makes a pattern checkable as ordinary instance data.
+            @test isempty(select("""
+                SELECT ?s WHERE { GRAPH ?g { ?s ?p ?o }
+                  FILTER(STRSTARTS(STR(?s), "http://example.org/hr/employee/")) }"""))
+        end
+
+        Jayhawk.update!("DROP SILENT GRAPH <$DATA_GRAPH>")
     end
 
     @testset "the agent-facing tools" begin

@@ -999,7 +999,7 @@ end
         [PatternTriple(iri("$(R)_Person_1"), iri(TYPE),                iri("$(HR)Employee")),
          PatternTriple(iri("$(R)_Person_1"), iri("$(HR)employeeNumber"), var("?idText"))],
         Dict("$(R)_Person_1" => "?_Person_1", "$(R)_ID_1" => "?_ID_1"),
-        Dict("$(R)_Person_1" => ":_Employee_{person_id}"))
+        Dict{String,MintSpec}())
 
     @testset "golden snapshot" begin
         # Byte-for-byte. Terms are emitted as absolute IRIs, so the output never depends on
@@ -1022,7 +1022,7 @@ end
         sorted = RuleSpec(spec.iri, spec.mode, spec.match_graph, spec.construct_graph,
                           sort(spec.match; by = t -> (sparql_text(t.subject), sparql_text(t.predicate), sparql_text(t.object))),
                           sort(spec.construct; by = t -> (sparql_text(t.subject), sparql_text(t.predicate), sparql_text(t.object))),
-                          spec.variables, spec.templates)
+                          spec.variables, spec.mints)
         @test compile_rule(sorted) == expected
     end
 
@@ -1066,7 +1066,7 @@ end
         typo = RuleSpec(spec.iri, spec.mode, spec.match_graph, spec.construct_graph,
                         spec.match,
                         [PatternTriple(iri("$(R)_Person_1"), iri("$(HR)employeeNumber"), var("?idtext"))],
-                        spec.variables, spec.templates)
+                        spec.variables, spec.mints)
         err = try compile_rule(typo) catch e; e end
         msg = sprint(showerror, err)
         @test occursin("?idtext", msg)
@@ -1074,25 +1074,143 @@ end
         @test occursin("typo", msg)
     end
 
-    @testset "minting via iriTemplate is refused with its own message" begin
-        # A variable that appears only in R *and* has an iriTemplate is the minting case.
-        # Real, but the vocabulary never says where a template's slots get their values.
-        spec = person_to_employee()
-        minting = RuleSpec(spec.iri, spec.mode, spec.match_graph, spec.construct_graph,
-                           # L no longer binds ?_Person_1
-                           [PatternTriple(iri("$(R)_ID_1"), iri(TYPE), iri("$(G)ID"))],
-                           [PatternTriple(iri("$(R)_Person_1"), iri(TYPE), iri("$(HR)Employee"))],
-                           spec.variables, spec.templates)
-        err = try compile_rule(minting) catch e; e end
+    # ---------------------------------------------------------------------
+    # Minting: gistp:iriTemplate + gistp:hasSlot
+    # ---------------------------------------------------------------------
+
+    # The rule from example_minting_rule.trig: a Person with an identifier gets a NEW
+    # Employee record node, minted from the identifier text.
+    minting_rule(; template = "http://example.org/hr/employee/{id}",
+                   slots = Dict{String,RDFTerm}("id" => var("?idText")),
+                   extra_match = PatternTriple[]) = RuleSpec(
+        "$(R)PersonToEmployeeRecord", Jayhawk.MODE_ASSERT,
+        "$(R)PersonToEmployeeRecord_L", "$(R)PersonToEmployeeRecord_R",
+        vcat([PatternTriple(iri("$(R)_Person_1"), iri(TYPE),                 iri("$(G)Person")),
+              PatternTriple(iri("$(R)_Person_1"), iri("$(G)isIdentifiedBy"), iri("$(R)_ID_1")),
+              PatternTriple(iri("$(R)_ID_1"),     iri(TYPE),                 iri("$(G)ID")),
+              PatternTriple(iri("$(R)_ID_1"),     iri("$(G)containedText"),  var("?idText"))],
+             extra_match),
+        [PatternTriple(iri("$(R)_Employee_1"), iri(TYPE),                     iri("$(HR)Employee")),
+         PatternTriple(iri("$(R)_Employee_1"), iri("$(HR)employeeNumber"),    var("?idText")),
+         PatternTriple(iri("$(R)_Employee_1"), iri("$(HR)isRecordFor"),       iri("$(R)_Person_1"))],
+        Dict("$(R)_Person_1" => "?_Person_1", "$(R)_ID_1" => "?_ID_1",
+             "$(R)_Employee_1" => "?_Employee_1"),
+        Dict("$(R)_Employee_1" => MintSpec("$(R)_Employee_1", template, slots)))
+
+    @testset "template parsing is RFC 6570 Level 1" begin
+        @test parse_template("http://ex.org/e/{id}") ==
+              [(:lit, "http://ex.org/e/"), (:slot, "id")]
+        @test parse_template("http://ex.org/{a}/x/{b}") ==
+              [(:lit, "http://ex.org/"), (:slot, "a"), (:lit, "/x/"), (:slot, "b")]
+        @test parse_template("http://ex.org/plain") == [(:lit, "http://ex.org/plain")]
+        @test template_slots("http://ex.org/{a}/{b}") == ["a", "b"]
+
+        # Level 2 and above are refused rather than approximated: STR() alone is *more*
+        # permissive than Level 2 specifies, so shipping it under the RFC's name would lie.
+        for op in ("+", "#", ".", "/", ";", "?", "&")
+            err = try parse_template("http://ex.org/{$(op)id}") catch e; e end
+            @test err isa ArgumentError
+            @test occursin("Level 1", sprint(showerror, err))
+        end
+        @test_throws ArgumentError parse_template("http://ex.org/{unterminated")
+        @test_throws ArgumentError parse_template("http://ex.org/unmatched}")
+        @test_throws ArgumentError parse_template("http://ex.org/{}")
+    end
+
+    @testset "a minting rule compiles to BIND" begin
+        q = compile_rule(minting_rule())
+        @test occursin(
+            "BIND(IRI(CONCAT(\"http://example.org/hr/employee/\", " *
+            "ENCODE_FOR_URI(STR(?idText)))) AS ?_Employee_1)", q)
+        # the BIND comes after every triple pattern: BIND only sees variables bound
+        # earlier in its group
+        @test findfirst("BIND", q).start > findlast("?_Person_1 <", q).start
+        # and ?_Employee_1 is used in the CONSTRUCT template
+        @test occursin("?_Employee_1 <$(HR)employeeNumber> ?idText", q)
+        # compiling twice is byte-identical
+        @test q == compile_rule(minting_rule())
+    end
+
+    @testset "a minted variable is bound, so use-before-def does not fire" begin
+        # ?_Employee_1 appears only in R. It is bound by the emitted BIND, not by a triple
+        # pattern, so check_bound must count it as available.
+        spec = minting_rule()
+        @test "?_Employee_1" in minted_vars(spec)
+        @test !("?_Employee_1" in vars_in(spec.match, spec))
+        @test check_bound(spec) === spec
+    end
+
+    @testset "a minted variable must not also be matched" begin
+        # Carrying a template declares a variable constructed. Being matched as well is a
+        # contradiction -- and it is exactly the dead template that sat on :_Person_1.
+        spec = minting_rule(extra_match = [
+            PatternTriple(iri("$(R)_Employee_1"), iri(TYPE), iri("$(HR)Employee"))])
+        err = try compile_rule(spec) catch e; e end
         msg = sprint(showerror, err)
-        @test occursin("mints", msg)
-        @test occursin("iriTemplate", msg)
+        @test occursin("declares it minted", msg)
+        @test occursin("?_Employee_1", msg)
+    end
+
+    @testset "a relative template is refused" begin
+        # ":_Employee_{id}" would mint into whatever the rule document's empty prefix names
+        # -- for a rules file, the rules namespace.
+        err = try compile_rule(minting_rule(template = ":_Employee_{id}")) catch e; e end
+        msg = sprint(showerror, err)
+        @test occursin("relative", msg)
+        @test occursin("absolute IRI", msg)
+    end
+
+    @testset "unbound and unknown slots are refused" begin
+        # a {slot} the template has but nothing binds
+        err = try
+            compile_rule(minting_rule(template = "http://ex.org/e/{id}/{missing}"))
+        catch e; e end
+        @test occursin("{missing}", sprint(showerror, err))
+
+        # a binding naming a slot the template does not contain -- a half-applied rename
+        err = try
+            compile_rule(minting_rule(slots = Dict{String,RDFTerm}(
+                "id" => var("?idText"), "stale" => var("?idText"))))
+        catch e; e end
+        @test occursin("stale", sprint(showerror, err))
+
+        # a template with no bindings at all
+        err = try
+            compile_rule(minting_rule(slots = Dict{String,RDFTerm}()))
+        catch e; e end
+        @test occursin("{id}", sprint(showerror, err))
+    end
+
+    @testset "a slot value must be bound by L" begin
+        # minting from a variable L never binds -- including from another minted variable,
+        # which would need the BINDs topologically ordered
+        err = try
+            compile_rule(minting_rule(slots = Dict{String,RDFTerm}("id" => var("?nowhere"))))
+        catch e; e end
+        msg = sprint(showerror, err)
+        @test occursin("?nowhere", msg)
+        @test occursin("never binds", msg)
+
+        # and a slot bound to something that is not a variable at all
+        err = try
+            compile_rule(minting_rule(slots = Dict{String,RDFTerm}(
+                "id" => RDFLiteral("just a string"))))
+        catch e; e end
+        @test occursin("not a variable", sprint(showerror, err))
+    end
+
+    @testset "slot values may be IRI-position variables too" begin
+        # gistp:slotValue accepts either mechanism. Binding :_ID_1 mints from that node's
+        # IRI rather than from its text -- a different rule, but a legal one.
+        q = compile_rule(minting_rule(
+            slots = Dict{String,RDFTerm}("id" => iri("$(R)_ID_1"))))
+        @test occursin("ENCODE_FOR_URI(STR(?_ID_1))", q)
     end
 
     @testset "empty patterns are refused" begin
         spec = person_to_employee()
         empty_l = RuleSpec(spec.iri, spec.mode, spec.match_graph, spec.construct_graph,
-                           PatternTriple[], spec.construct, spec.variables, spec.templates)
+                           PatternTriple[], spec.construct, spec.variables, spec.mints)
         # an empty L binds nothing, so use-before-def fires first -- either way it is refused
         @test_throws Exception compile_rule(empty_l)
     end
@@ -1116,7 +1234,7 @@ end
         bad = RuleSpec(spec.iri, spec.mode, spec.match_graph, spec.construct_graph,
                        vcat(spec.match,
                             [PatternTriple(iri("http://ex.org/a b"), iri(TYPE), iri("$(G)ID"))]),
-                       spec.construct, spec.variables, spec.templates)
+                       spec.construct, spec.variables, spec.mints)
         @test_throws ArgumentError compile_rule(bad)
     end
 end

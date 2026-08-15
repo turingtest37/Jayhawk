@@ -1,0 +1,119 @@
+#  NOTE: copy of gistPatterns/example_minting_rule.trig, kept here so Jayhawk's suite is
+#  self-contained. The authoritative version lives in ~/dev/gistPatterns, where verify.py
+#  validates it against gistPatternShapes.ttl. If the two drift, that one wins.
+#
+# A rewrite rule that MINTS a new node, serialised as TriG.
+#
+# example_rule.trig reclassifies a node that already exists. This one creates one that does
+# not, which is what any rule modelling a business process eventually has to do: an order
+# line, an approval task, a case file. Without minting, rules can only ever say things about
+# nodes somebody else created.
+#
+#     default graph   the Rule, its variables, and the mint specification
+#     named graph L   the match pattern's triples, and nothing else
+#     named graph R   the construct pattern's triples, and nothing else
+
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix ex:    <http://example.org/hr/> .
+@prefix :      <http://example.org/rules/> .
+
+#################################################################
+#    Default graph: the rule, its variables, and the mint spec
+#################################################################
+
+:PersonToEmployeeRecord
+    rdf:type gistp:Rule ;
+    skos:prefLabel "Person to Employee record" ;
+    skos:definition """Every gist:Person bearing an identifier gets an ex:Employee record,
+                       minted from the identifier text and linked back to the person.""" ;
+    gistp:hasMatchPattern     :PersonToEmployeeRecord_L ;
+    gistp:hasConstructPattern :PersonToEmployeeRecord_R ;
+    # Assert: the employee records join the graph rather than replacing it.
+    gistp:rewriteMode         gistp:Assert .
+
+:PersonToEmployeeRecord_L rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "match: a Person with an identifier" .
+
+:PersonToEmployeeRecord_R rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "construct: the employee record for that person" .
+
+# --- matched variables -----------------------------------------------------
+# No iriTemplate, so these are bound by L in the ordinary way.
+
+:_Person_1
+    rdf:type gist:Person , gistp:SparqlVariable ;
+    gistp:variableText "?_Person_1" ;
+    skos:definition "The person the record is about. Bound by L, referenced from R." .
+
+:_ID_1
+    rdf:type gist:ID , gistp:SparqlVariable ;
+    gistp:variableText "?_ID_1" ;
+    skos:definition "The person's identifier node. Bound by L only." .
+
+# --- the minted variable ---------------------------------------------------
+# Carrying an iriTemplate is what declares this constructed rather than matched, so it must
+# NOT appear in L. The template expands to an absolute IRI: the minting namespace is
+# explicit and auditable, and is deliberately ex: (data) rather than : (rules).
+#
+# The slot binds by RDF identity, not by matching "id" against some variable's name. Its
+# value is the literal-position variable ?idText -- we mint from the identifier's *text*.
+# Binding :_ID_1 instead would concatenate that node's IRI, which is a different rule.
+
+:_Employee_1
+    rdf:type ex:Employee , gistp:SparqlVariable ;
+    gistp:variableText "?_Employee_1" ;
+    gistp:iriTemplate  "http://example.org/hr/employee/{id}" ;
+    gistp:hasSlot [ rdf:type gistp:TemplateSlot ;
+                    gistp:slotName  "id" ;
+                    gistp:slotValue "?idText"^^gistp:var ] ;
+    skos:definition "The employee record. Minted from the identifier text; appears only in R." .
+
+#################################################################
+#    L -- the match pattern
+#################################################################
+
+:PersonToEmployeeRecord_L {
+    :_Person_1 rdf:type gist:Person ;
+               gist:isIdentifiedBy :_ID_1 .
+
+    :_ID_1 rdf:type gist:ID ;
+           gist:containedText "?idText"^^gistp:var .
+}
+
+#################################################################
+#    R -- the construct pattern
+#################################################################
+
+:PersonToEmployeeRecord_R {
+    :_Employee_1 rdf:type ex:Employee ;
+                 ex:employeeNumber "?idText"^^gistp:var ;
+                 ex:isRecordFor :_Person_1 .
+}
+
+# Compiles to, with the BIND placed after the triples that bind its slots:
+#
+#   CONSTRUCT {
+#     ?_Employee_1 a ex:Employee .
+#     ?_Employee_1 ex:employeeNumber ?idText .
+#     ?_Employee_1 ex:isRecordFor ?_Person_1 .
+#   }
+#   WHERE {
+#     ?_ID_1     a gist:ID .
+#     ?_ID_1     gist:containedText ?idText .
+#     ?_Person_1 a gist:Person .
+#     ?_Person_1 gist:isIdentifiedBy ?_ID_1 .
+#     BIND(IRI(CONCAT("http://example.org/hr/employee/",
+#                     ENCODE_FOR_URI(STR(?idText)))) AS ?_Employee_1)
+#   }
+#
+# Derived interface I = L n R = { :_Person_1 }. :_Employee_1 is in R only -- it is minted,
+# not preserved -- and :_ID_1 is in L only.
+#
+# CONCAT, ENCODE_FOR_URI and IRI are pure, so re-applying the rule mints byte-identical
+# IRIs, the second round derives nothing new, and an Assert fixpoint converges.

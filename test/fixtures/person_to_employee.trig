@@ -54,10 +54,15 @@
 # processor can check it like any other instance data, which an opaque SPARQL string blob
 # could never allow.
 
+# This variable used to carry gistp:iriTemplate ":_Employee_{person_id}". The template was
+# dead three times over: {person_id} was bound by nothing anywhere in the rule; the leading
+# ':' would have minted into the *rules* namespace rather than a data namespace; and
+# :_Person_1 is bound by L, so R reuses the matched IRI and never mints at all. Carrying a
+# template now declares a variable minted rather than matched, so this is a validation
+# error. See example_minting_rule.trig for a rule that really does mint.
 :_Person_1
     rdf:type gist:Person , gistp:SparqlVariable ;
     gistp:variableText "?_Person_1" ;
-    gistp:iriTemplate ":_Employee_{person_id}" ;
     skos:definition "The person being reclassified. Shared between L and R, so it is in the derived interface I." .
 
 :_ID_1
