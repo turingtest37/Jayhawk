@@ -116,9 +116,10 @@ function load_rule(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
     lg   = _iri(row["l"])
     cg   = _iri(row["c"])
 
+    graphs = [lg, cg]
     RuleSpec(r, mode, lg, cg,
              load_pattern(lg; ep = ep), load_pattern(cg; ep = ep),
-             load_variables(; ep = ep), load_mints(; ep = ep))
+             load_variables(graphs; ep = ep), load_mints(graphs; ep = ep))
 end
 
 "Fetch the triples of one pattern graph, sorted so output is reproducible."
@@ -131,28 +132,66 @@ function load_pattern(graph_iri::AbstractString; ep::SparqlEndpoint = endpoint()
     sort!(ts; by = t -> (sparql_text(t.subject), sparql_text(t.predicate), sparql_text(t.object)))
 end
 
-"Map every declared SparqlVariable IRI to its variableText."
-function load_variables(; ep::SparqlEndpoint = endpoint())
+"""
+    _occurs_in(graphs) -> String
+
+A SPARQL group matching when `?v` occupies *any* position in *any* of `graphs`.
+
+This is what scopes a rule's declarations to that rule. A variable is an ordinary IRI that
+happens to be declared a `gistp:SparqlVariable`, so it can appear as subject, predicate or
+object; all three have to be looked for, and the position variables are suffixed per graph
+so two alternatives never accidentally share one.
+"""
+_occurs_in(graphs) = join(
+    ("{ GRAPH <$(check_iri(g))> { { ?v ?p$i ?o$i } UNION { ?s$i ?v ?o$i } " *
+     "UNION { ?s$i ?p$i ?v } } }" for (i, g) in enumerate(graphs)),
+    "\n          UNION ")
+
+"""
+    load_variables(graphs; ep = endpoint()) -> Dict{String,String}
+
+Map each SparqlVariable IRI *occurring in `graphs`* to its `gistp:variableText`.
+
+**Scoped to the rule, deliberately.** This used to select every `gistp:SparqlVariable` in
+the dataset and staple the lot onto whichever `RuleSpec` was being built, which broke the
+moment a store held more than one rule -- and a catalogue of rules is the entire point of
+`mcp.jl`. Two rules were enough: [`check_mints`](@ref) would validate a *foreign* rule's
+mint against this rule's match pattern and refuse to compile, or -- when the names happened
+to line up -- [`binds_text`](@ref) would silently emit the other rule's `BIND` into this
+rule's query, so the thing that executed was not the thing anyone reviewed.
+
+A variable's declarations live in the default graph; its *occurrences* are what the two
+pattern graphs record, and occurrence is what membership of a rule means.
+"""
+function load_variables(graphs::AbstractVector; ep::SparqlEndpoint = endpoint())
     rows = select("""
-        SELECT ?v ?t WHERE { ?v a <$C_SPARQLVAR> ; <$P_VARIABLETEXT> ?t . }"""; ep = ep)
+        SELECT DISTINCT ?v ?t WHERE {
+          ?v a <$C_SPARQLVAR> ; <$P_VARIABLETEXT> ?t .
+          $(_occurs_in(graphs))
+        }"""; ep = ep)
     Dict{String,String}(_iri(r["v"]) => (r["t"]::RDFLiteral).lexical for r in rows)
 end
 
 """
-    load_mints(; ep = endpoint()) -> Dict{String,MintSpec}
+    load_mints(graphs; ep = endpoint()) -> Dict{String,MintSpec}
 
-Every minted variable: its template and its slot bindings.
+Every minted variable *occurring in `graphs`*: its template and its slot bindings.
 
-One row per slot, grouped here by variable. A variable with a template but no slots comes
-back with an empty `slots`, which [`check_mints`](@ref) then rejects -- the shapes catch it
-too, but the compiler must not depend on anyone having run them.
+One row per slot, grouped here by variable. Scoped exactly as [`load_variables`](@ref) is,
+and for the same reason.
+
+Occurrence in the rule's own graphs is sufficient: a minted variable has to appear in R --
+that is what constructing it means -- and [`check_mints`](@ref) separately requires every
+`gistp:slotValue` to be a variable the match pattern binds, so a slot's supplying variable
+is always in L. Nothing the compiler needs is reachable only from the default graph.
 """
-function load_mints(; ep::SparqlEndpoint = endpoint())
+function load_mints(graphs::AbstractVector; ep::SparqlEndpoint = endpoint())
     rows = select("""
-        SELECT ?v ?tmpl ?name ?value WHERE {
+        SELECT DISTINCT ?v ?tmpl ?name ?value WHERE {
           ?v a <$C_SPARQLVAR> ; <$P_IRITEMPLATE> ?tmpl .
-          OPTIONAL { ?v <$P_HASSLOT> ?s .
-                     ?s <$P_SLOTNAME> ?name ; <$P_SLOTVALUE> ?value . }
+          $(_occurs_in(graphs))
+          OPTIONAL { ?v <$P_HASSLOT> ?slot .
+                     ?slot <$P_SLOTNAME> ?name ; <$P_SLOTVALUE> ?value . }
         }"""; ep = ep)
     out = Dict{String,MintSpec}()
     for r in rows
@@ -412,6 +451,44 @@ function binds_text(spec::RuleSpec)
 end
 
 """
+    check_variables(spec)
+
+Reject a rule whose `gistp:variableText` is not a legal SPARQL variable.
+
+The pattern language has two variable mechanisms and, until this existed, only one of them
+was checked. A literal-position variable goes through [`var_name`](@ref), which validates
+its lexical form against [`VARIABLE_RE`](@ref). An IRI-position variable's `variableText`
+was returned by [`var_of`](@ref) verbatim and spliced into the query by
+[`term_sparql`](@ref) -- validated nowhere at all.
+
+So the text was untrusted input with a direct line into the emitted SPARQL, and
+[`insert_query`](@ref) sends that SPARQL to the *update* endpoint. A `variableText` of
+
+    "?v } INSERT { GRAPH <urn:pwned> { ... } } WHERE { ?v"
+
+closes the engine's INSERT and opens the author's. Provenance then records a tidy rule
+firing while the store takes an unrelated write, into a graph no `Firing` names and
+[`undo_firing!`](@ref) cannot reverse. The dull version of the same hole is a `variableText`
+of `"person"` -- a plausible typo that compiles to unparseable SPARQL and surfaces as an
+opaque HTTP 400 from the store.
+
+This lives in the pure layer rather than in [`load_variables`](@ref) so that a hand-built
+`RuleSpec` is checked too, not just one loaded from a store.
+"""
+function check_variables(spec::RuleSpec)
+    for iri in sort(collect(keys(spec.variables)))
+        text = spec.variables[iri]
+        occursin(VARIABLE_RE, text) || error(
+            "rule <$(spec.iri)>: <$iri> has gistp:variableText $(repr(text)), which is not " *
+            "a legal SPARQL variable (must match $(VARIABLE_RE.pattern)). The text is " *
+            "substituted into the emitted query as-is, so it has to be a variable and " *
+            "nothing else -- this is the same rule a literal-position \"?x\"^^gistp:var " *
+            "already has to obey.")
+    end
+    spec
+end
+
+"""
     check_bound(spec)
 
 Reject a rule whose construct pattern uses a variable the match pattern never binds.
@@ -425,6 +502,7 @@ A variable is available to R if the match pattern binds it, **or** if it is mint
 minted variable is bound by the `BIND` the compiler emits, not by a triple pattern.
 """
 function check_bound(spec::RuleSpec)
+    check_variables(spec)
     check_mints(spec)
     matched = vars_in(spec.match, spec)
     bound   = union(matched, minted_vars(spec))
@@ -531,6 +609,13 @@ is concerned, and nothing else in the stack will ever notice.
 """
 function check_collisions(spec::RuleSpec; from::AbstractVector = String[],
                           ep::SparqlEndpoint = endpoint(), limit::Integer = 5)
+    # Validate before assembling anything. `apply_rule` calls this *before* `insert_query`,
+    # so relying on that function's own `check_bound` to sanitise `variableText` left this
+    # one shipping unvalidated text to the store: a poisoned variableText reached Fuseki and
+    # came back HTTP 400. Nothing was written, but only because the query endpoint refuses
+    # updates -- a property of the store's endpoint separation, not of this code. Every
+    # function that builds SPARQL validates its own inputs.
+    check_variables(spec)
     for (iri, q) in collision_queries(spec; from = from)
         # RFC 6570 Level 1 with a non-ambiguous separator is *injective*: ENCODE_FOR_URI is
         # injective, and a reserved separator cannot appear raw inside an encoded value --
@@ -583,6 +668,7 @@ function mint_fanin(spec::RuleSpec; from::AbstractVector = String[],
                     ep::SparqlEndpoint = endpoint(), limit::Integer = 5)
     out = Tuple{String,Vector{Tuple{String,Int}}}[]
     isempty(spec.mints) && return out
+    check_variables(spec)          # this builds SPARQL too; see check_collisions
     froms = isempty(from) ? "" : join(("FROM <$(check_iri(g))>" for g in from), "\n") * "\n"
     others = sort(collect(setdiff(vars_in(spec.construct, spec), minted_vars(spec))))
     isempty(others) && return out
@@ -665,6 +751,12 @@ const SKOS_DEFINITION = "http://www.w3.org/2004/02/skos/core#definition"
 
 Every rule in the store with its mode, label and definition -- what a human or an agent
 needs to choose one, without reading any SPARQL.
+
+Each entry carries `mode` (a `Symbol`) and `mode_iri` (the raw `gistp:rewriteMode` value).
+A rule whose mode is not one of the three recognised IRIs comes back as `:Unrecognised`
+rather than raising: this is the *catalogue*, and it is the only route an agent has to
+discovering any rule at all, so one malformed rule must not hide the rest of them. The rule
+still fails, loudly, at [`load_rule`](@ref) the moment anyone tries to use it.
 """
 function rule_catalogue(; ep::SparqlEndpoint = endpoint())
     rows = select("""
@@ -674,14 +766,15 @@ function rule_catalogue(; ep::SparqlEndpoint = endpoint())
           OPTIONAL { ?r <$SKOS_DEFINITION> ?def }
         } ORDER BY ?r"""; ep = ep)
     lex(r, k) = haskey(r, k) && r[k] isa RDFLiteral ? (r[k]::RDFLiteral).lexical : ""
-    [(iri = _iri(r["r"]), mode = mode_symbol(_iri(r["mode"])),
+    mode_of(m) = try mode_symbol(m) catch; :Unrecognised end
+    [(iri = _iri(r["r"]), mode = mode_of(_iri(r["mode"])), mode_iri = _iri(r["mode"]),
       label = lex(r, "label"), definition = lex(r, "def")) for r in rows]
 end
 
 export PatternTriple, RuleSpec, MintSpec, load_rule, load_pattern, load_variables, load_mints
 export rule_catalogue
 export compile_rule, compile_from_store, insert_query, list_rules, mode_symbol
-export var_of, term_sparql, bgp_text, vars_in, check_bound, check_mints
+export var_of, term_sparql, bgp_text, vars_in, check_bound, check_mints, check_variables
 export parse_template, template_slots, bind_text, minted_vars
 export ambiguous_separators, collision_queries, check_collisions, mint_fanin
 export GISTP_NS, MODE_CONSTRUCT, MODE_ASSERT, MODE_REWRITE

@@ -23,9 +23,11 @@ function tool_list_rules(; ep::SparqlEndpoint = endpoint())
     for r in cat
         println(io, "- <", r.iri, ">")
         println(io, "    mode: ", r.mode,
-                r.mode === :Construct ? "  (pure: the result is f(G))" :
-                r.mode === :Assert    ? "  (monotone: G union f(G), to a fixpoint)" :
-                                        "  (in-place rewrite -- NOT YET SUPPORTED)")
+                r.mode === :Construct    ? "  (pure: the result is f(G))" :
+                r.mode === :Assert       ? "  (monotone: G union f(G), to a fixpoint)" :
+                r.mode === :Rewrite      ? "  (in-place rewrite -- NOT YET SUPPORTED)" :
+                "  <$(r.mode_iri)> is not a gistp:rewriteMode this engine knows -- " *
+                "THIS RULE CANNOT BE RUN")
         isempty(r.label)      || println(io, "    label: ", r.label)
         isempty(r.definition) || println(io, "    ", r.definition)
     end
@@ -118,12 +120,30 @@ Reverse one firing: drop its graph and retract its provenance record.
 
 Complete for `Construct` and `Assert`, which only add. When `gistp:Rewrite` lands, a firing
 will also carry a tombstone graph that has to be replayed.
+
+Only firings. The graph IRI arrives from a model's tool call, so it is checked against the
+provenance log before anything is dropped -- see [`undo_firing!`](@ref). The `force` escape
+hatch is not plumbed through: nothing reachable over MCP may skip that check.
+
+The order of the two checks is what keeps both properties. Undoing the same firing twice
+stays harmless -- after the first undo the provenance record is gone, so the second call
+would otherwise be refused rather than shrugged off -- while the case the guard exists for,
+a graph that holds data and is *not* a firing, is still refused. An empty graph has nothing
+a `DROP` could destroy.
 """
 function tool_undo_firing(graph::AbstractString; ep::SparqlEndpoint = endpoint())
     n = graph_size(graph; ep = ep)
-    n == 0 && return "Graph <$graph> holds no triples; nothing to undo."
+    if !is_firing(graph; ep = ep)
+        n == 0 && return "Graph <$graph> holds no triples; nothing to undo."
+        return(
+            "Refused: <$graph> holds $n triple(s) and is not a recorded firing, so " *
+            "undo_firing will not touch it. This tool reverses rule applications this " *
+            "engine made; it is not a way to delete a graph. Use list_firings to see " *
+            "what can be undone.")
+    end
     undo_firing!(graph; ep = ep)
-    "Undid <$graph>: $n triple(s) removed and the provenance record retracted."
+    n == 0 ? "Graph <$graph> was already empty; its provenance record was retracted." :
+             "Undid <$graph>: $n triple(s) removed and the provenance record retracted."
 end
 
 """

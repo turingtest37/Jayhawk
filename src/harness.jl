@@ -58,11 +58,17 @@ Delete from `firing_graph` every triple the working set already contained.
 Without this a firing graph re-states facts that were already true, `count` never reaches
 zero, and an `Assert` fixpoint never converges. It also keeps each firing graph meaning
 exactly one thing: the facts this application *added*.
+
+An empty `source` means the working set is the store's *default* graph, so that is what the
+firing is pruned against. This used to return early and prune nothing, which left `count`
+reporting facts the store already held -- directly contradicting `Firing`'s own docstring.
+The bare `{ ?s ?p ?o }` alternative below reads the default graph because this update
+carries no `USING`.
 """
 function prune_known!(firing_graph::AbstractString, source::AbstractVector;
                       ep::SparqlEndpoint = endpoint())
-    isempty(source) && return nothing
-    alternatives = join(("{ GRAPH <$(check_iri(g))> { ?s ?p ?o } }" for g in source), "\n      UNION ")
+    alternatives = isempty(source) ? "{ ?s ?p ?o }" :
+        join(("{ GRAPH <$(check_iri(g))> { ?s ?p ?o } }" for g in source), "\n      UNION ")
     update!("""
         DELETE { GRAPH <$(check_iri(firing_graph))> { ?s ?p ?o } }
         WHERE {
@@ -143,6 +149,17 @@ fixed set of terms terminate on their own, but `gistp:iriTemplate` mints fresh I
 minting rule run to a fixpoint is no longer plain Datalog -- it is the chase, which is not
 guaranteed to terminate at all. Hitting the cap raises, naming the rule, rather than
 silently returning a partial answer.
+
+**`Assert` requires an explicit `source`.** Each round has to see the previous round's
+output, so the working set grows by one named graph per iteration -- and SPARQL's `USING`
+*replaces* the query's default graph rather than adding to it, with no IRI anywhere that
+denotes the store's own default graph. "The default graph plus the firings so far" is
+therefore not expressible, and the previous behaviour was to quietly evaluate round 2
+onwards against the firing graphs *alone*: the base data fell out of the working set after
+round 1 and the driver returned a strict subset of the least fixpoint while reporting
+convergence. A silently incomplete fixpoint is the worst answer this function can give, so
+it now refuses instead. `Construct` is unaffected -- it applies once, and an empty source
+correctly means the default graph.
 """
 function run_rule(spec::RuleSpec; source::AbstractVector = String[],
                   actor::AbstractString = "jayhawk", max_iterations::Integer = 100,
@@ -150,6 +167,13 @@ function run_rule(spec::RuleSpec; source::AbstractVector = String[],
     mode = mode_symbol(spec)
     mode === :Rewrite && error(
         "rule <$(spec.iri)>: gistp:Rewrite is not supported yet; see compile_rule.")
+    max_iterations >= 1 || throw(ArgumentError(
+        "max_iterations must be at least 1, got $max_iterations."))
+    mode === :Assert && isempty(source) && throw(ArgumentError(
+        "rule <$(spec.iri)>: gistp:Assert needs an explicit `source`. Each round must see " *
+        "the previous round's output, and SPARQL's USING cannot name the store's default " *
+        "graph -- so the working set has to be named graphs. Load the data into one and " *
+        "pass it as source, or use gistp:Construct for a single application."))
 
     firings = Firing[]
     working = String[String.(source)...]
@@ -208,15 +232,46 @@ dry_run(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint(), kw...) =
     dry_run(load_rule(rule_iri; ep = ep); ep = ep, kw...)
 
 """
-    undo_firing!(graph; ep = endpoint()) -> Nothing
+    is_firing(graph; ep = endpoint()) -> Bool
+
+Whether `graph` is a firing this engine recorded, i.e. whether the provenance graph carries
+a `jayhawk:appliedRule` for it.
+
+This is the authority on what [`undo_firing!`](@ref) is allowed to touch. Membership is
+decided by the provenance record rather than by the `urn:jayhawk:firing:` IRI prefix,
+because a prefix is a naming convention that anyone can imitate and a provenance record is
+something only `record_firing!` writes.
+"""
+is_firing(graph::AbstractString; ep::SparqlEndpoint = endpoint()) =
+    ask("""ASK { GRAPH <$PROVENANCE_GRAPH> {
+             <$(check_iri(graph))> <$(JH_NS)appliedRule> ?r } }"""; ep = ep)
+
+"""
+    undo_firing!(graph; force = false, ep = endpoint()) -> Nothing
 
 Reverse one firing: drop its graph and retract its provenance record.
 
 Complete for `Construct` and `Assert`, which only ever add. A `Rewrite` firing will also
 need its tombstone graph replayed, which is why round 1 does not compile that mode.
+
+**This reverses firings, and only firings.** The graph must carry a provenance record or the
+call is refused -- without that check the function is a `DROP GRAPH` that accepts any IRI,
+and it is reachable from an MCP tool, so the IRI can come straight from a model. The whole
+argument for a rule catalogue over an open UPDATE endpoint is that every operation is
+named, attributable and reversible; a general-purpose graph delete wearing the name `undo`
+gives that back.
+
+`force = true` skips the check, for cleaning up a firing graph whose provenance write did
+not land. It is deliberately *not* exposed through [`tool_undo_firing`](@ref).
 """
-function undo_firing!(graph::AbstractString; ep::SparqlEndpoint = endpoint())
+function undo_firing!(graph::AbstractString; force::Bool = false,
+                      ep::SparqlEndpoint = endpoint())
     g = check_iri(graph)
+    force || is_firing(g; ep = ep) || error(
+        "<$g> is not a recorded firing: <$PROVENANCE_GRAPH> holds no jayhawk:appliedRule " *
+        "for it. undo_firing! reverses graphs this engine created and nothing else -- it " *
+        "is not a general DROP GRAPH. Use `firings()` to list what can be undone, or pass " *
+        "force = true if you are cleaning up a firing whose provenance write failed.")
     update!("DROP SILENT GRAPH <$g>"; ep = ep)
     update!("""
         DELETE WHERE { GRAPH <$PROVENANCE_GRAPH> { <$g> ?p ?o } }"""; ep = ep)
@@ -249,5 +304,5 @@ function firings(; rule::Union{AbstractString,Nothing} = nothing,
       iteration = parse(Int, (r["iter"]::RDFLiteral).lexical)) for r in rows]
 end
 
-export Firing, apply_rule, run_rule, dry_run, undo_firing!, firings, graph_size
+export Firing, apply_rule, run_rule, dry_run, undo_firing!, is_firing, firings, graph_size
 export PROVENANCE_GRAPH, new_firing_graph
