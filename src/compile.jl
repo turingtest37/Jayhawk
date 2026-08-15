@@ -23,7 +23,11 @@ const P_IRITEMPLATE  = GISTP_NS * "iriTemplate"
 const P_HASSLOT      = GISTP_NS * "hasSlot"
 const P_SLOTNAME     = GISTP_NS * "slotName"
 const P_SLOTVALUE    = GISTP_NS * "slotValue"
+const P_ONEOF        = GISTP_NS * "oneOf"
 const P_NAC          = GISTP_NS * "hasNegativeCondition"
+
+const RDF_FIRST = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first"
+const RDF_REST  = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest"
 const P_STRATEGY     = GISTP_NS * "strategy"
 const P_PRIORITY     = GISTP_NS * "priority"
 const P_MAXITER      = GISTP_NS * "maxIterations"
@@ -90,6 +94,9 @@ struct RuleSpec
     construct::Vector{PatternTriple}
     variables::Dict{String,String}
     mints::Dict{String,MintSpec}
+    # variable IRI => the values gistp:oneOf allows it to take. Compilation input, like
+    # `mints`: it becomes a VALUES clause.
+    enums::Dict{String,Vector{RDFTerm}}
     # Control. `nacs` affects compilation; the other three are execution policy the driver
     # reads, kept here because `load_rule` is the one place that talks to the store.
     nacs::Vector{NacSpec}
@@ -102,7 +109,12 @@ end
 # conditions and no stated policy behaves exactly as it did.
 RuleSpec(iri, mode, lg, cg, match, construct, variables, mints) =
     RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-             NacSpec[], nothing, 0, nothing)
+             Dict{String,Vector{RDFTerm}}(), NacSpec[], nothing, 0, nothing)
+
+RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
+         nacs, strategy, priority, maxit) =
+    RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
+             Dict{String,Vector{RDFTerm}}(), nacs, strategy, priority, maxit)
 
 mode_symbol(m::AbstractString) =
     m == MODE_CONSTRUCT ? :Construct :
@@ -159,8 +171,36 @@ function load_rule(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
     RuleSpec(r, mode, lg, cg,
              load_pattern(lg; ep = ep), load_pattern(cg; ep = ep),
              load_variables(graphs; ep = ep), load_mints(graphs; ep = ep),
+             load_enums(graphs; ep = ep),
              nacs, load_strategy(r; ep = ep), load_priority(r; ep = ep),
              load_max_iterations(r; ep = ep))
+end
+
+"""
+    load_enums(graphs; ep = endpoint()) -> Dict{String,Vector{RDFTerm}}
+
+Every enumerated variable *occurring in `graphs`*, with the values `gistp:oneOf` allows it.
+
+`gistp:oneOf` points at an `rdf:List`, walked here with a property path. The members come
+back sorted rather than in list order: `VALUES` is a set of solutions, so authored order has
+no semantics, and sorting is what keeps compiled output byte-stable.
+"""
+function load_enums(graphs::AbstractVector; ep::SparqlEndpoint = endpoint())
+    rows = select("""
+        SELECT DISTINCT ?v ?val WHERE {
+          ?v a <$C_SPARQLVAR> ;
+             <$P_ONEOF>/<$RDF_REST>*/<$RDF_FIRST> ?val .
+          $(_occurs_in(graphs))
+        }"""; ep = ep)
+    out = Dict{String,Vector{RDFTerm}}()
+    for r in rows
+        push!(get!(out, _iri(r["v"]), RDFTerm[]), r["val"])
+    end
+    for vs in values(out)
+        sort!(vs; by = sparql_text)
+        unique!(vs)
+    end
+    out
 end
 
 "The negative-condition graph IRIs of one rule, sorted so compiled output is stable."
@@ -436,7 +476,9 @@ Five ways a mint can be wrong, each with its own message:
     the dead template that used to sit on `:_Person_1`.
 """
 function check_mints(spec::RuleSpec)
-    bound = vars_in(spec.match, spec)
+    # Enumerated variables count as bound: VALUES precedes the BINDs, so a template may mint
+    # from an enumerated value. That is generation of minted nodes -- one per value.
+    bound = union(vars_in(spec.match, spec), enum_vars(spec))
     for (iri, m) in spec.mints
         text = get(spec.variables, iri, nothing)
         text === nothing && error(
@@ -546,16 +588,74 @@ end
 """
     where_body(spec) -> String
 
-The whole of a rule's WHERE clause: match triples, then BINDs, then negative conditions.
+The whole of a rule's WHERE clause: match triples, then VALUES, then BINDs, then negative
+conditions.
 
 The order is load-bearing and is the reason this is one function rather than five copies.
+`VALUES` comes first among the additions because a `BIND` may mint from an enumerated value.
 BIND sees only variables bound earlier in its group, so it must follow the triple patterns.
 `FILTER NOT EXISTS` must follow the BINDs in turn, because a condition is allowed to mention
 a *minted* variable -- "only create this if it does not already exist" -- and the filter can
 only test what is bound by the time it runs.
 """
 where_body(spec::RuleSpec) =
-    string(bgp_text(spec.match, spec), binds_text(spec), nacs_text(spec))
+    string(bgp_text(spec.match, spec), values_text(spec), binds_text(spec), nacs_text(spec))
+
+"""
+    values_text(spec) -> String
+
+The `VALUES` clauses for a rule's enumerated variables, one per variable, sorted by name.
+
+**The same text serves both readings of `gistp:oneOf`, which is the point.** Whether a
+`VALUES` clause *constrains* or *generates* is decided by the rest of the rule, not by the
+compiler. If the match pattern also binds the variable, the clause is a join and narrows the
+matches. If the variable appears only in the construct pattern, the clause multiplies the
+solutions and the template is instantiated once per value -- a disjoint union, the coproduct
+reading. Parameterised graph generation therefore falls out of the existing semantics with
+no additional vocabulary and no second code path.
+"""
+function values_text(spec::RuleSpec)
+    isempty(spec.enums) && return ""
+    # Members are sorted HERE, not only in load_enums: a hand-built spec has whatever order
+    # the author wrote, and the byte-stability guarantee has to hold however the spec arrived.
+    lines = ("  VALUES $(spec.variables[iri]) " *
+             "{ $(join(sort(sparql_text.(spec.enums[iri])), " ")) }"
+             for iri in sort(collect(keys(spec.enums))))
+    string("\n", join(lines, "\n"))
+end
+
+"The SPARQL variable names a `gistp:oneOf` enumeration binds."
+enum_vars(spec::RuleSpec) =
+    Set(spec.variables[iri] for iri in keys(spec.enums) if haskey(spec.variables, iri))
+
+"""
+    check_enums(spec)
+
+Validate every enumerated variable. Three ways an enumeration can be wrong:
+
+  * no `gistp:variableText`, so there is no SPARQL variable for `VALUES` to bind;
+  * an empty list, which compiles to `VALUES ?v { }` -- legal SPARQL yielding no solutions,
+    so the rule can never fire. A truncated list rather than an intent;
+  * a `gistp:iriTemplate` on the same variable. Enumerating and constructing are
+    contradictory instructions: `oneOf` says the value is one of these, the template says it
+    is computed from other bindings.
+"""
+function check_enums(spec::RuleSpec)
+    for iri in sort(collect(keys(spec.enums)))
+        haskey(spec.variables, iri) || error(
+            "rule <$(spec.iri)>: <$iri> has gistp:oneOf but no gistp:variableText, so there " *
+            "is no SPARQL variable for its VALUES clause to bind.")
+        isempty(spec.enums[iri]) && error(
+            "rule <$(spec.iri)>: gistp:oneOf on <$iri> lists no values. That compiles to " *
+            "VALUES $(spec.variables[iri]) { }, which yields no solutions, so the rule could " *
+            "never fire.")
+        haskey(spec.mints, iri) && error(
+            "rule <$(spec.iri)>: <$iri> carries both gistp:oneOf and gistp:iriTemplate. " *
+            "Enumerating and constructing are contradictory: oneOf says the value is one of " *
+            "these, the template says it is computed from other bindings. Choose one.")
+    end
+    spec
+end
 
 """
     check_variables(spec)
@@ -685,9 +785,12 @@ minted variable is bound by the `BIND` the compiler emits, not by a triple patte
 """
 function check_bound(spec::RuleSpec)
     check_variables(spec)
+    check_enums(spec)
     check_mints(spec)
     matched = vars_in(spec.match, spec)
-    bound   = union(matched, minted_vars(spec))
+    # An enumerated variable is bound by its VALUES clause and a minted one by its BIND;
+    # neither has to appear in a match triple to be available to R.
+    bound   = union(matched, minted_vars(spec), enum_vars(spec))
     used    = vars_in(spec.construct, spec)
     free    = setdiff(used, bound)
     isempty(free) && return spec
@@ -1083,6 +1186,7 @@ export list_rules, mode_symbol
 export interface, match_only, construct_only, dangling_risks
 export var_of, term_sparql, bgp_text, vars_in, check_bound, check_mints, check_variables
 export NacSpec, nacs_text, where_body, strategy_symbol
+export load_enums, values_text, enum_vars, check_enums
 export load_nac_graphs, load_strategy, load_priority, load_max_iterations
 export STRATEGY_ONCE, STRATEGY_TOFIXPOINT
 export parse_template, template_slots, bind_text, minted_vars

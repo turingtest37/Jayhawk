@@ -1,0 +1,129 @@
+#  NOTE: copy of gistPatterns/example_oneof_rule.trig, kept here so Jayhawk's suite is
+#  self-contained. The authoritative version lives in ~/dev/gistPatterns.
+#
+#  gistp:oneOf as a GENERATOR, serialised as TriG.
+#
+#  Every other example maps each match to one result. This one instantiates its construct
+#  pattern once per enumerated value: two widgets and three regulations yield six compliance
+#  checks. That is the coproduct reading -- a disjoint union rather than a single result.
+#
+#  The mechanism is the same VALUES clause in both readings of gistp:oneOf, and which one you
+#  get is decided by the rest of the rule rather than by any vocabulary:
+#
+#      the variable is ALSO bound by L   ->  the clause is a join, and CONSTRAINS the matches
+#      the variable appears ONLY in R    ->  the clause multiplies solutions, and GENERATES
+#
+#  :_Reg here appears only in R and in the mint, so it generates. Turning the same rule into
+#  the constraining kind would mean adding a triple to L that binds :_Reg -- no new property,
+#  no second code path.
+#
+#  It also mints from an enumerated value, which is the combination worth seeing: VALUES is
+#  emitted before the BINDs, so a template may take a slot from an enumeration and produce
+#  one new node per value.
+
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix ex:    <http://example.org/ops/> .
+@prefix :      <http://example.org/rules/> .
+
+#################################################################
+#    Default graph: the rule and its variables
+#################################################################
+
+:ComplianceChecks
+    rdf:type gistp:Rule ;
+    skos:prefLabel "Compliance check per regulation" ;
+    skos:definition """Every widget needs one compliance check per regulation we operate
+                       under. One match, three results.""" ;
+    gistp:hasMatchPattern      :ComplianceChecks_L ;
+    gistp:hasConstructPattern  :ComplianceChecks_R ;
+    gistp:hasNegativeCondition :ComplianceChecks_NotYet ;
+    gistp:rewriteMode          gistp:Assert ;
+    gistp:strategy             gistp:ToFixpoint ;
+    gistp:maxIterations        5 .
+
+:ComplianceChecks_L rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "match: a widget with a code" .
+
+:ComplianceChecks_R rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "construct: its compliance check for one regulation" .
+
+:ComplianceChecks_NotYet rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "guard: that check does not exist yet" .
+
+# --- variables -------------------------------------------------------------
+
+:_W rdf:type ex:Widget , gistp:SparqlVariable ;
+    gistp:variableText "?_W" ;
+    skos:definition "The widget. Bound by L." .
+
+# Enumerated, and absent from L. The VALUES clause is therefore the only thing binding it,
+# which is exactly what makes it a generator: each solution of L is multiplied by the three
+# values, and R is instantiated once for each.
+:_Reg rdf:type gist:Category , gistp:SparqlVariable ;
+      gistp:variableText "?_Reg" ;
+      gistp:oneOf ( "EU" "US" "JP" ) ;
+      skos:definition "The regulation. Enumerated, so it generates rather than matches." .
+
+# Minted from a widget code AND an enumerated value. The two slots are separated by '/',
+# which ENCODE_FOR_URI escapes inside values -- an unreserved separator such as '_' could not
+# be told apart from the same character inside a code, and two widgets could collide onto one
+# check.
+:_Check rdf:type ex:ComplianceCheck , gistp:SparqlVariable ;
+        gistp:variableText "?_Check" ;
+        gistp:iriTemplate  "http://example.org/ops/check/{widget}/{reg}" ;
+        gistp:hasSlot [ rdf:type gistp:TemplateSlot ;
+                        gistp:slotName  "widget" ;
+                        gistp:slotValue "?wcode"^^gistp:var ] ,
+                      [ rdf:type gistp:TemplateSlot ;
+                        gistp:slotName  "reg" ;
+                        gistp:slotValue :_Reg ] ;
+        skos:definition "The check, one per widget per regulation." .
+
+#################################################################
+#    L -- what must be true
+#################################################################
+
+:ComplianceChecks_L {
+    :_W rdf:type ex:Widget ;
+        ex:code "?wcode"^^gistp:var .
+}
+
+#################################################################
+#    R -- what becomes true
+#################################################################
+
+:ComplianceChecks_R {
+    :_Check rdf:type ex:ComplianceCheck ;
+            ex:checks :_W ;
+            ex:regulation :_Reg .
+}
+
+#################################################################
+#    NAC -- what must NOT be true
+#################################################################
+
+:ComplianceChecks_NotYet {
+    :_Check rdf:type ex:ComplianceCheck .
+}
+
+# Compiles to, with VALUES before the BIND and the guard after it:
+#
+#   CONSTRUCT {
+#     ?_Check a ex:ComplianceCheck ; ex:checks ?_W ; ex:regulation ?_Reg .
+#   }
+#   WHERE {
+#     ?_W a ex:Widget ; ex:code ?wcode .
+#     VALUES ?_Reg { "EU" "JP" "US" }
+#     BIND(IRI(CONCAT("http://example.org/ops/check/", ENCODE_FOR_URI(STR(?wcode)),
+#                     "/", ENCODE_FOR_URI(STR(?_Reg)))) AS ?_Check)
+#     FILTER NOT EXISTS { ?_Check a ex:ComplianceCheck }
+#   }
+#
+# The VALUES members are emitted sorted, not in list order: VALUES is a set of solutions, so
+# authored order carries no meaning, and sorting is what keeps compiled output byte-stable.

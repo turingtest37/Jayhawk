@@ -1336,6 +1336,90 @@ end
         @test occursin("ENCODE_FOR_URI(STR(?_ID_1))", q)
     end
 
+    # ---------------------------------------------------------------------
+    # gistp:oneOf -- one VALUES clause, two readings
+    # ---------------------------------------------------------------------
+
+    with_enums(spec, enums) = RuleSpec(
+        spec.iri, spec.mode, spec.match_graph, spec.construct_graph,
+        spec.match, spec.construct, spec.variables, spec.mints,
+        enums, spec.nacs, spec.strategy, spec.priority, spec.max_iterations)
+
+    @testset "oneOf emits VALUES, sorted and byte-stable" begin
+        spec = with_enums(person_to_employee(),
+            Dict("$(R)_ID_1" => RDFTerm[iri("$(G)c"), iri("$(G)a"), iri("$(G)b")]))
+        q = compile_rule(spec)
+        # sorted, not in authored order: VALUES is a set of solutions, so authored order
+        # carries no meaning and sorting is what keeps output byte-stable
+        @test occursin("VALUES ?_ID_1 { <$(G)a> <$(G)b> <$(G)c> }", q)
+        @test q == compile_rule(spec)
+    end
+
+    @testset "the same clause constrains or generates, decided by the rest of the rule" begin
+        # constrain: the variable is ALSO bound by L, so the clause is a join
+        constrain = with_enums(person_to_employee(),
+            Dict("$(R)_ID_1" => RDFTerm[iri("$(G)a")]))
+        # generate: a variable that appears only in R, bound by nothing but its VALUES
+        base = person_to_employee()
+        gen = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+            base.match,
+            [PatternTriple(iri("$(R)_Person_1"), iri("$(HR)tag"), iri("$(R)_Tag"))],
+            merge(base.variables, Dict("$(R)_Tag" => "?_Tag")), base.mints,
+            Dict("$(R)_Tag" => RDFTerm[RDFLiteral("x"), RDFLiteral("y")]),
+            base.nacs, base.strategy, base.priority, base.max_iterations)
+
+        # one code path: both are a bare VALUES clause in the WHERE, nothing else
+        @test occursin("VALUES ?_ID_1 {", compile_rule(constrain))
+        @test occursin("VALUES ?_Tag { \"x\" \"y\" }", compile_rule(gen))
+        # and the generating one compiles at all, which is the real assertion: ?_Tag is
+        # bound by nothing in the match pattern, so without enum_vars in the bound set
+        # check_bound would reject it as use-before-def
+        @test "?_Tag" in enum_vars(gen)
+        @test !("?_Tag" in vars_in(gen.match, gen))
+        @test check_bound(gen) === gen
+    end
+
+    @testset "VALUES precedes the BIND that may consume it" begin
+        # a template may mint from an enumerated value, so the ordering is load-bearing
+        spec = minting_rule()
+        withv = with_enums(spec, Dict("$(R)_ID_1" => RDFTerm[iri("$(G)a")]))
+        q = compile_rule(withv)
+        @test findfirst("VALUES", q).start < findfirst("BIND(", q).start
+    end
+
+    @testset "a mint may take its slot from an enumeration" begin
+        base = minting_rule()
+        gen = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+            base.match, base.construct,
+            merge(base.variables, Dict("$(R)_Reg" => "?_Reg")),
+            Dict("$(R)_Employee_1" => MintSpec("$(R)_Employee_1",
+                 "http://example.org/hr/employee/{id}/{reg}",
+                 Dict{String,RDFTerm}("id" => var("?idText"), "reg" => iri("$(R)_Reg")))),
+            Dict("$(R)_Reg" => RDFTerm[RDFLiteral("EU"), RDFLiteral("US")]),
+            base.nacs, base.strategy, base.priority, base.max_iterations)
+        q = compile_rule(gen)
+        @test occursin("ENCODE_FOR_URI(STR(?_Reg))", q)
+        @test findfirst("VALUES ?_Reg", q).start < findfirst("BIND(", q).start
+    end
+
+    @testset "broken enumerations are refused" begin
+        spec = person_to_employee()
+        # an empty list yields no solutions, so the rule can never fire
+        empty = with_enums(spec, Dict("$(R)_ID_1" => RDFTerm[]))
+        @test occursin("never fire", sprint(showerror, try compile_rule(empty) catch e; e end))
+
+        # enumerated AND constructed is contradictory
+        both = with_enums(minting_rule(),
+            Dict("$(R)_Employee_1" => RDFTerm[RDFLiteral("a")]))
+        @test occursin("Choose one", sprint(showerror, try compile_rule(both) catch e; e end))
+
+        # no variableText, so there is no SPARQL variable for VALUES to bind
+        noname = with_enums(spec, Dict("$(R)_undeclared" => RDFTerm[RDFLiteral("a")]))
+        @test occursin("no gistp:variableText",
+                       sprint(showerror, try compile_rule(noname) catch e; e end))
+    end
+
+
     @testset "empty patterns are refused" begin
         spec = person_to_employee()
         empty_l = RuleSpec(spec.iri, spec.mode, spec.match_graph, spec.construct_graph,

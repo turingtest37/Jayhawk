@@ -161,7 +161,9 @@ function engine_cleanup()
               "$(RULES)PersonToEmployeeRecord_L", "$(RULES)PersonToEmployeeRecord_R",
               "$(RULES)FlattenIdentifier_L", "$(RULES)FlattenIdentifier_R",
               "$(RULES)AssignReview_L", "$(RULES)AssignReview_R",
-              "$(RULES)AssignReview_NoTaskYet", "urn:jayhawk:ops-test")
+              "$(RULES)AssignReview_NoTaskYet", "urn:jayhawk:ops-test",
+              "$(RULES)ComplianceChecks_L", "$(RULES)ComplianceChecks_R",
+              "$(RULES)ComplianceChecks_NotYet", "urn:jayhawk:oneof-test")
         Jayhawk.update!("DROP SILENT GRAPH <$g>")
     end
     # the rules and their variable declarations live in the default graph
@@ -172,6 +174,7 @@ function engine_cleanup()
         DELETE WHERE { ?s <$(Jayhawk.P_VARIABLETEXT)> ?o } ;
         DELETE WHERE { ?s <$(Jayhawk.P_IRITEMPLATE)> ?o } ;
         DELETE WHERE { ?s <$(Jayhawk.P_NAC)> ?o } ;
+        DELETE WHERE { ?s <$(Jayhawk.P_ONEOF)> ?o } ;
         DELETE WHERE { ?s <$(Jayhawk.P_STRATEGY)> ?o } ;
         DELETE WHERE { ?s <$(Jayhawk.P_PRIORITY)> ?o } ;
         DELETE WHERE { ?s <$(Jayhawk.P_MAXITER)> ?o } ;
@@ -697,6 +700,62 @@ end
         end
 
         Jayhawk.update!("DROP SILENT GRAPH <$OG>")
+    end
+
+    @testset "oneOf: one VALUES clause, two readings" begin
+        Jayhawk.load_file!(fixture("oneof_rule.trig"))
+        rule = "$(RULES)ComplianceChecks"
+        OF = "urn:jayhawk:oneof-test"
+        Jayhawk.update!("DROP SILENT GRAPH <$OF>")
+        Jayhawk.update!("""
+            INSERT DATA { GRAPH <$OF> {
+              <urn:w1> a <http://example.org/ops/Widget> ; <http://example.org/ops/code> "W-1" .
+              <urn:w2> a <http://example.org/ops/Widget> ; <http://example.org/ops/code> "W-2" .
+              <urn:x9> a <http://example.org/ops/Gadget> ; <http://example.org/ops/code> "X-9" .
+            } }""")
+
+        @testset "the rdf:List is walked out of the store" begin
+            spec = load_rule(rule)
+            @test haskey(spec.enums, "$(RULES)_Reg")
+            vals = [(t::RDFLiteral).lexical for t in spec.enums["$(RULES)_Reg"]]
+            @test vals == ["EU", "JP", "US"]        # sorted, not authored order
+            @test "?_Reg" in enum_vars(spec)
+            # the generating reading: bound by nothing but its own VALUES
+            @test !("?_Reg" in vars_in(spec.match, spec))
+        end
+
+        @testset "it compiles to VALUES before the BIND" begin
+            q = compile_from_store(rule)
+            @test occursin("VALUES ?_Reg { \"EU\" \"JP\" \"US\" }", q)
+            @test findfirst("VALUES", q).start < findfirst("BIND(", q).start
+            @test findfirst("BIND(", q).start < findfirst("FILTER NOT EXISTS", q).start
+        end
+
+        local fs
+        @testset "one match becomes three results -- the coproduct" begin
+            fs = run_rule(rule; source = [OF], actor = "integration")
+            # 2 widgets x 3 regulations x 3 triples each
+            @test sum(f.count for f in fs) == 18
+            checks = Set((r["s"]::IRIRef).value
+                         for f in fs
+                         for r in select("SELECT DISTINCT ?s WHERE { GRAPH <$(f.graph)> { ?s ?p ?o } }"))
+            @test length(checks) == 6
+            @test "http://example.org/ops/check/W-1/EU" in checks
+            @test "http://example.org/ops/check/W-2/JP" in checks
+            # the Gadget is not a Widget, so L never matched it
+            @test !any(occursin("X-9", c) for c in checks)
+        end
+
+        @testset "the guard makes a second run derive nothing" begin
+            again = run_rule(rule; source = vcat([OF], [f.graph for f in fs]),
+                             actor = "integration")
+            @test isempty(again) || all(f.count == 0 for f in again)
+        end
+
+        for f in fs
+            undo_firing!(f.graph)
+        end
+        Jayhawk.update!("DROP SILENT GRAPH <$OF>")
     end
 
     @testset "the agent-facing tools" begin
