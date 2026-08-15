@@ -33,7 +33,7 @@ TraceLog(active::Bool) = TraceLog{Dict}(active)
 
 
 """
-Push a new entry into the TLog for the given subject, function name and object, 
+Push a new entry into the TLog for the given subject, predicate, object and function name, 
 but only if the TraceLog's 'active' field is set to true.
 """
 function add_entry!(tl::TraceLog,s,p,o,f::Function)
@@ -48,7 +48,7 @@ end
 """
 Fetch a resource or blank node object locally or globally, updating the local dictionary with Unknown and returning that if not found.
 """
-function retrieve!(tl::TraceLog, x::RORB; default = Unknown(x))
+function retrieve(tl::TraceLog, x::RORB; default = Unknown(x))
     obj = get(tl.rdict, x, default)
     # = get(tl.ldict, x) do
     #     get(tl.rdict, x, default)
@@ -56,14 +56,6 @@ function retrieve!(tl::TraceLog, x::RORB; default = Unknown(x))
     @debug "retrieve! got for $x : " obj
     obj
 end
-
-"""
-Pushed key => val pair to both local and resource dictionaries.
-"""
-# function store_all!(tl::TraceLog, value, key::RORB)
-#     store_local!(tl,value,key)
-#     store_res!(tl,value,key)
-# end
 
 """
 Push key => val pair to local dictionary only if the TL is active.
@@ -77,6 +69,7 @@ end
 function store_local!(tl::TraceLog, value, key::Any)
     store_local!(tl, value, Resource(URIs.escapeuri(string(key))))
 end
+
 """
 Push key => val pair to resource dictionary only if the TL is active.
 """
@@ -85,28 +78,3 @@ function store_res!(tl::TraceLog, value, key::RORB)
         push!(tl.rdict, key => value)
     end
 end
-
-
-# task = @async open("foo.txt", "w") do io
-#     write(io, "Hello, World!")
-# end;
-
-# julia> wait(task)
-
-# julia> readlines("foo.txt")
-# 1-element Array{String,1}:
-# "Hello, World!"
-
-# ulia> using Sockets
-
-# julia> @sync for hostname in ("google.com", "github.com", "julialang.org")
-#            @async begin
-#                conn = connect(hostname, 80)
-#                write(conn, "GET / HTTP/1.1\r\nHost:$(hostname)\r\n\r\n")
-#                readline(conn, keep=true)
-#                println("Finished connection to $(hostname)")
-#            end
-#        end
-# Finished connection to google.com
-# Finished connection to julialang.org
-# Finished connection to github.com
