@@ -107,6 +107,11 @@ apply_rule(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint(), kw...) =
 function apply_rule(spec::RuleSpec; into::AbstractString = new_firing_graph(),
                     source::AbstractVector = String[], actor::AbstractString = "jayhawk",
                     iteration::Integer = 1, ep::SparqlEndpoint = endpoint())
+    # Before writing anything: would any minted IRI be reachable from more than one distinct
+    # binding? An IRI is an identity claim, so a collision merges two things into one node
+    # and nothing downstream ever notices. Static separator analysis happens in compile;
+    # this catches what only the data can reveal.
+    check_collisions(spec; from = source, ep = ep)
     update!(insert_query(spec; into = into, from = source); ep = ep)
     prune_known!(into, source; ep = ep)
     n = graph_size(into; ep = ep)

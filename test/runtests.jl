@@ -1199,6 +1199,52 @@ end
         @test occursin("not a variable", sprint(showerror, err))
     end
 
+    @testset "ambiguous slot separators are refused" begin
+        # In RDF an IRI *is* the identity, so two distinct binding tuples expanding to one
+        # IRI silently merges two things into one node. ENCODE_FOR_URI leaves the unreserved
+        # set alone, so a separator drawn from it cannot be told apart from the same
+        # characters inside a value: "x_y"+"z" and "x"+"y_z" both give x_y_z.
+        @test ambiguous_separators("http://ex.org/{a}_{b}") == ["_"]
+        @test ambiguous_separators("http://ex.org/{a}{b}")  == [""]     # adjacent slots
+        @test ambiguous_separators("http://ex.org/{a}-{b}.{c}") == ["-", "."]
+        # a separator the encoder escapes is unambiguous: values containing it get %2F
+        @test isempty(ambiguous_separators("http://ex.org/{a}/{b}"))
+        # single-slot templates are always safe, and fixed prefixes/suffixes never collide
+        # because they are identical for every binding
+        @test isempty(ambiguous_separators("http://ex.org/one/{a}"))
+        @test isempty(ambiguous_separators("http://ex.org/{a}_end"))
+
+        two_slot(sep) = minting_rule(
+            template = "http://example.org/hr/employee/{id}$(sep){b}",
+            slots = Dict{String,RDFTerm}("id" => var("?idText"), "b" => var("?idText")))
+        err = try compile_rule(two_slot("_")) catch e; e end
+        msg = sprint(showerror, err)
+        @test occursin("x_y_z", msg)              # names the concrete failure
+        @test occursin("'/'", msg)                # and the fix
+        @test compile_rule(two_slot("/")) isa String
+    end
+
+    @testset "the collision query is built but provably vacuous for Level 1" begin
+        # ENCODE_FOR_URI is injective and a reserved separator cannot appear raw in an
+        # encoded value -- even a literal "%2F" double-encodes to "%252F" -- so with the
+        # separator lint in place no two distinct slot tuples can produce one IRI. The query
+        # is kept and wired in because it stops being vacuous the moment a lossy encoding
+        # (slugging) exists.
+        spec = minting_rule()
+        qs = collision_queries(spec; from = ["urn:g"])
+        @test length(qs) == 1
+        minted_iri, q = qs[1]
+        @test minted_iri == "$(R)_Employee_1"
+        @test occursin("GROUP BY ?_Employee_1", q)
+        @test occursin("HAVING (COUNT(DISTINCT ?__key) > 1)", q)
+        @test occursin("FROM <urn:g>", q)
+        # the tuple key separates encoded values with a raw space, which cannot occur inside
+        # one because ENCODE_FOR_URI turns a space into %20
+        @test occursin("BIND(CONCAT(ENCODE_FOR_URI(STR(?idText))) AS ?__key)", q)
+        # no mints, no query
+        @test isempty(collision_queries(person_to_employee()))
+    end
+
     @testset "slot values may be IRI-position variables too" begin
         # gistp:slotValue accepts either mechanism. Binding :_ID_1 mints from that node's
         # IRI rather than from its text -- a different rule, but a legal one.

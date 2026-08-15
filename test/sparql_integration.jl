@@ -439,6 +439,47 @@ end
             @test isempty(again) || all(f.count == 0 for f in again)
         end
 
+        @testset "fan-in is reported when one IRI serves several bindings" begin
+            # The hazard injectivity does NOT cover. Two different people carrying the same
+            # identifier text mint one employee IRI: the slot values are identical, so no
+            # collision check can see it, yet the node ends up carrying both people's facts.
+            #
+            # Reported, never refused -- many-to-one minting is often right (one department
+            # node per name, shared by its staff), so whether it is a bug depends on
+            # modelling intent the pattern cannot state.
+            Jayhawk.update!("DROP SILENT GRAPH <urn:jayhawk:fanin-test>")
+            Jayhawk.update!("""
+                INSERT DATA { GRAPH <urn:jayhawk:fanin-test> {
+                  <urn:pA> a <$(GIST)Person> ; <$(GIST)isIdentifiedBy> <urn:idA> .
+                  <urn:idA> a <$(GIST)ID> ; <$(GIST)containedText> "E-4471" .
+                  <urn:pB> a <$(GIST)Person> ; <$(GIST)isIdentifiedBy> <urn:idB> .
+                  <urn:idB> a <$(GIST)ID> ; <$(GIST)containedText> "E-4471" .
+                } }""")
+            spec = load_rule(rule)
+            fan = mint_fanin(spec; from = ["urn:jayhawk:fanin-test"])
+            @test length(fan) == 1
+            minted_iri, rows = fan[1]
+            @test minted_iri == "$(RULES)_Employee_1"
+            @test rows == [("http://example.org/hr/employee/E-4471", 2)]
+
+            # and the review surface surfaces it before anything is written
+            out = tool_explain_rule(rule; source = ["urn:jayhawk:fanin-test"])
+            @test occursin("WARNING", out)
+            @test occursin("from 2 distinct bindings", out)
+            @test occursin("Nothing was written", out)
+
+            # the same data with distinct identifiers produces no warning
+            Jayhawk.update!("""
+                DELETE DATA { GRAPH <urn:jayhawk:fanin-test> {
+                  <urn:idB> <$(GIST)containedText> "E-4471" } } ;
+                INSERT DATA { GRAPH <urn:jayhawk:fanin-test> {
+                  <urn:idB> <$(GIST)containedText> "E-9902" } }""")
+            @test isempty(mint_fanin(spec; from = ["urn:jayhawk:fanin-test"]))
+            @test !occursin("WARNING", tool_explain_rule(rule; source = ["urn:jayhawk:fanin-test"]))
+
+            Jayhawk.update!("DROP SILENT GRAPH <urn:jayhawk:fanin-test>")
+        end
+
         @testset "undo removes the minted nodes and leaves the source alone" begin
             for f in fs
                 undo_firing!(f.graph)

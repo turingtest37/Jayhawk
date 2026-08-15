@@ -268,6 +268,43 @@ end
 "Slot names appearing in a template, in order of first occurrence."
 template_slots(t::AbstractString) = [n for (k, n) in parse_template(t) if k === :slot]
 
+# ENCODE_FOR_URI escapes everything outside RFC 3986's unreserved set, and leaves these
+# alone. A template separator built only from these characters is therefore
+# indistinguishable from the same characters appearing inside a slot value.
+const UNRESERVED_ONLY = r"^[A-Za-z0-9\-._~]*$"
+
+"""
+    ambiguous_separators(t) -> Vector{String}
+
+The literal separators between consecutive slots that cannot be told apart from slot content.
+
+Two distinct binding tuples must never expand to one IRI: in RDF an IRI *is* the identity, so
+a collision silently merges two things into one node. `ENCODE_FOR_URI` is injective, so a
+single-slot template is always safe -- but a multi-slot template is only safe if each
+separator contains at least one character the encoder escapes:
+
+    {a}_{b}   "x_y" + "z"  ->  x_y_z        <- and so does "x" + "y_z"
+    {a}/{b}   "x/y" + "z"  ->  x%2Fy/z      <- distinct from x/y%2Fz
+
+An empty separator (two adjacent slots) is always ambiguous, so it is reported too. Only
+*inter-slot* text matters: a fixed prefix or suffix is the same for every binding and cannot
+create a collision.
+"""
+function ambiguous_separators(t::AbstractString)
+    parts = parse_template(t)
+    bad = String[]
+    for i in 1:length(parts)-1
+        parts[i][1] === :slot || continue
+        if parts[i+1][1] === :slot
+            push!(bad, "")                                  # {a}{b}
+        elseif i + 2 <= length(parts) && parts[i+2][1] === :slot
+            sep = parts[i+1][2]
+            occursin(UNRESERVED_ONLY, sep) && push!(bad, sep)
+        end
+    end
+    bad
+end
+
 """
     check_mints(spec)
 
@@ -298,6 +335,16 @@ function check_mints(spec::RuleSpec)
             "template expands to an absolute IRI; a bare local part leaves the minting " *
             "namespace implicit, which silently mints into whichever namespace the rule " *
             "document's empty prefix happens to name.")
+
+        amb = ambiguous_separators(m.template)
+        isempty(amb) || error(
+            "rule <$(spec.iri)>: iriTemplate $(repr(m.template)) on <$iri> separates slots " *
+            "with $(join((isempty(s) ? "nothing at all" : repr(s) for s in amb), ", ")). " *
+            "ENCODE_FOR_URI leaves the unreserved characters -._~ and alphanumerics alone, " *
+            "so such a separator cannot be told apart from the same characters inside a " *
+            "value: \"x_y\"+\"z\" and \"x\"+\"y_z\" both expand to x_y_z, silently merging " *
+            "two different things into one node. Separate slots with a character the " *
+            "encoder escapes, such as '/'.")
 
         wanted = Set(template_slots(m.template))
         given  = Set(keys(m.slots))
@@ -432,6 +479,135 @@ function compile_rule(spec::RuleSpec)
 end
 
 """
+    collision_queries(spec; from = String[]) -> Vector{Tuple{String,String}}
+
+One `(minted variable IRI, SELECT)` pair per minted variable, finding IRIs that more than one
+distinct binding tuple would produce.
+
+The backstop behind [`ambiguous_separators`](@ref). The static lint catches templates that
+are ambiguous *by construction*; this catches the rest — anything the encoder cannot
+distinguish on the actual data, and any future lossy encoding such as slugging, where two
+different source values legitimately map to one string.
+
+It needs no extra triples, because the rule's own match pattern already binds both the slot
+values and the minted IRI: group by the IRI, count distinct binding tuples, and report any
+group above one. The tuple is keyed with a literal space between percent-encoded values --
+a space inside a value becomes `%20`, so a raw space unambiguously separates the parts.
+"""
+function collision_queries(spec::RuleSpec; from::AbstractVector = String[])
+    out = Tuple{String,String}[]
+    isempty(spec.mints) && return out
+    froms = isempty(from) ? "" :
+        join(("FROM <$(check_iri(g))>" for g in from), "\n") * "\n"
+
+    for iri in sort(collect(keys(spec.mints)))
+        m = spec.mints[iri]
+        v = spec.variables[iri]
+        key = join(("ENCODE_FOR_URI(STR($(var_of(m.slots[n], spec))))"
+                    for n in sort(collect(keys(m.slots)))), ", \" \", ")
+        push!(out, (iri, """
+        SELECT $v (COUNT(DISTINCT ?__key) AS ?n)
+        $(froms)WHERE {
+        $(bgp_text(spec.match, spec))
+        $(bind_text(m, spec))
+          BIND(CONCAT($key) AS ?__key)
+        }
+        GROUP BY $v
+        HAVING (COUNT(DISTINCT ?__key) > 1)
+        """))
+    end
+    out
+end
+
+"""
+    check_collisions(spec; from = String[], ep = endpoint(), limit = 5) -> RuleSpec
+
+Run [`collision_queries`](@ref) and refuse the rule if any minted IRI is reachable from more
+than one distinct binding.
+
+This raises rather than warns. A collision is not a cosmetic problem: an IRI is an identity
+claim, so two people sharing a minted IRI *are* one person as far as every downstream query
+is concerned, and nothing else in the stack will ever notice.
+"""
+function check_collisions(spec::RuleSpec; from::AbstractVector = String[],
+                          ep::SparqlEndpoint = endpoint(), limit::Integer = 5)
+    for (iri, q) in collision_queries(spec; from = from)
+        # RFC 6570 Level 1 with a non-ambiguous separator is *injective*: ENCODE_FOR_URI is
+        # injective, and a reserved separator cannot appear raw inside an encoded value --
+        # even a literal "%2F" double-encodes to "%252F". So distinct slot tuples cannot
+        # produce one IRI, and this query provably returns nothing. `compile_rule` already
+        # refuses ambiguous separators, so today the loop always skips and costs no query.
+        #
+        # It is kept, wired in and tested, because it stops being vacuous the moment a lossy
+        # encoding exists: slugging deliberately maps many source values onto one string, and
+        # that is exactly when two distinct bindings silently become one node.
+        isempty(ambiguous_separators(spec.mints[iri].template)) && continue
+        rows = select(q; ep = ep)
+        isempty(rows) && continue
+        v = spec.variables[iri]
+        shown = [string("<", (r[v[2:end]]::IRIRef).value, "> from ",
+                        (r["n"]::RDFLiteral).lexical, " distinct bindings")
+                 for r in Iterators.take(rows, limit)]
+        error("""
+              rule <$(spec.iri)>: minting $v produces $(length(rows)) IRI(s) that more than \
+              one distinct binding would create, which would silently merge distinct things \
+              into one node:
+                $(join(shown, "\n  "))$(length(rows) > limit ? "\n  ... and $(length(rows) - limit) more" : "")
+              The template $(repr(spec.mints[iri].template)) does not discriminate its \
+              inputs. Add a slot, or use a slot whose values are unique.""")
+    end
+    spec
+end
+
+"""
+    mint_fanin(spec; from = String[], ep = endpoint(), limit = 5)
+        -> Vector{Tuple{String,Vector{Tuple{String,Int}}}}
+
+For each minted variable, the IRIs built from **more than one** distinct source binding,
+worst first.
+
+This is the hazard the injectivity argument does *not* cover. Two different people sharing an
+identifier text mint one employee IRI: the slot values are identical, so
+[`check_collisions`](@ref) sees nothing wrong, yet the minted node ends up carrying both
+people's facts.
+
+Deliberately a report, not a refusal. Many-to-one minting is often exactly right -- a
+department minted from its name should be one node for all its staff -- so whether fan-in is
+a bug depends on modelling intent, which the pattern cannot state. Surfacing it in the dry
+run lets a human decide before anything is written.
+
+The key covers every variable the construct pattern uses apart from the minted one: those are
+the values that actually land on the minted node.
+"""
+function mint_fanin(spec::RuleSpec; from::AbstractVector = String[],
+                    ep::SparqlEndpoint = endpoint(), limit::Integer = 5)
+    out = Tuple{String,Vector{Tuple{String,Int}}}[]
+    isempty(spec.mints) && return out
+    froms = isempty(from) ? "" : join(("FROM <$(check_iri(g))>" for g in from), "\n") * "\n"
+    others = sort(collect(setdiff(vars_in(spec.construct, spec), minted_vars(spec))))
+    isempty(others) && return out
+    key = join(("ENCODE_FOR_URI(STR($o))" for o in others), ", \" \", ")
+
+    for iri in sort(collect(keys(spec.mints)))
+        v = spec.variables[iri]
+        rows = select("""
+            SELECT $v (COUNT(DISTINCT ?__ctx) AS ?n)
+            $(froms)WHERE {
+            $(bgp_text(spec.match, spec))
+            $(bind_text(spec.mints[iri], spec))
+              BIND(CONCAT($key) AS ?__ctx)
+            }
+            GROUP BY $v
+            HAVING (COUNT(DISTINCT ?__ctx) > 1)
+            ORDER BY DESC(?n) LIMIT $(Int(limit))"""; ep = ep)
+        isempty(rows) || push!(out,
+            (iri, [((r[v[2:end]]::IRIRef).value, parse(Int, (r["n"]::RDFLiteral).lexical))
+                   for r in rows]))
+    end
+    out
+end
+
+"""
     insert_query(spec; into, from = String[]) -> String
 
 The same rule as a SPARQL Update that writes its result into the named graph `into`.
@@ -507,4 +683,5 @@ export rule_catalogue
 export compile_rule, compile_from_store, insert_query, list_rules, mode_symbol
 export var_of, term_sparql, bgp_text, vars_in, check_bound, check_mints
 export parse_template, template_slots, bind_text, minted_vars
+export ambiguous_separators, collision_queries, check_collisions, mint_fanin
 export GISTP_NS, MODE_CONSTRUCT, MODE_ASSERT, MODE_REWRITE

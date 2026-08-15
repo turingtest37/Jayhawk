@@ -64,6 +64,22 @@ function tool_explain_rule(rule::AbstractString; source::AbstractVector = String
         println(io, "    ", sparql_text(r["s"]), " ", sparql_text(r["p"]), " ", sparql_text(r["o"]), " .")
     end
     d.count > length(d.sample) && println(io, "    ... and ", d.count - length(d.sample), " more")
+
+    # Fan-in is reported, never refused: many-to-one minting is often exactly right, so
+    # whether it is a bug depends on modelling intent the pattern cannot state.
+    fanin = mint_fanin(spec; from = source, ep = ep)
+    if !isempty(fanin)
+        println(io, "\nWARNING -- some minted IRIs are built from more than one distinct ",
+                "binding, so\none node will carry facts from several sources. Intended for a ",
+                "shared node\n(a department per name); a merge bug for a per-person one.")
+        for (iri, rows) in fanin
+            println(io, "  ", spec.variables[iri], ":")
+            for (minted, n) in rows
+                println(io, "    <", minted, ">  from ", n, " distinct bindings")
+            end
+        end
+    end
+
     println(io, "\nNothing was written. Use run_rule to apply it.")
     String(take!(io))
 end
