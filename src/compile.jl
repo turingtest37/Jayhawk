@@ -23,12 +23,24 @@ const P_IRITEMPLATE  = GISTP_NS * "iriTemplate"
 const P_HASSLOT      = GISTP_NS * "hasSlot"
 const P_SLOTNAME     = GISTP_NS * "slotName"
 const P_SLOTVALUE    = GISTP_NS * "slotValue"
+const P_NAC          = GISTP_NS * "hasNegativeCondition"
+const P_STRATEGY     = GISTP_NS * "strategy"
+const P_PRIORITY     = GISTP_NS * "priority"
+const P_MAXITER      = GISTP_NS * "maxIterations"
 const C_SPARQLVAR    = GISTP_NS * "SparqlVariable"
 const C_RULE         = GISTP_NS * "Rule"
 
 const MODE_CONSTRUCT = GISTP_NS * "Construct"
 const MODE_ASSERT    = GISTP_NS * "Assert"
 const MODE_REWRITE   = GISTP_NS * "Rewrite"
+
+const STRATEGY_ONCE       = GISTP_NS * "Once"
+const STRATEGY_TOFIXPOINT = GISTP_NS * "ToFixpoint"
+
+strategy_symbol(s::AbstractString) =
+    s == STRATEGY_ONCE       ? :Once :
+    s == STRATEGY_TOFIXPOINT ? :ToFixpoint :
+    throw(ArgumentError("unknown gistp:strategy <$s>"))
 
 "One triple of a pattern, with terms still un-substituted."
 struct PatternTriple
@@ -52,6 +64,16 @@ struct MintSpec
 end
 
 """
+A negative application condition: a pattern that must **not** match for the rule to fire.
+
+Its own named graph, like L and R, and compiled to its own `FILTER NOT EXISTS`.
+"""
+struct NacSpec
+    graph::String
+    triples::Vector{PatternTriple}
+end
+
+"""
 Everything the compiler needs about one rule, already fetched.
 
 `variables` maps a variable's IRI to its `gistp:variableText`. `mints` holds the minted
@@ -68,7 +90,19 @@ struct RuleSpec
     construct::Vector{PatternTriple}
     variables::Dict{String,String}
     mints::Dict{String,MintSpec}
+    # Control. `nacs` affects compilation; the other three are execution policy the driver
+    # reads, kept here because `load_rule` is the one place that talks to the store.
+    nacs::Vector{NacSpec}
+    strategy::Union{Symbol,Nothing}     # :Once, :ToFixpoint, or unstated
+    priority::Int
+    max_iterations::Union{Int,Nothing}  # unstated means the caller's default
 end
+
+# Every call site written before the control layer stays valid: a rule with no negative
+# conditions and no stated policy behaves exactly as it did.
+RuleSpec(iri, mode, lg, cg, match, construct, variables, mints) =
+    RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
+             NacSpec[], nothing, 0, nothing)
 
 mode_symbol(m::AbstractString) =
     m == MODE_CONSTRUCT ? :Construct :
@@ -116,10 +150,50 @@ function load_rule(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
     lg   = _iri(row["l"])
     cg   = _iri(row["c"])
 
-    graphs = [lg, cg]
+    nacs = [NacSpec(g, load_pattern(g; ep = ep)) for g in load_nac_graphs(r; ep = ep)]
+    # The negative conditions' graphs join the scoping set: a variable may appear ONLY
+    # inside a condition -- that is the existentially-quantified case -- and without this it
+    # would be loaded as no variable at all and emitted as a bare IRI.
+    graphs = String[lg, cg, (n.graph for n in nacs)...]
+
     RuleSpec(r, mode, lg, cg,
              load_pattern(lg; ep = ep), load_pattern(cg; ep = ep),
-             load_variables(graphs; ep = ep), load_mints(graphs; ep = ep))
+             load_variables(graphs; ep = ep), load_mints(graphs; ep = ep),
+             nacs, load_strategy(r; ep = ep), load_priority(r; ep = ep),
+             load_max_iterations(r; ep = ep))
+end
+
+"The negative-condition graph IRIs of one rule, sorted so compiled output is stable."
+function load_nac_graphs(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
+    rows = select("""
+        SELECT ?n WHERE { <$(check_iri(rule_iri))> <$P_NAC> ?n } ORDER BY ?n"""; ep = ep)
+    sort!([_iri(r["n"]) for r in rows])
+end
+
+"A rule's declared application strategy, or `nothing` if it states none."
+function load_strategy(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
+    rows = select("SELECT ?s WHERE { <$(check_iri(rule_iri))> <$P_STRATEGY> ?s }"; ep = ep)
+    isempty(rows) && return nothing
+    length(rows) == 1 || error(
+        "<$rule_iri> declares $(length(rows)) gistp:strategy values; at most one is allowed.")
+    strategy_symbol(_iri(rows[1]["s"]))
+end
+
+"A rule's ordering hint when several are applied as a set. Absent means 0."
+function load_priority(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
+    rows = select("SELECT ?p WHERE { <$(check_iri(rule_iri))> <$P_PRIORITY> ?p }"; ep = ep)
+    isempty(rows) ? 0 : parse(Int, (rows[1]["p"]::RDFLiteral).lexical)
+end
+
+"A rule's own fixpoint budget, or `nothing` to use the caller's."
+function load_max_iterations(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
+    rows = select("SELECT ?m WHERE { <$(check_iri(rule_iri))> <$P_MAXITER> ?m }"; ep = ep)
+    isempty(rows) && return nothing
+    n = parse(Int, (rows[1]["m"]::RDFLiteral).lexical)
+    n >= 1 || error(
+        "<$rule_iri>: gistp:maxIterations is $n. A budget below 1 cannot be satisfied by " *
+        "any run; gistPatternShapes.ttl RuleShape rejects it -- validate first.")
+    n
 end
 
 "Fetch the triples of one pattern graph, sorted so output is reproducible."
@@ -451,6 +525,39 @@ function binds_text(spec::RuleSpec)
 end
 
 """
+    nacs_text(spec) -> String
+
+Every negative application condition, as its own `FILTER NOT EXISTS` block.
+
+Several conditions are conjunctive: each must fail to match independently, which is what
+separate filters give. An empty condition is skipped rather than emitted as
+`FILTER NOT EXISTS { }` -- a filter that can never fail would silently disable the rule.
+"""
+function nacs_text(spec::RuleSpec)
+    blocks = String[]
+    for n in spec.nacs
+        isempty(n.triples) && continue
+        push!(blocks, "  # NOT <$(n.graph)>\n  FILTER NOT EXISTS {\n" *
+                      bgp_text(n.triples, spec; indent = "    ") * "\n  }")
+    end
+    isempty(blocks) ? "" : "\n" * join(blocks, "\n")
+end
+
+"""
+    where_body(spec) -> String
+
+The whole of a rule's WHERE clause: match triples, then BINDs, then negative conditions.
+
+The order is load-bearing and is the reason this is one function rather than five copies.
+BIND sees only variables bound earlier in its group, so it must follow the triple patterns.
+`FILTER NOT EXISTS` must follow the BINDs in turn, because a condition is allowed to mention
+a *minted* variable -- "only create this if it does not already exist" -- and the filter can
+only test what is bound by the time it runs.
+"""
+where_body(spec::RuleSpec) =
+    string(bgp_text(spec.match, spec), binds_text(spec), nacs_text(spec))
+
+"""
     check_variables(spec)
 
 Reject a rule whose `gistp:variableText` is not a legal SPARQL variable.
@@ -476,8 +583,18 @@ This lives in the pure layer rather than in [`load_variables`](@ref) so that a h
 `RuleSpec` is checked too, not just one loaded from a store.
 """
 function check_variables(spec::RuleSpec)
+    # Two declared variables sharing one variableText are two distinct RDF individuals that
+    # compile to the same SPARQL variable, so the pattern silently means something narrower
+    # than it reads: every occurrence of either is forced to the same binding.
+    seen = Dict{String,String}()
     for iri in sort(collect(keys(spec.variables)))
         text = spec.variables[iri]
+        haskey(seen, text) && error(
+            "rule <$(spec.iri)>: <$iri> and <$(seen[text])> both declare " *
+            "gistp:variableText $(repr(text)). They are distinct variables that would " *
+            "compile to one, quietly forcing every occurrence of either to the same " *
+            "binding. Give them different names.")
+        seen[text] = iri
         occursin(VARIABLE_RE, text) || error(
             "rule <$(spec.iri)>: <$iri> has gistp:variableText $(repr(text)), which is not " *
             "a legal SPARQL variable (must match $(VARIABLE_RE.pattern)). The text is " *
@@ -611,7 +728,7 @@ function compile_rule(spec::RuleSpec)
     $(bgp_text(construct_only(spec), spec))
     }
     WHERE {
-    $(bgp_text(spec.match, spec))$(binds_text(spec))
+    $(where_body(spec))
     }
     """
 
@@ -621,7 +738,7 @@ function compile_rule(spec::RuleSpec)
     $(bgp_text(spec.construct, spec))
     }
     WHERE {
-    $(bgp_text(spec.match, spec))$(binds_text(spec))
+    $(where_body(spec))
     }
     """
 end
@@ -648,7 +765,7 @@ function project_query(spec::RuleSpec; triples::Vector{PatternTriple},
       }
     }
     $(using_lines)WHERE {
-    $(bgp_text(spec.match, spec))$(binds_text(spec))
+    $(where_body(spec))
     }
     """
 end
@@ -682,29 +799,63 @@ function rewrite_query(spec::RuleSpec; target::AbstractString, firing::AbstractS
 
     t, f, tomb = check_iri(target), check_iri(firing), check_iri(tombstone)
     using_lines = isempty(from) ? "" : join(("USING <$(check_iri(g))>" for g in from), "\n") * "\n"
+    ops = String[]
 
-    del = isempty(gone) ? "" : """
-    DELETE {
-      GRAPH <$t> {
-    $(bgp_text(gone, spec; indent = "    "))
-      }
-    }
-    """
-    ins_parts = String[]
-    isempty(added) || push!(ins_parts,
-        "  GRAPH <$t> {\n$(bgp_text(added, spec; indent = "    "))\n  }",
-        "  GRAPH <$f> {\n$(bgp_text(added, spec; indent = "    "))\n  }")
-    isempty(gone) || push!(ins_parts,
-        "  GRAPH <$tomb> {\n$(bgp_text(gone, spec; indent = "    "))\n  }")
+    # Five operations, one request, one transaction. The obvious shape -- a single
+    # DELETE/INSERT writing the target, the firing and the tombstone at once -- is wrong,
+    # and wrong in a way that loses data: an R \ I triple the target ALREADY held would be
+    # recorded in the firing graph as though this rule had added it, and undo would then
+    # delete a triple that predates the rule entirely.
+    #
+    # So the candidates are staged and pruned against the target FIRST, while the target is
+    # still untouched, and only what survives is treated as this firing's contribution.
+    if !isempty(added)
+        push!(ops, """
+        INSERT {
+          GRAPH <$f> {
+        $(bgp_text(added, spec; indent = "    "))
+          }
+        }
+        $(using_lines)WHERE {
+        $(where_body(spec))
+        }""")
+        # what the target already had is not something this rule added
+        push!(ops, """
+        DELETE { GRAPH <$f> { ?__s ?__p ?__o } }
+        WHERE  { GRAPH <$f> { ?__s ?__p ?__o } GRAPH <$t> { ?__s ?__p ?__o } }""")
+    end
 
-    """
-    $(del)INSERT {
-    $(join(ins_parts, "\n"))
-    }
-    $(using_lines)WHERE {
-    $(bgp_text(spec.match, spec))$(binds_text(spec))
-    }
-    """
+    if !isempty(gone)
+        # The tombstone is projected before the delete, from the same solutions: L matched,
+        # so every triple in it genuinely exists right now.
+        push!(ops, """
+        INSERT {
+          GRAPH <$tomb> {
+        $(bgp_text(gone, spec; indent = "    "))
+          }
+        }
+        $(using_lines)WHERE {
+        $(where_body(spec))
+        }""")
+        push!(ops, """
+        DELETE {
+          GRAPH <$t> {
+        $(bgp_text(gone, spec; indent = "    "))
+          }
+        }
+        $(using_lines)WHERE {
+        $(where_body(spec))
+        }""")
+    end
+
+    # Applied last, and from the pruned firing graph rather than from the template, so the
+    # target receives exactly what the firing graph claims -- which is what makes undo an
+    # exact inverse.
+    isempty(added) || push!(ops, """
+        INSERT { GRAPH <$t> { ?__s ?__p ?__o } }
+        WHERE  { GRAPH <$f> { ?__s ?__p ?__o } }""")
+
+    join(ops, " ;\n") * "\n"
 end
 
 """
@@ -738,7 +889,7 @@ function collision_queries(spec::RuleSpec; from::AbstractVector = String[])
         SELECT $v (COUNT(DISTINCT ?__key) AS ?n)
         $(froms)WHERE {
         $(bgp_text(spec.match, spec))
-        $(bind_text(m, spec))
+        $(bind_text(m, spec))$(nacs_text(spec))
           BIND(CONCAT($key) AS ?__key)
         }
         GROUP BY $v
@@ -831,7 +982,7 @@ function mint_fanin(spec::RuleSpec; from::AbstractVector = String[],
             SELECT $v (COUNT(DISTINCT ?__ctx) AS ?n)
             $(froms)WHERE {
             $(bgp_text(spec.match, spec))
-            $(bind_text(spec.mints[iri], spec))
+            $(bind_text(spec.mints[iri], spec))$(nacs_text(spec))
               BIND(CONCAT($key) AS ?__ctx)
             }
             GROUP BY $v
@@ -872,7 +1023,7 @@ function insert_query(spec::RuleSpec; into::AbstractString, from::AbstractVector
       }
     }
     $(using_lines)WHERE {
-    $(bgp_text(spec.match, spec))$(binds_text(spec))
+    $(where_body(spec))
     }
     """
 end
@@ -912,15 +1063,17 @@ still fails, loudly, at [`load_rule`](@ref) the moment anyone tries to use it.
 """
 function rule_catalogue(; ep::SparqlEndpoint = endpoint())
     rows = select("""
-        SELECT ?r ?mode ?label ?def WHERE {
+        SELECT ?r ?mode ?label ?def (COUNT(?n) AS ?guards) WHERE {
           ?r a <$C_RULE> ; <$P_MODE> ?mode .
           OPTIONAL { ?r <$SKOS_LABEL> ?label }
           OPTIONAL { ?r <$SKOS_DEFINITION> ?def }
-        } ORDER BY ?r"""; ep = ep)
+          OPTIONAL { ?r <$P_NAC> ?n }
+        } GROUP BY ?r ?mode ?label ?def ORDER BY ?r"""; ep = ep)
     lex(r, k) = haskey(r, k) && r[k] isa RDFLiteral ? (r[k]::RDFLiteral).lexical : ""
     mode_of(m) = try mode_symbol(m) catch; :Unrecognised end
     [(iri = _iri(r["r"]), mode = mode_of(_iri(r["mode"])), mode_iri = _iri(r["mode"]),
-      label = lex(r, "label"), definition = lex(r, "def")) for r in rows]
+      label = lex(r, "label"), definition = lex(r, "def"),
+      guards = parse(Int, (r["guards"]::RDFLiteral).lexical)) for r in rows]
 end
 
 export PatternTriple, RuleSpec, MintSpec, load_rule, load_pattern, load_variables, load_mints
@@ -929,6 +1082,9 @@ export compile_rule, compile_from_store, insert_query, rewrite_query, project_qu
 export list_rules, mode_symbol
 export interface, match_only, construct_only, dangling_risks
 export var_of, term_sparql, bgp_text, vars_in, check_bound, check_mints, check_variables
+export NacSpec, nacs_text, where_body, strategy_symbol
+export load_nac_graphs, load_strategy, load_priority, load_max_iterations
+export STRATEGY_ONCE, STRATEGY_TOFIXPOINT
 export parse_template, template_slots, bind_text, minted_vars
 export ambiguous_separators, collision_queries, check_collisions, mint_fanin
 export GISTP_NS, MODE_CONSTRUCT, MODE_ASSERT, MODE_REWRITE

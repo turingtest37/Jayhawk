@@ -159,7 +159,9 @@ function engine_cleanup()
               "http://example.org/tcrules/PartOfTransitive_L",
               "http://example.org/tcrules/PartOfTransitive_R",
               "$(RULES)PersonToEmployeeRecord_L", "$(RULES)PersonToEmployeeRecord_R",
-              "$(RULES)FlattenIdentifier_L", "$(RULES)FlattenIdentifier_R")
+              "$(RULES)FlattenIdentifier_L", "$(RULES)FlattenIdentifier_R",
+              "$(RULES)AssignReview_L", "$(RULES)AssignReview_R",
+              "$(RULES)AssignReview_NoTaskYet", "urn:jayhawk:ops-test")
         Jayhawk.update!("DROP SILENT GRAPH <$g>")
     end
     # the rules and their variable declarations live in the default graph
@@ -169,6 +171,10 @@ function engine_cleanup()
         DELETE WHERE { ?s <$(Jayhawk.P_MODE)> ?o } ;
         DELETE WHERE { ?s <$(Jayhawk.P_VARIABLETEXT)> ?o } ;
         DELETE WHERE { ?s <$(Jayhawk.P_IRITEMPLATE)> ?o } ;
+        DELETE WHERE { ?s <$(Jayhawk.P_NAC)> ?o } ;
+        DELETE WHERE { ?s <$(Jayhawk.P_STRATEGY)> ?o } ;
+        DELETE WHERE { ?s <$(Jayhawk.P_PRIORITY)> ?o } ;
+        DELETE WHERE { ?s <$(Jayhawk.P_MAXITER)> ?o } ;
         DELETE WHERE { ?s <$(Jayhawk.P_HASSLOT)> ?o } ;
         DELETE WHERE { ?s <$(Jayhawk.P_SLOTNAME)> ?o } ;
         DELETE WHERE { ?s <$(Jayhawk.P_SLOTVALUE)> ?o } ;
@@ -539,6 +545,54 @@ end
             @test isempty(firings(rule = rule))
         end
 
+        @testset "a triple the target already held is not claimed as added" begin
+            # The obvious rewrite -- one DELETE/INSERT writing target, firing and tombstone
+            # together -- loses data. An R \ I triple the target ALREADY holds gets recorded
+            # in the firing graph as though this rule added it, and undo then deletes a
+            # triple that predates the rule entirely.
+            Jayhawk.update!("DROP SILENT GRAPH <$DATA_GRAPH>")
+            Jayhawk.update!("""
+                INSERT DATA { GRAPH <$DATA_GRAPH> {
+                  <urn:p1> a <$(GIST)Person> ; <$(GIST)isIdentifiedBy> <urn:id1> ;
+                           <$(HR)employeeNumber> "E-4471" .
+                  <urn:id1> a <$(GIST)ID> ; <$(GIST)containedText> "E-4471" .
+                } }""")
+            was = snapshot()
+            n_before = length(was)
+
+            preview = dry_run(rule; source = [DATA_GRAPH])
+            g = run_rule(rule; source = [DATA_GRAPH], actor = "integration")[1]
+            n_after = length(snapshot())
+
+            @test g.count == 0                       # nothing was actually added
+            @test g.removed == 3
+            # the firing describes the change it made, and the preview matched the run
+            @test g.count - g.removed == n_after - n_before
+            @test preview.count == g.count
+            @test preview.removed == g.removed
+
+            undo_firing!(g.graph)
+            @test snapshot() == was
+            @test ("<urn:p1>", "<$(HR)employeeNumber>", "\"E-4471\"") in snapshot()
+
+            Jayhawk.update!("DROP SILENT GRAPH <$DATA_GRAPH>")
+            Jayhawk.update!("""
+                INSERT DATA { GRAPH <$DATA_GRAPH> {
+                  <urn:p1> a <$(GIST)Person> ; <$(GIST)isIdentifiedBy> <urn:id1> .
+                  <urn:id1> a <$(GIST)ID> ; <$(GIST)containedText> "E-4471" .
+                  <urn:p9> a <$(GIST)Person> .
+                } }""")
+        end
+
+        @testset "the audit log reports what was removed, not just what was added" begin
+            g = run_rule(rule; source = [DATA_GRAPH], actor = "auditor")[1]
+            log = firings(rule = rule)[1]
+            @test log.removed == 3
+            @test log.count == 1
+            @test log.tombstone == g.tombstone
+            undo_firing!(g.graph)
+        end
+
         @testset "the MCP tool refuses to delete without confirmation" begin
             out = tool_run_rule(rule; source = [DATA_GRAPH])
             @test occursin("Refused", out)
@@ -560,6 +614,89 @@ end
         end
 
         Jayhawk.update!("DROP SILENT GRAPH <$DATA_GRAPH>")
+    end
+
+    @testset "the control layer: when a rule fires, and when it must not" begin
+        Jayhawk.load_file!(fixture("nac_rule.trig"))
+        rule = "$(RULES)AssignReview"
+        OPS  = "http://example.org/ops/"
+        OG   = "urn:jayhawk:ops-test"
+        Jayhawk.update!("DROP SILENT GRAPH <$OG>")
+        Jayhawk.update!("""
+            INSERT DATA { GRAPH <$OG> {
+              <urn:o1> a <$(OPS)Order> ; <$(OPS)status> <$(OPS)Submitted> ; <$(OPS)orderNumber> "SO-1001" .
+              <urn:o2> a <$(OPS)Order> ; <$(OPS)status> <$(OPS)Submitted> ; <$(OPS)orderNumber> "SO-1002" .
+              <urn:o3> a <$(OPS)Order> ; <$(OPS)status> <$(OPS)Draft>     ; <$(OPS)orderNumber> "SO-1003" .
+            } }""")
+
+        @testset "control settings load off the rule" begin
+            spec = load_rule(rule)
+            @test length(spec.nacs) == 1
+            @test spec.nacs[1].graph == "$(RULES)AssignReview_NoTaskYet"
+            @test length(spec.nacs[1].triples) == 1
+            @test spec.strategy === :ToFixpoint
+            @test spec.priority == 100
+            @test spec.max_iterations == 10
+            @test effective_strategy(spec) === :ToFixpoint
+            # the caller still overrides
+            @test effective_strategy(spec; strategy = :Once) === :Once
+        end
+
+        @testset "the guard compiles after the BIND it guards" begin
+            q = compile_from_store(rule)
+            @test occursin("FILTER NOT EXISTS", q)
+            @test findfirst("BIND(", q).start < findfirst("FILTER NOT EXISTS", q).start
+            # the condition is about the MINTED variable, which is the interesting case
+            @test occursin("FILTER NOT EXISTS {\n    ?_Task", q)
+        end
+
+        @testset "the condition blocks a match, distinguishably from pruning" begin
+            # Pre-create o1's task only. prune_known! could NOT produce this outcome: the
+            # ex:reviews triple would be genuinely new, so pruning would keep it. Only the
+            # negative condition can make the rule decline the whole match.
+            Jayhawk.update!("""INSERT DATA { GRAPH <$OG> {
+                <$(OPS)review/SO-1001> a <$(OPS)ReviewTask> . } }""")
+
+            fs = run_rule(rule; source = [OG], actor = "integration")
+            minted = Set((r["s"]::IRIRef).value for f in fs
+                         for r in select("SELECT DISTINCT ?s WHERE { GRAPH <$(f.graph)> { ?s ?p ?o } }"))
+            @test minted == Set(["$(OPS)review/SO-1002"])
+            @test !any(occursin("SO-1001", m) for m in minted)   # guarded
+            @test !any(occursin("SO-1003", m) for m in minted)   # Draft: L never matched it
+
+            @testset "and it is what makes the fixpoint converge" begin
+                # One productive round, then the guard refuses the second.
+                @test length(fs) == 1
+            end
+
+            for f in fs
+                undo_firing!(f.graph)
+            end
+            Jayhawk.update!("""DELETE DATA { GRAPH <$OG> {
+                <$(OPS)review/SO-1001> a <$(OPS)ReviewTask> . } }""")
+        end
+
+        @testset "with no task anywhere, both submitted orders are served" begin
+            fs = run_rule(rule; source = [OG], actor = "integration")
+            minted = Set((r["s"]::IRIRef).value for f in fs
+                         for r in select("SELECT DISTINCT ?s WHERE { GRAPH <$(f.graph)> { ?s ?p ?o } }"))
+            @test minted == Set(["$(OPS)review/SO-1001", "$(OPS)review/SO-1002"])
+            for f in fs
+                undo_firing!(f.graph)
+            end
+        end
+
+        @testset "a rule with no stated strategy still follows its mode" begin
+            # AssignReview declares ToFixpoint. Strip it and the Assert default applies.
+            Jayhawk.update!("DELETE WHERE { <$rule> <$(Jayhawk.P_STRATEGY)> ?o }")
+            spec = load_rule(rule)
+            @test spec.strategy === nothing
+            @test effective_strategy(spec) === :ToFixpoint       # from gistp:Assert
+            Jayhawk.update!("""INSERT DATA {
+                <$rule> <$(Jayhawk.P_STRATEGY)> <$(Jayhawk.STRATEGY_TOFIXPOINT)> }""")
+        end
+
+        Jayhawk.update!("DROP SILENT GRAPH <$OG>")
     end
 
     @testset "the agent-facing tools" begin

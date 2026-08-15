@@ -25,9 +25,11 @@ function tool_list_rules(; ep::SparqlEndpoint = endpoint())
         println(io, "    mode: ", r.mode,
                 r.mode === :Construct    ? "  (pure: the result is f(G))" :
                 r.mode === :Assert       ? "  (monotone: G union f(G), to a fixpoint)" :
-                r.mode === :Rewrite      ? "  (in-place rewrite -- NOT YET SUPPORTED)" :
+                r.mode === :Rewrite      ? "  (in-place rewrite: DELETES from live data)" :
                 "  <$(r.mode_iri)> is not a gistp:rewriteMode this engine knows -- " *
                 "THIS RULE CANNOT BE RUN")
+        r.guards == 0 || println(io, "    guarded by ", r.guards,
+                                 " negative condition(s) -- it will decline matches it has already served")
         isempty(r.label)      || println(io, "    label: ", r.label)
         isempty(r.definition) || println(io, "    ", r.definition)
     end
@@ -54,6 +56,25 @@ function tool_explain_rule(rule::AbstractString; source::AbstractVector = String
     println(io, "  construct pattern R: <", spec.construct_graph, "> (", length(spec.construct), " triples)")
     bound = sort(collect(vars_in(spec.match, spec)))
     println(io, "  variables bound by L: ", isempty(bound) ? "(none)" : join(bound, ", "))
+
+    # The control settings decide whether this runs once or repeatedly, and what stops it.
+    # A reviewer reading only the patterns would not see any of that.
+    strat = effective_strategy(spec)
+    println(io, "  strategy          : ", strat,
+            spec.strategy === nothing ? "  (default for $(mode_symbol(spec)))" : "  (declared)")
+    strat === :ToFixpoint && println(io, "  iteration budget  : ",
+            something(spec.max_iterations, Jayhawk.DEFAULT_MAX_ITERATIONS),
+            spec.max_iterations === nothing ? "  (default)" : "  (declared)")
+    spec.priority == 0 || println(io, "  priority          : ", spec.priority)
+    if isempty(spec.nacs)
+        println(io, "  guards            : none -- this rule fires on every match")
+    else
+        println(io, "  guards            : ", length(spec.nacs),
+                " negative condition(s); all must fail to match")
+        for n in spec.nacs
+            println(io, "      NOT <", n.graph, ">  (", length(n.triples), " triple(s))")
+        end
+    end
     println(io, "\ncompiles to:\n")
     println(io, compile_rule(spec))
 
@@ -128,9 +149,18 @@ default is the wrong one to hand a model. The refusal names `explain_rule`, whic
 removals before any of this happens.
 """
 function tool_run_rule(rule::AbstractString; source::AbstractVector = String[],
-                       actor::AbstractString = "mcp", max_iterations::Integer = 100,
+                       actor::AbstractString = "mcp",
+                       strategy::Union{Symbol,Nothing} = nothing,
+                       max_iterations::Union{Integer,Nothing} = nothing,
                        confirm::Bool = false, ep::SparqlEndpoint = endpoint())
     spec = load_rule(rule; ep = ep)
+    # A model reads text, not exceptions. Answer the foreseeable mistakes rather than
+    # raising -- an agent can act on "a Rewrite needs exactly one source graph".
+    if mode_symbol(spec) === :Rewrite && length(source) != 1
+        return "Refused: <$rule> is a gistp:Rewrite, which edits one named graph in " *
+               "place, so `source` must name exactly one graph -- got $(length(source)). " *
+               "A deletion has to say what it deletes from."
+    end
     if mode_symbol(spec) === :Rewrite && !confirm
         d = dry_run(spec; source = source, ep = ep)
         return """
@@ -145,7 +175,7 @@ function tool_run_rule(rule::AbstractString; source::AbstractVector = String[],
                """
     end
 
-    fs = run_rule(spec; source = source, actor = actor,
+    fs = run_rule(spec; source = source, actor = actor, strategy = strategy,
                   max_iterations = max_iterations, ep = ep)
     total   = isempty(fs) ? 0 : sum(f.count for f in fs)
     removed = isempty(fs) ? 0 : sum(f.removed for f in fs)

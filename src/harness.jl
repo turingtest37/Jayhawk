@@ -202,6 +202,30 @@ function apply_rewrite!(spec::RuleSpec; into::AbstractString, source::AbstractVe
     f
 end
 
+"Fixpoint bound used when neither the rule nor the caller states one."
+const DEFAULT_MAX_ITERATIONS = 100
+
+"""
+    effective_strategy(spec; strategy = nothing) -> Symbol
+
+Which application strategy actually governs this run.
+
+Three sources, most specific first: what the caller asked for, what the rule declares with
+`gistp:strategy`, and failing both the default for its mode. `Assert` defaults to
+`ToFixpoint` because inflationary iteration is what the mode means; `Construct` is a pure
+function and `Rewrite` deletes, so both default to `Once`.
+
+The rule-level setting is a default rather than a mandate: the same rule can reasonably be
+applied once during review and to a fixpoint in a batch.
+"""
+function effective_strategy(spec::RuleSpec; strategy::Union{Symbol,Nothing} = nothing)
+    s = something(strategy, spec.strategy,
+                  mode_symbol(spec) === :Assert ? :ToFixpoint : :Once)
+    s in (:Once, :ToFixpoint) || throw(ArgumentError(
+        "unknown application strategy :$s; expected :Once or :ToFixpoint."))
+    return s
+end
+
 """
     run_rule(rule; source = String[], actor = "jayhawk", max_iterations = 100,
              ep = endpoint()) -> Vector{Firing}
@@ -233,41 +257,57 @@ it now refuses instead. `Construct` is unaffected -- it applies once, and an emp
 correctly means the default graph.
 """
 function run_rule(spec::RuleSpec; source::AbstractVector = String[],
-                  actor::AbstractString = "jayhawk", max_iterations::Integer = 100,
+                  actor::AbstractString = "jayhawk",
+                  strategy::Union{Symbol,Nothing} = nothing,
+                  max_iterations::Union{Integer,Nothing} = nothing,
                   ep::SparqlEndpoint = endpoint())
     mode = mode_symbol(spec)
-    max_iterations >= 1 || throw(ArgumentError(
-        "max_iterations must be at least 1, got $max_iterations."))
-    mode === :Assert && isempty(source) && throw(ArgumentError(
-        "rule <$(spec.iri)>: gistp:Assert needs an explicit `source`. Each round must see " *
-        "the previous round's output, and SPARQL's USING cannot name the store's default " *
-        "graph -- so the working set has to be named graphs. Load the data into one and " *
-        "pass it as source, or use gistp:Construct for a single application."))
+    strat = effective_strategy(spec; strategy = strategy)
+    budget = something(max_iterations, spec.max_iterations, DEFAULT_MAX_ITERATIONS)
+
+    budget >= 1 || throw(ArgumentError(
+        "max_iterations must be at least 1, got $budget."))
+    strat === :ToFixpoint && isempty(source) && throw(ArgumentError(
+        "rule <$(spec.iri)>: running to a fixpoint needs an explicit `source`. Each round " *
+        "must see the previous round's output, and SPARQL's USING cannot name the store's " *
+        "default graph -- so the working set has to be named graphs. Load the data into " *
+        "one and pass it as source, or apply the rule once."))
+
+    # An unbounded destructive loop must never be the default. A Rewrite has no negative
+    # condition to say when it is done, so iterating it is a guess unless somebody has
+    # thought about how far it should go and said so.
+    if strat === :ToFixpoint && mode === :Rewrite && isempty(spec.nacs) &&
+       max_iterations === nothing && spec.max_iterations === nothing
+        throw(ArgumentError(
+            "rule <$(spec.iri)>: a gistp:Rewrite run to a fixpoint with no " *
+            "gistp:hasNegativeCondition must state a bound. Give the rule a negative " *
+            "condition saying when it has already fired, or set gistp:maxIterations -- " *
+            "falling back to a default of $DEFAULT_MAX_ITERATIONS destructive passes is " *
+            "not a decision this should make for you."))
+    end
 
     firings = Firing[]
     working = String[String.(source)...]
 
-    # Construct applies once by definition. Rewrite also applies once, deliberately:
-    # iterating a rule that deletes needs a negative application condition to say when it
-    # has already fired, and there is no NAC vocabulary yet. Usually a rewrite cannot
-    # re-match anyway, because L \ I is exactly what it just removed -- but "usually" is
-    # not a termination argument, and a loop that deletes is not one to guess at.
-    if mode === :Construct || mode === :Rewrite
+    if strat === :Once
         push!(firings, apply_rule(spec; source = working, actor = actor, iteration = 1, ep = ep))
         return firings
     end
 
-    for i in 1:max_iterations
+    for i in 1:budget
         f = apply_rule(spec; source = working, actor = actor, iteration = i, ep = ep)
-        f.count == 0 && return firings          # converged
+        # A Rewrite changes the target in place, so its working set never grows; it has
+        # converged when a pass neither adds nor removes anything.
+        f.count == 0 && f.removed == 0 && return firings
         push!(firings, f)
-        push!(working, f.graph)                 # the rule now sees its own output
+        mode === :Rewrite || push!(working, f.graph)   # the rule now sees its own output
     end
 
     error("""
-          rule <$(spec.iri)>: still producing new triples after $max_iterations iterations. \
-          Either raise max_iterations or check for IRI minting via gistp:iriTemplate, which \
-          turns fixpoint evaluation into the chase and need not terminate.""")
+          rule <$(spec.iri)>: still changing the graph after $budget iterations. Either \
+          raise the bound, add a gistp:hasNegativeCondition saying when the rule has \
+          already fired, or check for IRI minting via gistp:iriTemplate, which turns \
+          fixpoint evaluation into the chase and need not terminate.""")
 end
 
 run_rule(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint(), kw...) =
@@ -295,6 +335,10 @@ function dry_run_rewrite(spec::RuleSpec; source::AbstractVector, limit::Integer 
             q = project_query(spec; triples = ts, into = g, from = source)
             isempty(q) || update!(q; ep = ep)
         end
+        # The preview has to prune exactly as the run does, or explain_rule shows a reviewer
+        # a number the application will not match: an R \ I triple the target already holds
+        # is not something this rule adds.
+        prune_known!(gadd, source; ep = ep)
         (count = graph_size(gadd; ep = ep), sample = peek(gadd),
          removed = graph_size(gdel; ep = ep), removed_sample = peek(gdel))
     finally
@@ -411,22 +455,28 @@ function firings(; rule::Union{AbstractString,Nothing} = nothing,
                  ep::SparqlEndpoint = endpoint())
     filt = rule === nothing ? "" : "FILTER(?rule = <$(check_iri(rule))>)"
     rows = select("""
-        SELECT ?g ?rule ?at ?n ?actor ?iter WHERE {
+        SELECT ?g ?rule ?at ?n ?actor ?iter ?rem ?tomb WHERE {
           GRAPH <$PROVENANCE_GRAPH> {
             ?g <$(JH_NS)appliedRule>       ?rule ;
                <$(PROV_NS)generatedAtTime> ?at ;
                <$(JH_NS)tripleCount>       ?n ;
                <$(JH_NS)actor>             ?actor ;
                <$(JH_NS)iteration>         ?iter .
+            OPTIONAL { ?g <$(JH_NS)removedCount>   ?rem }
+            OPTIONAL { ?g <$(JH_NS)tombstoneGraph> ?tomb }
           } $filt
-        } ORDER BY DESC(?at)"""; ep = ep)
+        } ORDER BY DESC(?at) DESC(?iter)"""; ep = ep)
     [(graph = (r["g"]::IRIRef).value,
       rule  = (r["rule"]::IRIRef).value,
       at    = (r["at"]::RDFLiteral).lexical,
       count = parse(Int, (r["n"]::RDFLiteral).lexical),
       actor = (r["actor"]::RDFLiteral).lexical,
-      iteration = parse(Int, (r["iter"]::RDFLiteral).lexical)) for r in rows]
+      iteration = parse(Int, (r["iter"]::RDFLiteral).lexical),
+      # A Rewrite took facts away. An audit log that reports only what was added is
+      # describing half the change.
+      removed = haskey(r, "rem") ? parse(Int, (r["rem"]::RDFLiteral).lexical) : 0,
+      tombstone = haskey(r, "tomb") ? (r["tomb"]::IRIRef).value : "") for r in rows]
 end
 
-export Firing, apply_rule, apply_rewrite!, run_rule, dry_run, dry_run_rewrite, undo_firing!, is_firing, firings, graph_size
+export Firing, apply_rule, apply_rewrite!, run_rule, effective_strategy, dry_run, dry_run_rewrite, undo_firing!, is_firing, firings, graph_size
 export PROVENANCE_GRAPH, new_firing_graph, new_tombstone_graph

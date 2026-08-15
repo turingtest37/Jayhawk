@@ -1,0 +1,122 @@
+#  A rule with a negative application condition, serialised as TriG.
+#
+#  The three rewrite modes say what a rule DOES. This file is about the other half: when it
+#  fires, and when it must not.
+#
+#  The rule creates a review task for every submitted order -- but only if that order does
+#  not already have one. Without the condition the rule would re-derive its own output every
+#  round; with it, the rule declines to fire the second time, which is what "fire once per
+#  match" means when the driver is a fixpoint rather than a loop counter.
+#
+#      default graph   the Rule, its control settings, and its variables
+#      named graph L   what must be true
+#      named graph R   what becomes true
+#      named graph NAC what must NOT be true
+
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix ex:    <http://example.org/ops/> .
+@prefix :      <http://example.org/rules/> .
+
+#################################################################
+#    Default graph: the rule, its control settings, its variables
+#################################################################
+
+:AssignReview
+    rdf:type gistp:Rule ;
+    skos:prefLabel "Assign review task" ;
+    skos:definition """Every submitted order gets a review task, minted from its order
+                       number -- unless it already has one.""" ;
+    gistp:hasMatchPattern      :AssignReview_L ;
+    gistp:hasConstructPattern  :AssignReview_R ;
+    gistp:hasNegativeCondition :AssignReview_NoTaskYet ;
+    gistp:rewriteMode          gistp:Assert ;
+    # Control. Without the negative condition, ToFixpoint here would still terminate --
+    # minting is deterministic, so round two derives the same triples and they are pruned --
+    # but it would terminate by accident. The condition makes "already done" something the
+    # rule states rather than something the driver notices.
+    gistp:strategy             gistp:ToFixpoint ;
+    gistp:maxIterations        10 ;
+    gistp:priority             100 .
+
+:AssignReview_L rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "match: a submitted order carrying an order number" .
+
+:AssignReview_R rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "construct: the review task for it" .
+
+:AssignReview_NoTaskYet rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "guard: no such review task exists yet" .
+
+# --- variables -------------------------------------------------------------
+
+:_Order
+    rdf:type ex:Order , gistp:SparqlVariable ;
+    gistp:variableText "?_Order" ;
+    skos:definition "The order under review. Bound by L." .
+
+# Minted, so it must not appear in L. It appears in R -- which is what constructing it means
+# -- and in the negative condition, which is legal because the condition is emitted after the
+# BIND that constructs it. That ordering is the whole point: the guard asks whether the thing
+# this rule is about to create is already there.
+:_Task
+    rdf:type ex:ReviewTask , gistp:SparqlVariable ;
+    gistp:variableText "?_Task" ;
+    gistp:iriTemplate  "http://example.org/ops/review/{order}" ;
+    gistp:hasSlot [ rdf:type gistp:TemplateSlot ;
+                    gistp:slotName  "order" ;
+                    gistp:slotValue "?orderNo"^^gistp:var ] ;
+    skos:definition "The review task, minted from the order number." .
+
+#################################################################
+#    L -- what must be true
+#################################################################
+
+:AssignReview_L {
+    :_Order rdf:type ex:Order ;
+            ex:status ex:Submitted ;
+            ex:orderNumber "?orderNo"^^gistp:var .
+}
+
+#################################################################
+#    R -- what becomes true
+#################################################################
+
+:AssignReview_R {
+    :_Task rdf:type ex:ReviewTask ;
+           ex:reviews :_Order .
+}
+
+#################################################################
+#    NAC -- what must NOT be true
+#################################################################
+
+:AssignReview_NoTaskYet {
+    :_Task rdf:type ex:ReviewTask .
+}
+
+# Compiles to a FILTER NOT EXISTS after the BIND:
+#
+#   CONSTRUCT {
+#     ?_Task a ex:ReviewTask .
+#     ?_Task ex:reviews ?_Order .
+#   }
+#   WHERE {
+#     ?_Order a ex:Order ; ex:status ex:Submitted ; ex:orderNumber ?orderNo .
+#     BIND(IRI(CONCAT("http://example.org/ops/review/",
+#                     ENCODE_FOR_URI(STR(?orderNo)))) AS ?_Task)
+#     FILTER NOT EXISTS { ?_Task a ex:ReviewTask }
+#   }
+#
+# Variable scoping needs no machinery. ?_Task is bound by the BIND before the filter runs,
+# so the condition reads "no task with THIS iri". A variable appearing only inside the
+# condition would instead be existentially quantified there.
+#
+# What a NAC cannot say: a Basic Graph Pattern has no FILTER, so "no OTHER order refers to
+# this" -- which needs an inequality -- is not expressible. A test that distinguishes by
+# type assertion rather than by comparison is.

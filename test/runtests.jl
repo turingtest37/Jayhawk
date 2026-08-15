@@ -1344,6 +1344,115 @@ end
         @test_throws Exception compile_rule(empty_l)
     end
 
+    # ---------------------------------------------------------------------
+    # Control layer: negative conditions, strategy, budget
+    # ---------------------------------------------------------------------
+
+    nac(triples...) = NacSpec("$(R)Probe_N", collect(PatternTriple, triples))
+
+    with_control(; nacs = NacSpec[], strategy = nothing, priority = 0,
+                   max_iterations = nothing, mode = Jayhawk.MODE_CONSTRUCT) =
+        (s = person_to_employee(mode = mode);
+         RuleSpec(s.iri, s.mode, s.match_graph, s.construct_graph, s.match, s.construct,
+                  s.variables, s.mints, nacs, strategy, priority, max_iterations))
+
+    @testset "a negative condition becomes FILTER NOT EXISTS" begin
+        s = with_control(nacs = [nac(PatternTriple(iri("$(R)_Person_1"), iri(TYPE),
+                                                   iri("$(HR)Employee")))])
+        q = compile_rule(s)
+        @test occursin("FILTER NOT EXISTS {", q)
+        @test occursin("?_Person_1 <$(TYPE)> <$(HR)Employee> .", q)
+        # the guard names the graph it came from, so a reader can find it
+        @test occursin("# NOT <$(R)Probe_N>", q)
+    end
+
+    @testset "several conditions are conjunctive, not one big block" begin
+        # Each must fail independently. One filter containing both triples would instead
+        # mean "not (A and B)", which is a strictly weaker guard.
+        a = NacSpec("$(R)N1", [PatternTriple(iri("$(R)_Person_1"), iri(TYPE), iri("$(HR)Employee"))])
+        b = NacSpec("$(R)N2", [PatternTriple(iri("$(R)_ID_1"), iri(TYPE), iri("$(HR)Employee"))])
+        q = compile_rule(with_control(nacs = [a, b]))
+        @test length(collect(eachmatch(r"FILTER NOT EXISTS \{", q))) == 2
+    end
+
+    @testset "an empty condition is skipped, not emitted" begin
+        # FILTER NOT EXISTS { } can never fail, so emitting one would silently disable the
+        # rule -- the worst possible reading of "the author left this graph empty".
+        q = compile_rule(with_control(nacs = [NacSpec("$(R)Empty", PatternTriple[])]))
+        @test !occursin("FILTER NOT EXISTS", q)
+    end
+
+    @testset "the WHERE body orders match, then BIND, then filters" begin
+        # Load-bearing: BIND sees only what precedes it, and a condition may mention a
+        # MINTED variable -- which is how a rule says "only create this if it is not there".
+        s = minting_rule()
+        guarded = RuleSpec(s.iri, s.mode, s.match_graph, s.construct_graph, s.match,
+                           s.construct, s.variables, s.mints,
+                           [NacSpec("$(R)N", [PatternTriple(iri("$(R)_Employee_1"), iri(TYPE),
+                                                            iri("$(HR)Employee"))])],
+                           nothing, 0, nothing)
+        body = where_body(guarded)
+        @test findfirst("?_ID_1 <", body).start <
+              findfirst("BIND(", body).start <
+              findfirst("FILTER NOT EXISTS", body).start
+        # and the guard really does reference the minted variable
+        @test occursin("FILTER NOT EXISTS {\n    ?_Employee_1", body)
+    end
+
+    @testset "every query builder carries the conditions" begin
+        # There are several places that assemble a WHERE. A guard honoured by only some of
+        # them means the thing that executes is not the thing that was reviewed.
+        s = minting_rule()
+        guarded = RuleSpec(s.iri, s.mode, s.match_graph, s.construct_graph, s.match,
+                           s.construct, s.variables, s.mints,
+                           [NacSpec("$(R)N", [PatternTriple(iri("$(R)_Employee_1"), iri(TYPE),
+                                                            iri("$(HR)Employee"))])],
+                           nothing, 0, nothing)
+        @test occursin("FILTER NOT EXISTS", compile_rule(guarded))
+        @test occursin("FILTER NOT EXISTS", insert_query(guarded; into = "urn:g"))
+        @test occursin("FILTER NOT EXISTS",
+                       project_query(guarded; triples = guarded.construct, into = "urn:g"))
+        @test all(occursin("FILTER NOT EXISTS", q) for (_, q) in collision_queries(guarded))
+    end
+
+    @testset "strategy resolves caller over rule over mode" begin
+        @test effective_strategy(with_control()) === :Once                 # Construct
+        @test effective_strategy(with_control(mode = Jayhawk.MODE_ASSERT)) === :ToFixpoint
+        @test effective_strategy(with_control(mode = Jayhawk.MODE_REWRITE)) === :Once
+        # the rule's own declaration beats the mode default
+        @test effective_strategy(with_control(strategy = :ToFixpoint)) === :ToFixpoint
+        # and the caller beats the rule -- the same rule may be applied once during review
+        # and to a fixpoint in a batch
+        @test effective_strategy(with_control(strategy = :ToFixpoint);
+                                 strategy = :Once) === :Once
+        @test_throws ArgumentError effective_strategy(with_control(); strategy = :Sideways)
+    end
+
+    @testset "strategy IRIs map to symbols, and nothing else does" begin
+        @test strategy_symbol(Jayhawk.STRATEGY_ONCE) === :Once
+        @test strategy_symbol(Jayhawk.STRATEGY_TOFIXPOINT) === :ToFixpoint
+        @test_throws ArgumentError strategy_symbol("http://example.org/NotAStrategy")
+    end
+
+    @testset "an unbounded destructive loop is refused" begin
+        # A Rewrite has no natural stopping point of its own. Iterating one with neither a
+        # negative condition nor a stated bound would fall back to the default -- a hundred
+        # destructive passes -- which is not a decision to make on the author's behalf.
+        rw = with_control(mode = Jayhawk.MODE_REWRITE, strategy = :ToFixpoint)
+        err = try run_rule(rw; source = ["urn:g"]) catch e; e end
+        @test err isa ArgumentError
+        msg = sprint(showerror, err)
+        @test occursin("negative condition", msg) && occursin("maxIterations", msg)
+
+        # stating either one satisfies it (both then fail later, on the empty match pattern
+        # or the missing server -- what matters is that this check no longer fires)
+        bounded = with_control(mode = Jayhawk.MODE_REWRITE, strategy = :ToFixpoint,
+                               max_iterations = 3)
+        @test !(try run_rule(bounded; source = ["urn:g"]) catch e; e end isa ArgumentError &&
+                occursin("negative condition", sprint(showerror,
+                    try run_rule(bounded; source = ["urn:g"]) catch e; e end)))
+    end
+
     @testset "insert_query wraps the same patterns with USING" begin
         spec = person_to_employee()
         q = insert_query(spec; into = "urn:firing:x", from = ["urn:a", "urn:b"])
