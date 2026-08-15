@@ -225,6 +225,90 @@ end
 end
 
 # ===========================================================================
+# 3b. gistp:Rewrite -- the pure half
+# ===========================================================================
+#
+# Round 2 turned on the one mode that takes facts away. The set arithmetic behind it is
+# right, and the reversibility design (tombstone written by the same atomic update) is the
+# correct shape. These are the two places where the *pure* half of it can be wrong.
+
+@testset "3b. Rewrite: what the compiler will emit" begin
+
+    rewrite_spec(; match, construct, variables) = RuleSpec(
+        "$(R)RW", Jayhawk.MODE_REWRITE, "$(R)RW_L", "$(R)RW_R",
+        match, construct, variables, Dict{String,MintSpec}())
+
+    @testset "[PROVEN] variableText must be unique within a rule" begin
+        # `interface` is a set intersection over pattern triples keyed by `sparql_text`, so
+        # two triples are "the same" when they are the same *RDF* triple -- variable
+        # identity is IRI identity. The commit message makes this the load-bearing claim:
+        # "two pattern triples denote the same thing exactly when they are the same RDF
+        # triple. No unification, no alpha-equivalence."
+        #
+        # That holds only while the variable IRI -> variableText map is injective, and
+        # nothing checks that it is. Give two distinct SparqlVariable individuals the same
+        # variableText and the authored interface (by IRI) and the executed interface (by
+        # SPARQL variable name) are different sets.
+        #
+        # Observed: I = 0 triples, so L\I deletes one triple and R\I adds one -- and the
+        # emitted DELETE and INSERT templates are character-for-character identical. The
+        # rule reports "removed 1, added 1" for what the store executes as a no-op. For the
+        # additive modes the same duplication is merely redundant; here it corrupts the
+        # interface, which is the whole basis of the mode.
+        s = rewrite_spec(
+            match     = [PatternTriple(iri("$(R)_a"), iri("urn:p"), iri("urn:o"))],
+            construct = [PatternTriple(iri("$(R)_b"), iri("urn:p"), iri("urn:o"))],
+            variables = Dict("$(R)_a" => "?x", "$(R)_b" => "?x"))
+        @test_throws Exception compile_rule(s)
+
+        # the same duplication is worth refusing on the additive path too, for the same
+        # reason: two individuals that render as one variable are not two variables
+        @test_throws Exception compile_rule(RuleSpec(
+            "$(R)DupC", Jayhawk.MODE_CONSTRUCT, "$(R)L", "$(R)R",
+            [PatternTriple(iri("$(R)_a"), iri("urn:p"), iri("urn:o"))],
+            [PatternTriple(iri("$(R)_b"), iri("urn:p"), iri("urn:o"))],
+            Dict("$(R)_a" => "?x", "$(R)_b" => "?x"), Dict{String,MintSpec}()))
+    end
+
+    @testset "[PROVEN] a blank node in L∖I cannot be emitted in a DELETE" begin
+        # SPARQL 1.1 Update forbids blank nodes in a DELETE template outright. Fuseki:
+        #   HTTP 400 ... Blank nodes not allowed in DELETE templates: _:b0
+        #
+        # This is the blank-node hole from testset 2 turning into a hard failure: on the
+        # additive path a stray bnode is silently the wrong semantics, but under Rewrite it
+        # is a query the store will not parse, discovered only at apply time.
+        s = rewrite_spec(
+            match     = [PatternTriple(iri("$(R)_p"), iri("urn:has"), BNode("b0")),
+                         PatternTriple(BNode("b0"), iri(TYPE), iri("urn:Thing"))],
+            construct = [PatternTriple(iri("$(R)_p"), iri(TYPE), iri("urn:Flat"))],
+            variables = Dict("$(R)_p" => "?p"))
+        @test_throws Exception compile_rule(s)
+    end
+
+    @testset "[PIN] the set arithmetic itself" begin
+        # I / L∖I / R∖I are the whole mode. Pin them, including the literal-position
+        # variable case -- "?t"^^gistp:var is one RDF term wherever it appears, so it
+        # intersects correctly, and that is worth an assertion rather than a comment.
+        keep = PatternTriple(iri("$(R)_p"), iri(TYPE), iri("urn:Person"))
+        drop = PatternTriple(iri("$(R)_p"), iri("urn:idBy"), iri("$(R)_i"))
+        add  = PatternTriple(iri("$(R)_p"), iri("urn:num"), var("?t"))
+        shared_lit = PatternTriple(iri("$(R)_i"), iri("urn:text"), var("?t"))
+        s = rewrite_spec(match = [keep, drop, shared_lit],
+                         construct = [keep, add],
+                         variables = Dict("$(R)_p" => "?p", "$(R)_i" => "?i"))
+        @test length(interface(s)) == 1
+        @test length(match_only(s)) == 2
+        @test length(construct_only(s)) == 1
+        # I ⊎ (L∖I) partitions L, and I ⊎ (R∖I) partitions R -- no triple is lost or doubled
+        @test length(interface(s)) + length(match_only(s)) == length(s.match)
+        @test length(interface(s)) + length(construct_only(s)) == length(s.construct)
+        # ?i loses every triple the pattern knows about and R never mentions it
+        @test "?i" in dangling_risks(s)
+        @test !("?p" in dangling_risks(s))
+    end
+end
+
+# ===========================================================================
 # 4. Store-backed: everything below needs a live Fuseki
 # ===========================================================================
 
@@ -626,6 +710,148 @@ end
         r = only(select("SELECT ?s ?missing WHERE { GRAPH <urn:adv:u> { ?s ?p ?o } }"))
         @test haskey(r, "s") && !haskey(r, "missing")
         Jayhawk.update!("DROP SILENT GRAPH <urn:adv:u>")
+    end
+
+    reset_store!()
+end
+
+# --- 4f. gistp:Rewrite against live data --------------------------------------------
+#
+# The destructive mode. Its whole licence to exist is that it is reversible: "the removed
+# triples go to a tombstone in the same atomic update" is what makes it defensible to hand
+# an agent. These tests are about whether the round trip is actually exact.
+
+RWRULE = "http://example.org/rules/FlattenIdentifier"
+TARGET = "urn:jayhawk:adv-target"
+
+"Every triple of a graph, as comparable strings."
+snapshot(g) = Set(string(sparql_text(r["s"]), ' ', sparql_text(r["p"]), ' ', sparql_text(r["o"]))
+                  for r in select("SELECT ?s ?p ?o WHERE { GRAPH <$g> { ?s ?p ?o } }"))
+
+@testset "4f. Rewrite is reversible, exactly" begin
+    reset_store!()
+    Jayhawk.load_file!(fixture("rewrite_rule.trig"))
+
+    @testset "[PROVEN] undo restores the target byte for byte" begin
+        # THE ONE THAT MATTERS. `apply_rewrite!` writes R∖I into the firing graph
+        # unpruned, so the firing graph means "what R's template instantiated to", not
+        # "what this rule added". `undo_firing!` then DELETEs all of it from the target --
+        # including triples that were already there before the rewrite ran and that the
+        # rewrite therefore never added.
+        #
+        # Reproduced. Target holds 5 triples, one of which is the ex:employeeNumber the
+        # rule would add:
+        #     before rewrite : 5
+        #     after  rewrite : 2   (removed 3, "added" 1 that already existed)
+        #     after  undo    : 4   <- <urn:p1> ex:employeeNumber "E-1" is GONE
+        #
+        # It is gone permanently: the tombstone only holds L∖I, so nothing anywhere
+        # records that this triple existed. Silent, irreversible data loss on the code
+        # path whose entire purpose is reversibility, in the only mode that deletes.
+        #
+        # The additive modes have prune_known! for exactly this reason; the rewrite path
+        # does not call it. The fix has to compute the overlap R∖I ∩ target *before* the
+        # update -- afterwards the information is gone -- and prune the firing graph with
+        # it, mirroring what prune_known! does for Construct and Assert.
+        Jayhawk.update!("""INSERT DATA { GRAPH <$TARGET> {
+            <urn:p1> a <$(G)Person> ; <$(G)isIdentifiedBy> <urn:i1> ;
+                     <$(HR)employeeNumber> "E-1" .
+            <urn:i1> a <$(G)ID> ; <$(G)containedText> "E-1" .
+        } }""")
+        before = snapshot(TARGET)
+        @test length(before) == 5
+
+        f = run_rule(RWRULE; source = [TARGET])[1]
+        @test f.removed == 3
+        undo_firing!(f.graph)
+
+        @test snapshot(TARGET) == before
+        @test "<urn:p1> <$(HR)employeeNumber> \"E-1\"" in snapshot(TARGET)
+        Jayhawk.update!("DROP SILENT GRAPH <$TARGET>")
+    end
+
+    @testset "[PIN] undo restores exactly when nothing overlapped" begin
+        # The case the round-2 work did verify, kept as the control: with no pre-existing
+        # overlap the round trip is already exact, which is what localises the bug above
+        # to the unpruned firing graph rather than to the tombstone mechanism.
+        Jayhawk.update!("""INSERT DATA { GRAPH <$TARGET> {
+            <urn:p9> a <$(G)Person> ; <$(G)isIdentifiedBy> <urn:i9> .
+            <urn:i9> a <$(G)ID> ; <$(G)containedText> "E-9" .
+        } }""")
+        before = snapshot(TARGET)
+        f = run_rule(RWRULE; source = [TARGET])[1]
+        @test snapshot(TARGET) != before          # it really did rewrite
+        undo_firing!(f.graph)
+        @test snapshot(TARGET) == before
+        Jayhawk.update!("DROP SILENT GRAPH <$TARGET>")
+    end
+
+    @testset "[PROVEN] added/removed counts describe the actual change" begin
+        # Same root cause, separate symptom: `Firing.count` is graph_size of the unpruned
+        # firing graph, so it counts template instantiations rather than new facts --
+        # contradicting `Firing`'s own docstring ("already stripped of anything the working
+        # set had, so `count` is genuinely new facts"). dry_run inherits it, so
+        # explain_rule shows a reviewer a number the run will not match.
+        #
+        # Observed: reported added 1, removed 3 -> net -2; the target actually went 5 -> 2,
+        # a net change of -3.
+        Jayhawk.update!("""INSERT DATA { GRAPH <$TARGET> {
+            <urn:p1> a <$(G)Person> ; <$(G)isIdentifiedBy> <urn:i1> ;
+                     <$(HR)employeeNumber> "E-1" .
+            <urn:i1> a <$(G)ID> ; <$(G)containedText> "E-1" .
+        } }""")
+        d = dry_run(RWRULE; source = [TARGET])
+        n_before = graph_size(TARGET)
+        f = run_rule(RWRULE; source = [TARGET])[1]
+        n_after = graph_size(TARGET)
+
+        @test f.count - f.removed == n_after - n_before   # the firing describes the change
+        @test d.count == f.count                          # and the preview matched the run
+        @test d.removed == f.removed
+        undo_firing!(f.graph)
+        Jayhawk.update!("DROP SILENT GRAPH <$TARGET>")
+    end
+
+    @testset "[PROVEN] the audit log reports removals" begin
+        # record_firing! writes jayhawk:removedCount and jayhawk:tombstoneGraph into the
+        # provenance graph, but firings() never selects them, so tool_firings prints only
+        # the added count. A rewrite that deleted 6 triples and added 2 appears in the
+        # audit trail as "2 triple(s)".
+        #
+        # An audit trail that under-reports the destructive operation is the one place it
+        # cannot afford to be lossy -- and the data is already being written, so this is a
+        # projection that was never added rather than a design gap.
+        Jayhawk.update!("""INSERT DATA { GRAPH <$TARGET> {
+            <urn:p1> a <$(G)Person> ; <$(G)isIdentifiedBy> <urn:i1> .
+            <urn:i1> a <$(G)ID> ; <$(G)containedText> "E-1" .
+            <urn:p2> a <$(G)Person> ; <$(G)isIdentifiedBy> <urn:i2> .
+            <urn:i2> a <$(G)ID> ; <$(G)containedText> "E-2" .
+        } }""")
+        f = run_rule(RWRULE; source = [TARGET], actor = "agent-9")[1]
+        @test f.removed == 6
+
+        log = only(firings(rule = RWRULE))
+        @test hasproperty(log, :removed)
+        @test (hasproperty(log, :removed) ? log.removed : 0) == 6
+        @test occursin("6", tool_firings(rule = RWRULE))   # a reader can see the deletion
+
+        undo_firing!(f.graph)
+        Jayhawk.update!("DROP SILENT GRAPH <$TARGET>")
+    end
+
+    @testset "[PROVEN] MCP refuses a bad source arity instead of raising" begin
+        # Every other refusal on the MCP surface comes back as a string the model can read
+        # and act on -- "Refused: ... is a gistp:Rewrite, which DELETES from live data",
+        # "Refused: ... is not a recorded firing". The source-arity check raises
+        # ArgumentError out of apply_rewrite!/dry_run_rewrite instead, so the agent gets a
+        # stack trace for the ordinary mistake of passing the wrong number of graphs.
+        Jayhawk.update!("INSERT DATA { GRAPH <$TARGET> { <urn:a> <urn:b> <urn:c> } }")
+        for src in (String[], [TARGET, "urn:adv:other"])
+            out = try tool_run_rule(RWRULE; source = src) catch e; "RAISED" end
+            @test out != "RAISED"
+            @test occursin("exactly one", out) || occursin("one source", out)
+        end
+        Jayhawk.update!("DROP SILENT GRAPH <$TARGET>")
     end
 
     reset_store!()
