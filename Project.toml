@@ -8,12 +8,24 @@ AutoHashEquals = "15f4f7f2-30c1-5605-9d31-71845cf9641f"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 EzXML = "8f5d6c58-4d21-5cfd-889c-e3ad7ee6a615"
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
-InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 Mustache = "ffc61752-8dc7-55ee-8c37-f3e9cdd09e70"
-Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
-Reexport = "189a3867-3050-52da-a836-e630ba90ab69"
 Serd = "42699a24-3520-5f41-a549-6a478ed667c2"
-Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 URIs = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
+
+[compat]
+AutoHashEquals = "0.2"
+EzXML = "1"
+HTTP = "1"
+JSON = "0.21, 1"
+Mustache = "1"
+Serd = "0.3"
+URIs = "1"
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

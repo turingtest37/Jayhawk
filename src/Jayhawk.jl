@@ -1,19 +1,16 @@
 module Jayhawk
 
-using Reexport
 using Serd, Serd.RDF, Serd.RDF.Prefixes
 using Logging
 using URIs
 using Dates
-using Random
 using AutoHashEquals
-# using InteractiveUtils: methodswith
 export build_model, qsparql, usparql
 export makeqname, set_def_prefixes
 export rdf_type, rdfs_subClassOf
 export Unknown
 export TraceLog
-export retrieve!, store_res!, store_local!, make_from_rdf
+export retrieve, store_res!, store_local!, make_from_rdf
 export initialize
 export resource_dict
 # three-phase pipeline: analyze (pure) -> generate (pure) -> install/register/run
@@ -42,9 +39,9 @@ const resource_dict = Dict{ExpandedTerm, Any}()
 
 initialize() = TraceLog(resource_dict, true)
 
+include("term.jl")
 include("tracelog.jl")
 include("sparqlclient.jl")
-include("sparql.jl")
 include("rdf.jl")
 include("rdfs.jl")
 include("rdf_type.jl")

@@ -2,7 +2,7 @@
 
 julia_version = "1.12.1"
 manifest_format = "2.0"
-project_hash = "a8a39f612842eea24ea21870f2b94112307df8d6"
+project_hash = "5f1f6d81c7de6d79ff3cf9fa353a8f46dacdf469"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -109,7 +109,7 @@ version = "1.4.0"
     ArrowTypes = "31f734f8-188a-4ce0-8406-c8a06bd891cd"
 
 [[deps.Jayhawk]]
-deps = ["AutoHashEquals", "Dates", "EzXML", "HTTP", "InteractiveUtils", "JSON", "Logging", "Mustache", "Random", "Reexport", "Serd", "Test", "URIs"]
+deps = ["AutoHashEquals", "Dates", "EzXML", "HTTP", "JSON", "Logging", "Mustache", "Serd", "URIs"]
 path = "."
 uuid = "12faa926-1a3f-5f5e-81b2-8d3f7f967ea3"
 version = "0.2.1"
@@ -249,11 +249,6 @@ version = "1.11.0"
 deps = ["SHA"]
 uuid = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 version = "1.11.0"
-
-[[deps.Reexport]]
-git-tree-sha1 = "45e428421666073eab6f2da5c9d310d99bb12f9b"
-uuid = "189a3867-3050-52da-a836-e630ba90ab69"
-version = "1.2.2"
 
 [[deps.SHA]]
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"

@@ -11,7 +11,7 @@
 # `Vector{Resource}`, so pushing a resolved class (a Julia DataType) into it could never
 # have worked either.
 
-rdfs_subClassOf(s::RORB, o, tl::TraceLog) = _record_subclass(retrieve!(tl, s), o, tl)
+rdfs_subClassOf(s::RORB, o, tl::TraceLog) = _record_subclass(retrieve(tl, s), o, tl)
 rdfs_subClassOf(s, o, tl::TraceLog) = _record_subclass(s, o, tl)
 
 function _record_subclass(s, o, tl::TraceLog)

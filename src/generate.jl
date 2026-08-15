@@ -52,8 +52,8 @@ function objprop_expr(suri::Resource)
     nm = Symbol(makeqname(suri))
     quote
         function $nm(s::Resource, o::Resource, tl::TraceLog)
-            subj = retrieve!(tl, s)
-            obj = retrieve!(tl, o)
+            subj = retrieve(tl, s)
+            obj = retrieve(tl, o)
             # link subject and object by the property URI, in both directions
             hasfield(typeof(subj), :out) && (subj.out[s] = o)
             hasfield(typeof(obj), :in) && (obj.in[s] = o)
@@ -76,7 +76,7 @@ function dataprop_expr(suri::Resource)
     quote
         function $nm(s::Resource, obj::Literal, tl::TraceLog)
             store_local!(tl, s, obj.value)
-            $nm(retrieve!(tl, s), obj, tl)
+            $nm(retrieve(tl, s), obj, tl)
         end
 
         function $nm(subj::Unknown, obj::Literal, tl::TraceLog)
@@ -99,7 +99,7 @@ function inferred_prop_expr(suri::Resource, literal_valued::Bool)
     if literal_valued
         quote
             function $nm(subj::RORB, obj::Literal, tl::TraceLog)
-                resolved = retrieve!(tl, subj)
+                resolved = retrieve(tl, subj)
                 add_entry!(tl, subj, $suri, obj, $nm)
                 store_local!(tl, obj.value, subj)
                 hasfield(typeof(resolved), :out) && (resolved.out[$suri] = obj)

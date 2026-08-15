@@ -53,7 +53,7 @@ function retrieve(tl::TraceLog, x::RORB; default = Unknown(x))
     # = get(tl.ldict, x) do
     #     get(tl.rdict, x, default)
     # end
-    @debug "retrieve! got for $x : " obj
+    @debug "retrieve got for $x : " obj
     obj
 end
 

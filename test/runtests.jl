@@ -149,9 +149,9 @@ end
         @test o == tl.rdict[s]
     end
 
-    @testset "retrieve! no default provided" begin
+    @testset "retrieve no default provided" begin
         tl = TraceLog(true)
-        @test retrieve!(tl, Resource("/bogus")) == Unknown(Resource("/bogus"))
+        @test retrieve(tl, Resource("/bogus")) == Unknown(Resource("/bogus"))
     end
 
     @testset "Little snippets make_from_rdf" begin
@@ -599,11 +599,11 @@ end
         @test failures == 0
     end
 
-    @testset "run_data! survives an unexecutable triple without throwing" begin
-        # `run_data!` only reports failures via `@info`, and the existing
-        # "every gistAcct triple executes" test reimplements its loop rather than
-        # calling it -- so nothing exercises run_data!'s own tolerance for a bad
-        # triple through its real signature.
+    @testset "run_data! tolerates a triple with no generated function" begin
+        # `run_data!` used to catch *everything* into one `failed` counter and only
+        # `@debug` the exception. That is how an `UndefVarError` from an undefined
+        # `retrieve!` masqueraded as "833 triples did not execute" for a whole release.
+        # It now separates three outcomes; this covers the benign one.
         t = """
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
         PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
@@ -626,14 +626,46 @@ end
         install!(generate(m))
         register!(m, tl)
 
-        logs, _ = Test.collect_test_logs() do
+        logs, _ = Test.collect_test_logs(min_level = Logging.Debug) do
             run_data!(m, tl)
         end
-        @test any(r -> r.level == Logging.Info && occursin("did not execute", r.message),
-                  logs)
+        # Unmapped is ordinary, not a failure: a document may reference predicates
+        # outside the schema it declares. Reported at debug, and never fatal.
+        @test any(r -> occursin("no generated function", r.message), logs)
 
         # the good triple still executed despite the bad one
         @test haskey(tl.ldict, Resource("http://fail.example.org/d/_a"))
+    end
+
+    @testset "run_data! raises on a broken call instead of swallowing it" begin
+        # The regression that motivated the split. A generated function exists and
+        # dispatch succeeds, but the body raises something that is not a MethodError
+        # about that function -- a defect in Jayhawk, not in the data. Under the old
+        # blanket catch this was indistinguishable from an unmapped predicate.
+        Core.eval(Jayhawk, :(ex_boom(s, o, tl::TraceLog) = error("deliberate defect")))
+
+        m = SchemaModel()
+        push!(m.data, Triple(Resource("http://fail.example.org/d/_x"),
+                             Resource("http://fail.example.org/o#boom"),
+                             Resource("http://fail.example.org/d/_y")))
+        tl = initialize()
+
+        # strict (the default) surfaces it, and names the offending triple
+        err = try
+            run_data!(m, tl); nothing
+        catch e
+            e
+        end
+        @test err !== nothing
+        @test occursin("boom", sprint(showerror, err))
+        @test occursin("deliberate defect", sprint(showerror, err))
+
+        # strict = false keeps the old sweep-up behaviour for known-dirty data
+        logs, _ = Test.collect_test_logs(min_level = Logging.Debug) do
+            @test run_data!(m, tl; strict = false) === tl
+        end
+        @test any(r -> r.level == Logging.Warn &&
+                       occursin("non-dispatch error", r.message), logs)
     end
 
     @testset "blank-node rdf:type resolves to the intended bootstrap type" begin
@@ -644,7 +676,7 @@ end
         # two-arg *CURIE* constructor, producing a `ResourceCURIE`. Everything that
         # survives `expand_uris` is a `ResourceURI`, and the two never compare equal
         # under `@auto_hash_equals` even though they denote the same IRI, so
-        # `retrieve!` missed all 38 bootstrap entries and returned `Unknown`.
+        # `retrieve` missed all 38 bootstrap entries and returned `Unknown`.
         #
         # Named subjects escaped it only because `rdf_type(s::Resource, o::Resource)`
         # re-resolves the object against the module. The Blank entry point does not.
@@ -695,7 +727,7 @@ end
         # executes" could not: it only checks that nothing throws, and the broken path
         # returned Unknown quietly.
         #
-        # Checks resolution at `retrieve!` rather than the value finally left in ldict,
+        # Checks resolution at `retrieve` rather than the value finally left in ldict,
         # because ldict is last-write-wins: a restriction's own owl:onProperty /
         # owl:someValuesFrom triples overwrite its entry afterwards. That overwriting is
         # a separate, pre-existing trait of ldict and applies to named subjects
@@ -713,13 +745,13 @@ end
             @test !isempty(blank_typings)
 
             unresolved = [t for t in blank_typings
-                          if Jayhawk.retrieve!(tl, t.object) isa Unknown]
+                          if Jayhawk.retrieve(tl, t.object) isa Unknown]
             @test isempty(unresolved)
         end
     end
 
     @testset "blank nodes as subjects of any bootstrap type" begin
-        # Once retrieve! started resolving these, blank subjects reached dispatch for
+        # Once retrieve started resolving these, blank subjects reached dispatch for
         # real. owl_Thing / owl_Ontology / owl_NamedIndividual accepted only Resource
         # and raised MethodError -- trading a silent wrong answer for a silently
         # dropped triple, since run_data! catches. owl_Class had only a Blank method,
@@ -862,6 +894,87 @@ end
         """
         m = analyze(Jayhawk.expand_uris(Serd.read_rdf_string(t)...))
         @test m.properties[Resource("http://conflict.example.org/o#p")].kind == :object
+    end
+end
+
+@testset "RDFTerm keeps what Serd throws away" begin
+    # The whole reason src/term.jl exists. Serd's Literal has one `langordt` field for two
+    # mutually exclusive concepts and its parser never puts a datatype there at all, so
+    # after parsing `"42"^^ex:custom` is byte-identical to plain `"42"`. That is fatal for
+    # a rule engine whose variable marker *is* a datatype.
+
+    @testset "custom datatypes survive and stay distinct" begin
+        typed  = RDFLiteral("42", "http://ex.org/custom")
+        plain  = RDFLiteral("42")
+        @test typed.datatype == "http://ex.org/custom"
+        @test plain.datatype === nothing
+        @test typed != plain                      # the distinction Serd loses
+        @test hash(typed) != hash(plain)
+    end
+
+    @testset "lexical form is never coerced" begin
+        # "007"^^xsd:integer must not become 7: SPARQL matches on lexical form.
+        l = RDFLiteral("007", "http://www.w3.org/2001/XMLSchema#integer")
+        @test l.lexical == "007"
+        @test sparql_text(l) == "\"007\"^^<http://www.w3.org/2001/XMLSchema#integer>"
+    end
+
+    @testset "RDF 1.1 normalisation" begin
+        # a plain literal and one explicitly typed xsd:string are the same term
+        @test RDFLiteral("a", Jayhawk.XSD_STRING) == RDFLiteral("a")
+        # a language tag implies rdf:langString, so the datatype is dropped
+        lang = RDFLiteral("hi", Jayhawk.RDF_LANGSTRING, "en")
+        @test lang.language == "en"
+        @test lang.datatype === nothing
+        @test sparql_text(lang) == "\"hi\"@en"
+    end
+
+    @testset "term_from_json covers every binding shape" begin
+        @test term_from_json(Dict("type" => "uri", "value" => "http://ex.org/s")) ==
+              IRIRef("http://ex.org/s")
+        @test term_from_json(Dict("type" => "bnode", "value" => "b0")) == BNode("b0")
+        @test term_from_json(Dict("type" => "literal", "value" => "plain")) ==
+              RDFLiteral("plain")
+        @test term_from_json(Dict("type" => "literal", "value" => "42",
+                                  "datatype" => "http://ex.org/dt")) ==
+              RDFLiteral("42", "http://ex.org/dt")
+        @test term_from_json(Dict("type" => "literal", "value" => "hi",
+                                  "xml:lang" => "en")) == RDFLiteral("hi", nothing, "en")
+        # "typed-literal" is not in the JSON spec but some stores still emit it
+        @test term_from_json(Dict("type" => "typed-literal", "value" => "1",
+                                  "datatype" => "http://ex.org/dt")).datatype ==
+              "http://ex.org/dt"
+        @test_throws ArgumentError term_from_json(Dict("type" => "wat", "value" => "x"))
+        @test_throws ArgumentError term_from_json(Dict("type" => "uri"))
+    end
+
+    @testset "serialisation escapes and stays absolute" begin
+        @test sparql_text(IRIRef("http://ex.org/s")) == "<http://ex.org/s>"
+        @test sparql_text(BNode("b1")) == "_:b1"
+        @test sparql_text(RDFLiteral("say \"hi\"\n")) == "\"say \\\"hi\\\"\\n\""
+        @test sparql_text(RDFLiteral("back\\slash")) == "\"back\\\\slash\""
+        # an IRI that cannot be written inside <> must be refused, not silently emitted
+        @test_throws ArgumentError check_iri("http://ex.org/a b")
+        @test_throws ArgumentError check_iri("http://ex.org/<x>")
+        @test check_iri("http://ex.org/ok") == "http://ex.org/ok"
+    end
+
+    @testset "gistp:var literals are recognised" begin
+        v = RDFLiteral("?idText", Jayhawk.GISTP_VAR)
+        @test is_var_literal(v)
+        @test var_name(v) == "?idText"
+        @test !is_var_literal(RDFLiteral("?idText"))          # untyped: just a string
+        @test !is_var_literal(IRIRef("http://ex.org/s"))
+        @test_throws ArgumentError var_name(RDFLiteral("?x"))  # not typed gistp:var
+
+        # The vocabulary's own XSD facet is `^[?$][a-zA-Z_]+`, which is wrong twice:
+        # in XSD regex ^ and $ are literal characters, not anchors, and [a-zA-Z_]+
+        # rejects the digit in ?_Person_1. gistPatternShapes.ttl has the correct form.
+        @test var_name(RDFLiteral("?_Person_1", Jayhawk.GISTP_VAR)) == "?_Person_1"
+        @test var_name(RDFLiteral("\$dollar", Jayhawk.GISTP_VAR)) == "\$dollar"
+        @test_throws ArgumentError var_name(RDFLiteral("noSigil", Jayhawk.GISTP_VAR))
+        @test_throws ArgumentError var_name(RDFLiteral("?has space", Jayhawk.GISTP_VAR))
+        @test_throws ArgumentError var_name(RDFLiteral("?1startsWithDigit", Jayhawk.GISTP_VAR))
     end
 end
 

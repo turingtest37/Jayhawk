@@ -6,19 +6,6 @@ using Dates
 
 import EzXML: XMLDocument, parsexml, findall, namespaces, namespace
 
-# include("namespaces.jl")
-# include("constants.jl")
-# include("rdf.jl")
-# These read the environment, not `ARGS`. They used to be written
-# `("JAYHAWK_SPARQL_SERVICE" in ARGS) ? ARGS["JAYHAWK_SPARQL_SERVICE"] : default`, which
-# never threw only because `in` over `ARGS` (a Vector{String}) is always false for a
-# name=value lookup, so the ternary always took the default branch and the indexing --
-# which would have thrown, ARGS not being indexable by String -- was never reached. The
-# endpoint was therefore hardcoded no matter what the caller set.
-#
-# Both are `const`, evaluated when the module loads, so the variables must be set
-# before `using Jayhawk`.
-
 # Defaults target Apache Jena Fuseki, which replaced GraphDB as this project's store.
 # The two stores spell their endpoints differently, and only the query URL is shared:
 #
@@ -28,9 +15,9 @@ import EzXML: XMLDocument, parsexml, findall, namespaces, namespace
 # Fuseki's query service really is the bare dataset path -- `<base>/sparql` returns 404
 # under FusekiMainCmd, which is what resource/fuseki-test.sh launches.
 #
-# For GraphDB, set both variables explicitly:
-#   JAYHAWK_SPARQL_SERVICE=http://127.0.0.1:7200/repositories/ebox
-#   JAYHAWK_UPDATE_SERVICE=http://127.0.0.1:7200/repositories/ebox/statements
+# These two remain `const` because `test/sparql_integration.jl` asserts their shape, and
+# because they are the *default* only. Anything that needs a different server at runtime
+# passes a `SparqlEndpoint` instead of mutating them -- see `set_endpoint!`.
 
 "String representation of the graph store's SPARQL query service URL."
 const spqservice = get(ENV, "JAYHAWK_SPARQL_SERVICE", "http://localhost:3030/jayhawk")
@@ -38,23 +25,42 @@ const spqservice = get(ENV, "JAYHAWK_SPARQL_SERVICE", "http://localhost:3030/jay
 "String representation of the graph store's SPARQL update service URL."
 const spqupdservice = get(ENV, "JAYHAWK_UPDATE_SERVICE", spqservice * "/update")
 
+"""
+Where to reach a triplestore, and how long to wait.
 
-# const tTurtle           = "text/turtle;charset=utf-8"
-# const tRDF              = "application/rdf+xml"
-# const tText             = "text/plain"
-# const tNTriples         = "application/n-triples"
-# const tNQuads           = "application/n-quads"
-# const tJSONLD           = "application/ld+json"
-# const tTrig             = "application/trig"
-# const tSparqlResultsX   = "application/sparql-results+xml"
-# const tSparqlResultsJ   = "application/sparql-results+json"
-# const tAppJSON          = "application/json"
-# const tAppXML           = "application/xml"
-# const tSparqlResultsTSV = "application/sparql-results+tsv"
-# const tSparqlResultsCSV = "application/sparql-results+csv"
-# const tSparqlUpdate     = "application/sparql-update"
-# const tWWWForm          = "application/x-www-form-urlencoded"
-# const tSparqlQuery      = "application/sparql-query"
+The engine takes this as an argument rather than reading a module-level `const`, because a
+long-running MCP server may talk to more than one store and cannot re-`using` the package
+to change endpoint.
+
+`gsp` is the SPARQL 1.1 Graph Store Protocol endpoint, used to POST a `.trig` file straight
+into the store. That is how the engine loads patterns: Jena parses TriG, Julia does not.
+"""
+struct SparqlEndpoint
+    query::String
+    update::String
+    gsp::String
+    timeout::Int
+end
+
+"""
+    SparqlEndpoint(base; timeout = 30)
+
+Build the Fuseki-shaped triple of URLs from one dataset base URL:
+`<base>` for query, `<base>/update` for update, `<base>/data` for the Graph Store Protocol.
+"""
+SparqlEndpoint(base::AbstractString; timeout::Integer = 30) =
+    SparqlEndpoint(String(base), String(base) * "/update", String(base) * "/data", Int(timeout))
+
+const _DEFAULT_ENDPOINT =
+    Ref(SparqlEndpoint(spqservice, spqupdservice, spqservice * "/data", 30))
+
+"The endpoint used when a call does not name one."
+endpoint() = _DEFAULT_ENDPOINT[]
+
+"Replace the default endpoint for this process. Returns the new endpoint."
+set_endpoint!(e::SparqlEndpoint) = (_DEFAULT_ENDPOINT[] = e)
+set_endpoint!(base::AbstractString; timeout::Integer = 30) =
+    set_endpoint!(SparqlEndpoint(base; timeout = timeout))
 
 QHEADERS = Dict(
     "Content-Type" =>  "application/sparql-query",
@@ -74,95 +80,172 @@ UPDHEADERS = Dict(
 spqparams() = Dict()
 spqparams(d::Dict) = merge(spqparams(), d)
 
-# Creates a URL-compatible query string for SPARQL requests.
-# `http://host/path?query=uri_encoded_sparql` 
-# 
-# where the given content is interpreted as a Mustache template
-# and rendered using the provided Dictionary 
-# of key=value pairs, before being URI-encoded for transmission over the
-# internets.
-buildquerystr(content::String, m::Dict) = string("query=",URIs.escapeuri(Mustache.render(content, m)))
+# Mustache rendering is applied *only* when bindings are supplied. Generated SPARQL is full
+# of braces, and `{{` -- legal in SPARQL as nested group patterns -- is Mustache's opening
+# delimiter, so rendering unconditionally would silently corrupt compiler output.
+render_query(content::AbstractString, m::AbstractDict) =
+    isempty(m) ? String(content) : Mustache.render(String(content), m)
 
-buildpostbody(content::String, m::Dict) = Mustache.render(content, m)
+buildquerystr(content::String, m::Dict) = string("query=", URIs.escapeuri(render_query(content, m)))
+
+buildpostbody(content::String, m::Dict) = render_query(content, m)
 
 buildqueryfile(filename::String, m::Dict) = buildquerystr(Mustache.load(filename), m)
 
-function extract(b::Dict{String,Any})
-  haskey(b,"type") && b["type"] == "uri" && haskey(b,"value") && (return URIs.URI(b["value"]))
-  haskey(b,"type") && b["type"] == "literal" && haskey(b,"value") && (return haskey(b, "datatype") ? parse(lookup[b["datatype"]], b["value"]) : b["value"])
-  return nothing
+"Raise a legible error instead of letting HTTP.jl's StatusError escape with the body buried."
+function _http_error(e, what::AbstractString, url::AbstractString)
+    if e isa HTTP.StatusError
+        body = try String(e.response.body) catch; "<unreadable body>" end
+        error("$what failed: HTTP $(e.status) from $url\n$(first(body, 2000))")
+    end
+    rethrow(e)
 end
 
-"""Creates an extraction function for the given bindings dictionary b such that a call to xq(name) retrieves b[name])"""
-xq(b::Dict) = (s)->extract(get(b,s,Dict{String,Any}()))
-xq(bl::Vector) = xq.(bl)
+"""
+    runsparql(spq, update=false; m=Dict(), ep=endpoint(), qheaders=QHEADERS, updheaders=UPDHEADERS)
 
+The primary interface to the graph server.
 
-"This is the primary interface to the graph server, "
-function runsparql(spq::String, update=false; m::Dict = Dict(), qheaders=QHEADERS, updheaders=UPDHEADERS)
-  # payload = buildquerystr(fetchalldsqpq, m)
+Returns raw parsed JSON for SELECT (a `Vector` of binding `Dict`s) and `Bool` for ASK, an
+`XMLDocument` for RDF/XML, and a `String` for N-Triples. `nothing` for updates.
+
+Prefer [`select`](@ref) / [`ask`](@ref) / [`update!`](@ref) in new code: they return typed
+`RDFTerm`s instead of raw JSON. This one keeps its untyped contract because the SPARQL
+regression suite asserts against it directly.
+"""
+function runsparql(spq::String, update=false; m::Dict = Dict(), ep::SparqlEndpoint = endpoint(),
+                   qheaders=QHEADERS, updheaders=UPDHEADERS)
   resp = nothing
   if update
-    resp = HTTP.post(spqupdservice, updheaders, buildpostbody(spq, m))
-    resp = nothing
-  else
-    resp = HTTP.get(spqservice, qheaders; query=buildquerystr(spq, m))
-    h = Dict(resp.headers)
-    ct = h["Content-Type"]
-    if contains(ct, "sparql-results+json")
-      r = JSON.parse(resp.body |> String)
-      # ASK returns {"head":{}, "boolean":true} -- no "results" key at all, so the
-      # unconditional r["results"]["bindings"] threw KeyError on every ASK query.
-      resp = haskey(r, "boolean") ? r["boolean"] : r["results"]["bindings"]
-    elseif contains(ct, "application/rdf+xml")
-      resp = parsexml(resp.body |> String)
-    elseif contains(ct, "n-triples")
-      resp = resp.body |> String
+    try
+      HTTP.post(ep.update, updheaders, buildpostbody(spq, m); readtimeout = ep.timeout)
+    catch e
+      _http_error(e, "SPARQL update", ep.update)
     end
+    return nothing
+  end
+
+  resp = try
+    HTTP.get(ep.query, qheaders; query=buildquerystr(spq, m), readtimeout = ep.timeout)
+  catch e
+    _http_error(e, "SPARQL query", ep.query)
+  end
+
+  h = Dict(resp.headers)
+  ct = get(h, "Content-Type", "")
+  if contains(ct, "sparql-results+json")
+    r = JSON.parse(resp.body |> String)
+    # ASK returns {"head":{}, "boolean":true} -- no "results" key at all, so the
+    # unconditional r["results"]["bindings"] threw KeyError on every ASK query.
+    resp = haskey(r, "boolean") ? r["boolean"] : r["results"]["bindings"]
+  elseif contains(ct, "application/rdf+xml")
+    resp = parsexml(resp.body |> String)
+  elseif contains(ct, "n-triples")
+    resp = resp.body |> String
   end
   @debug "resp" resp
   return resp
 end
 
+# ---------------------------------------------------------------------------
+# Typed layer -- what the engine uses
+# ---------------------------------------------------------------------------
 
-function objfromdict(T::Type, r::Dict)
-  res = T[]
-  @debug "building for type T from dict " T r
+"""
+    select(q; ep=endpoint(), bindings=Dict()) -> Vector{Dict{String,RDFTerm}}
 
-  for k in keys(r)
-      local uri = k
-      # @debug "uri" uri
-      local predd = r[k]
-      # @debug "pred dict" predd
-      local ext = predd
-      # @debug "ext" ext
-      local rid = haskey(ext, p_rid) ? ext[p_rid] : localname(uri)
-      # @debug "rid" rid
-      obj = @eval $(T)($uri,$rid,$ext)
-      # @debug "obj" obj
-      push!(res, obj)
-  end
-  res
+Run a SELECT and return each solution as a name => `RDFTerm` mapping.
+
+This is the datatype-faithful path. SPARQL Results JSON carries
+`{"type":"literal","datatype":…}` and [`term_from_json`](@ref) keeps it, where the old
+`extract` destroyed it -- it called `parse(lookup[b["datatype"]], …)` against a `lookup`
+table that was never defined anywhere in the package, so every typed literal raised
+`UndefVarError`.
+
+Unbound variables are simply absent from a solution's dictionary, as in the JSON.
+"""
+function select(q::AbstractString; ep::SparqlEndpoint = endpoint(), bindings::AbstractDict = Dict())
+    rows = runsparql(String(q); m = Dict(bindings), ep = ep)
+    rows isa Bool && throw(ArgumentError("select() got an ASK response; use ask() instead"))
+    [Dict{String,RDFTerm}(k => term_from_json(v) for (k, v) in row) for row in rows]
 end
 
-build(T::Type, doc) = objfromdict(T, parsent(doc))
-export build
+"""
+    ask(q; ep=endpoint(), bindings=Dict()) -> Bool
+"""
+function ask(q::AbstractString; ep::SparqlEndpoint = endpoint(), bindings::AbstractDict = Dict())
+    r = runsparql(String(q); m = Dict(bindings), ep = ep)
+    r isa Bool || throw(ArgumentError("ask() expected a boolean response, got $(typeof(r))"))
+    r
+end
+
+"""
+    update!(q; ep=endpoint(), bindings=Dict()) -> Nothing
+
+Run a SPARQL Update (INSERT / DELETE / DROP / LOAD).
+"""
+update!(q::AbstractString; ep::SparqlEndpoint = endpoint(), bindings::AbstractDict = Dict()) =
+    runsparql(String(q), true; m = Dict(bindings), ep = ep)
+
+"""
+    load_graph!(content, graph_iri; ep=endpoint(), syntax="text/turtle") -> Nothing
+
+PUT `content` into a named graph over the Graph Store Protocol, replacing whatever was
+there. This is how patterns get into the store: **Jena parses TriG, Julia does not.**
+
+For a TriG payload -- which names its own graphs -- POST to the *dataset* rather than to a
+single graph; see [`load_dataset!`](@ref).
+"""
+function load_graph!(content::AbstractString, graph_iri::AbstractString;
+                     ep::SparqlEndpoint = endpoint(), syntax::AbstractString = "text/turtle")
+    url = string(ep.gsp, "?graph=", URIs.escapeuri(graph_iri))
+    try
+        HTTP.put(url, Dict("Content-Type" => syntax), String(content); readtimeout = ep.timeout)
+    catch e
+        _http_error(e, "Graph Store PUT", url)
+    end
+    nothing
+end
+
+"""
+    load_dataset!(content; ep=endpoint(), syntax="application/trig") -> Nothing
+
+POST a quad-bearing document (TriG, N-Quads) to the dataset endpoint, letting the payload
+place its own triples into its own named graphs. Additive: existing graphs are merged with,
+not replaced.
+"""
+function load_dataset!(content::AbstractString;
+                       ep::SparqlEndpoint = endpoint(), syntax::AbstractString = "application/trig")
+    try
+        HTTP.post(ep.gsp, Dict("Content-Type" => syntax), String(content); readtimeout = ep.timeout)
+    catch e
+        _http_error(e, "Graph Store POST", ep.gsp)
+    end
+    nothing
+end
+
+"Read a file and load it as a dataset. Syntax is inferred from the extension."
+function load_file!(path::AbstractString; ep::SparqlEndpoint = endpoint())
+    syntax = endswith(path, ".trig")  ? "application/trig" :
+             endswith(path, ".nq")    ? "application/n-quads" :
+             endswith(path, ".nt")    ? "application/n-triples" : "text/turtle"
+    load_dataset!(read(path, String); ep = ep, syntax = syntax)
+end
 
 """
     qsparql(query) -> (statements, prefixes, baseuri)
 
-Run a CONSTRUCT (or DESCRIBE) query and parse the resulting graph.
+Run a CONSTRUCT (or DESCRIBE) query and parse the resulting graph with Serd.
 
-Must ask for N-Triples. This used to call `runsparql(query)`, which sends the default
-`QHEADERS` -- `Accept: application/sparql-results+json` -- so the server returned a
-SPARQL results document and Serd was handed JSON to parse as Turtle, failing with
-`SERD_ERR_BAD_SYNTAX` ("bad verb" at line 1 col 5). `QHEADERSCONS` was defined for
-exactly this purpose and never used.
+Must ask for N-Triples: sending the default `Accept: application/sparql-results+json` made
+the server return a results document that Serd then failed to parse as Turtle.
 
-Parses from the string rather than a temp file; the old `tempname()` was never removed.
+Beware that this path goes through Serd and therefore **loses literal datatypes**. Use
+[`select`](@ref) wherever the datatype matters -- which, for anything touching
+`^^gistp:var`, is everywhere.
 """
-function qsparql(query::String)
-  read_rdf_string(runsparql(query; qheaders=QHEADERSCONS))
+function qsparql(query::String; ep::SparqlEndpoint = endpoint())
+  read_rdf_string(runsparql(query; qheaders=QHEADERSCONS, ep = ep))
 end
 
 """
@@ -175,6 +258,9 @@ Run a SPARQL Update.
 accepts two, so every call to `usparql` died with a `MethodError` before reaching the
 server.
 """
-function usparql(upd::String; dict=Dict())
-  runsparql(upd, true; m=dict)
+function usparql(upd::String; dict=Dict(), ep::SparqlEndpoint = endpoint())
+  runsparql(upd, true; m=dict, ep = ep)
 end
+
+export SparqlEndpoint, endpoint, set_endpoint!
+export select, ask, update!, load_graph!, load_dataset!, load_file!

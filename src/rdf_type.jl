@@ -3,13 +3,13 @@ Starting point for all calls to rdf_type
 """
 function rdf_type(s::Resource, o::Resource, tl::TraceLog)
     @debug "rdf_type($s, $o)"
-    oobj = retrieve!(tl, o, )
+    oobj = retrieve(tl, o, )
     # `_qname` rather than `makeqname`: the latter throws KeyError for any object in an
     # unregistered namespace, so a single such triple used to die here and be swallowed
     # as a failure by run_data!. `_qname` returns nothing instead.
     #
     # Since resource_dict became URI-keyed this lookup is no longer what rescues the
-    # bootstrap owl types -- `retrieve!` above now finds them on its own. It still earns
+    # bootstrap owl types -- `retrieve` above now finds them on its own. It still earns
     # its place for a class that was compiled into the module but never `register!`ed
     # into this particular TraceLog.
     objs = _qname(o)
@@ -18,7 +18,7 @@ function rdf_type(s::Resource, o::Resource, tl::TraceLog)
         # compiler once per rdf:type triple.
         oobj = _lookup(@__MODULE__, objs)
     end
-    # sobj = retrieve!(tl, s)
+    # sobj = retrieve(tl, s)
     @debug "Calling rdf_type($s, $oobj)..."
     rdf_type(s, oobj, tl)
     if (s == Serd.RDF.Resource("http://www.w3.org/2002/07/owl#TransitiveProperty"))
@@ -34,7 +34,7 @@ end
 #
 # Every one of the bootstrap structs already declares `uri::RORB`, so a blank subject was
 # always representable; only the method signatures excluded it. That did not show up
-# while resource_dict was CURIE-keyed, because `retrieve!` never resolved these types at
+# while resource_dict was CURIE-keyed, because `retrieve` never resolved these types at
 # all and every blank-node typing triple fell into the `o::Unknown` sink instead. Once
 # resolution started working, `_:x a owl:Thing` reached dispatch and raised MethodError --
 # trading a silent wrong answer for a silent dropped triple, since run_data! catches.
@@ -95,7 +95,7 @@ end
 
 function rdf_type(b::Blank, o::Resource, tl::TraceLog)
     @debug "rdf_type $b $o"
-    oobj = retrieve!(tl, o)
+    oobj = retrieve(tl, o)
     rdf_type(b, oobj, tl)
 end
 

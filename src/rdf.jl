@@ -168,7 +168,7 @@ datatypes = [
 
 Expand a prefixed name to the full-IRI form every term takes after [`expand_uris`].
 
-`resource_dict` must be keyed the way it will be *looked up*. Terms reaching `retrieve!`
+`resource_dict` must be keyed the way it will be *looked up*. Terms reaching `retrieve`
 have been through `expand_uris`, which turns every `ResourceCURIE` into a `ResourceURI`;
 a dictionary keyed by the CURIE form can therefore never be hit. See [`ExpandedTerm`].
 
@@ -197,7 +197,7 @@ for x in datatypes
   )
 end
 
-# Register the seven OWL types the bootstrap depends on, so that `retrieve!` can resolve
+# Register the seven OWL types the bootstrap depends on, so that `retrieve` can resolve
 # an incoming `rdf:type` object to the Julia type that implements it.
 #
 # This was a `broadcast` over `Resource("owl", "Class")` CURIEs whose value was recovered
@@ -258,5 +258,7 @@ function expand_uris(stmts,pfx,buri)
 end
 export expand_uris
 
-export localname, ns, parsent, MaybeURI, MaybeString, xsdtype2j, @U_str, valueof
+# `parsent` was exported here but defined nowhere; its only caller was the `build`/
+# `objfromdict` pair in sparqlclient.jl, which has been removed along with it.
+export localname, ns, MaybeURI, MaybeString, xsdtype2j, @U_str, valueof
 export makeqname, sanitize_name
