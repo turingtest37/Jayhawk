@@ -1,79 +1,124 @@
-# CLAUDE.md
+# CLAUDE-about.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repository. For *why* the project exists and
+where it is going, see `CLAUDE.md`; this file describes what is actually here.
 
-## Project Overview
+## Project overview
 
-Jayhawk is a Julia library that bridges RDF/OWL ontologies with Julia's type system. It dynamically generates Julia types and functions from RDF data, enabling graph-based, data-centric applications using semantic web technologies.
+Jayhawk is two things that share a repository and very little code.
+
+1. **The engine** (`term.jl`, `compile.jl`, `harness.jl`, `mcp.jl`) — compiles `gistp:`
+   graph-rewrite patterns into SPARQL, runs them against a triplestore, records what it did,
+   and exposes the result as MCP tools. This is the Function-Graph programme.
+2. **The materialiser** (`analyze.jl`, `generate.jl`, `execute.jl`, `rdf*.jl`) — turns an
+   OWL ontology into Julia structs and per-predicate functions. Useful as the extension
+   surface for computations SPARQL cannot express; not the engine.
+
+**SPARQL matches, Julia computes, RDF holds identity.**
 
 ## Commands
 
-**Run tests:**
 ```bash
-julia test/runtests.jl
+julia --project=. test/runtests.jl                       # hermetic, ~6s, no server
+./resource/fuseki-test.sh start                          # local Fuseki on :3030/jayhawk
+JAYHAWK_TEST_SPARQL=1 julia --project=. test/runtests.jl # + integration tests
+
+julia --project=bin -e 'using Pkg; Pkg.instantiate()'    # once
+julia --project=bin bin/mcp_server.jl                    # MCP server over stdio
 ```
 
-**From Julia REPL:**
-```julia
-include("test/runtests.jl")
-```
+Skills in `.claude/skills/` cover the details: `jl-test`, `jl-probe`, `sparql`, `ttl`.
 
-## Architecture
+## The engine
 
-### Two-Pass Compilation Model
+### Three phases, one of them impure
 
-Jayhawk uses a two-pass approach to compile RDF into Julia:
+`load_rule` does the I/O; `compile_rule` is pure and snapshot-testable with no server; the
+harness executes. Everything is read from the store rather than parsed in Julia — a rule's
+metadata is in the default graph and its pattern triples are in named graphs, so the input is
+inherently a *dataset* query.
 
-1. **First Pass**: Parses RDF/Turtle data via `make_from_rdf()`, creating Julia types and functions. Properties referencing undefined types are queued as "futures."
+### Rules are RDF
 
-2. **Second Pass**: `build_pass_two!()` processes all queued futures, resolving forward references after all types are defined.
+A rule names a match pattern (L) and a construct pattern (R). **A pattern's IRI is also the
+IRI of the named graph holding its triples** — the pattern *is* its graph, so there is no
+membership vocabulary and no predicate blacklist. Instances are therefore TriG, and Turtle
+cannot express them.
 
-### Core Data Structure: TraceLog
+Three modes. `Construct` (`f(G)`, pure) and `Assert` (`G ∪ f(G)`, to a fixpoint) compile to
+**identical SPARQL**; only the driver differs. `Rewrite` (`DELETE`/`INSERT`) is not compiled
+yet — it needs the triple-level interface `I = L ∩ R`.
 
-`TraceLog` is the central state manager with:
-- `ldict`: Local dictionary mapping URIs to Julia functions/types
-- `rdict`: Resource dictionary mapping URIs to RDF resource objects (owl_Class, owl_ObjectProperty, etc.)
-- `entries`: Log of all created TLogEntry records
-- `futures`: Queue of deferred function calls (tuples of predicate, subject, object)
+**I is authored by repetition**: whatever is preserved is written into both L and R.
 
-### Key Entry Points
+### Two variable mechanisms
 
-- `initialize()` → Creates a new TraceLog with the global resource_dict
-- `make_from_rdf(turtle_string, tracelog)` → Main parsing entry point
-- `build_model()` → Builds complete model from SPARQL endpoint
-- `_make_anything(triple, tracelog)` → Dispatcher for individual RDF statements
+IRI-position variables are declared individuals resolved by RDF identity. Literal-position
+variables (`"?idText"^^gistp:var`) are declared **nowhere** and matched across L and R by
+string equality of the lexical form. `check_bound` rejects use-before-def, which is the only
+thing standing between a typo and a rule that silently constructs nothing.
 
-### Type Hierarchy
+### Firings
 
-- `RORB = Union{Resource, Blank}` — Used throughout for RDF subjects/objects
-- `Unknown` — Placeholder for types not yet defined
-- `owl_Class`, `owl_ObjectProperty`, `owl_DatatypeProperty` — RDF type wrappers
+Every application writes into a fresh `urn:jayhawk:firing:<uuid>` graph, pruned of facts the
+working set already held, and recorded in `urn:jayhawk:provenance`. Undo is `DROP GRAPH` —
+complete while every mode is additive. `max_iterations` is a hard stop because
+`gistp:iriTemplate` minting turns fixpoint evaluation into the chase.
 
-### URI to Symbol Mapping
+### Hard constraint
 
-`makeqname()` converts URIs to Julia identifiers:
-- `owl:Class` → `owl_Class`
-- `gist:Category` → `gist_Category`
+**The engine works in absolute IRIs; it never calls `makeqname` and never `Core.eval`s.**
+That is what keeps it clear of the global-state hazards below. Treat it as a rule, not a
+preference.
 
-Requires prefix registration via `add_prefix!()`. Unregistered prefixes throw `KeyError`.
+## The materialiser
 
-### Dynamic Code Generation
+`analyze` (pure) → `SchemaModel`; `generate` (pure) → `Expr`; `install!` evaluates — the only
+eval in the pipeline. Compile once, execute many: a second run of the same RDF skips
+generation entirely.
 
-Uses Julia's `eval()` extensively to create types and multi-dispatch functions at runtime based on RDF predicates and their argument types.
+`run_data!` separates three outcomes: **unmapped** (no generated function — ordinary),
+**unmatched** (dispatch found nothing — a local gap), **broken** (anything else — a defect,
+rethrown unless `strict=false`). It used to catch all three into one counter, which is how an
+`UndefVarError` masqueraded as "833 triples did not execute" for a release.
 
-## External Dependencies
+`makeqname` converts IRIs to identifiers (`owl:Class` → `owl_Class`) and needs
+`add_prefix!`; unregistered prefixes throw `KeyError`. `build_model()` is not implemented and
+raises saying so.
 
-- **Serd**: RDF/Turtle parsing (from Serd.jl)
-- **SPARQL endpoint**: Default at `http://127.0.0.1:7200/repositories/ebox`
-  - Configure via `JAYHAWK_SPARQL_SERVICE` and `JAYHAWK_UPDATE_SERVICE` environment variables
+## Known hazards
 
-## Source Structure
+Process-global state in the materialiser, one piece deliberately corrupt:
 
-- `Jayhawk.jl` — Module definition, exports, `build_model()`
-- `tracelog.jl` — TraceLog data structure
-- `build.jl` — Core compilation logic (`make_from_rdf`, `_make_anything`, property generation)
-- `rdf.jl` — RDF type definitions, URI utilities
-- `rdf_type.jl` — Handler for `rdf:type` statements (creates Julia types from owl:Class)
-- `rdfs_subClassOf.jl` — Handles inheritance relationships
-- `sparql.jl` — SPARQL query templates
-- `sparqlclient.jl` — HTTP client for SPARQL endpoints
+- Serd's `_prefixes_by_name` / `_prefixes_by_uri` are unsynchronised `const` globals with no
+  removal. `src/Jayhawk.jl` **relies on them being out of sync** to resolve both `gist:`
+  namespace spellings.
+- Serd's `julia_datatype` does `get!` on a `const` map, inserting on every unknown datatype.
+- Generated code lands in the single `Jayhawk` module; colliding sanitised names share a
+  struct (there is a testset acknowledging this).
+- **Serd discards literal datatypes.** `from_serd` maps the datatype IRI to a Julia type and
+  builds `Literal(value)` without it, so `"42"^^ex:custom` is indistinguishable from `"42"`.
+  This is why `src/term.jl` exists and why the engine reads SPARQL Results JSON instead.
+
+## External dependencies
+
+- **Serd** — Turtle parsing for the materialiser only. A local fork at `../Serd.jl`
+  (`jayhawk-1`), so the project is not clonable without that sibling checkout.
+- **Fuseki** — default `http://localhost:3030/jayhawk`, overridable via
+  `JAYHAWK_SPARQL_SERVICE` / `JAYHAWK_UPDATE_SERVICE` before Julia starts, or at runtime with
+  `set_endpoint!`.
+- **ModelContextProtocol.jl** — `bin/Project.toml` only, never a Jayhawk dependency: it is
+  heavy and it exports `register!`, which collides.
+
+## Source layout
+
+| File | Role |
+|---|---|
+| `Jayhawk.jl` | module, exports, `resource_dict`, `initialize`, `set_def_prefixes` |
+| `term.jl` | `RDFTerm` / `IRIRef` / `BNode` / `RDFLiteral`; SPARQL Results JSON |
+| `sparqlclient.jl` | `runsparql` plus the typed `select`/`ask`/`update!` and GSP loaders |
+| `compile.jl` | `load_rule`, `compile_rule`, `insert_query`, `rule_catalogue` |
+| `harness.jl` | `apply_rule`, `run_rule`, `dry_run`, `undo_firing!`, `firings` |
+| `mcp.jl` | the five agent-facing tools |
+| `analyze.jl` `generate.jl` `execute.jl` `build.jl` | the materialiser pipeline |
+| `rdf.jl` `rdf_type.jl` `rdfs*.jl` `tracelog.jl` | bootstrap types, naming, TraceLog |
