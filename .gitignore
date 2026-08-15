@@ -1,2 +1,5 @@
 # Claude Code artefacts under .claude/ (skills, settings) are tracked deliberately --
 # they are project tooling that should travel with the repo, not scratch files.
+
+# bin/ has its own environment for the MCP server; its Manifest is machine-specific
+bin/Manifest.toml

@@ -1,0 +1,17 @@
+# Environment for bin/mcp_server.jl only.
+#
+# ModelContextProtocol.jl is deliberately NOT a dependency of Jayhawk itself: it pulls in
+# JSON3, StructTypes, DataStructures, MacroTools and OrderedCollections, and it exports
+# `register!`, which collides with Jayhawk's. Keeping it here means the engine stays lean
+# and every MCP tool remains testable without the protocol package.
+#
+#     julia --project=bin -e 'using Pkg; Pkg.instantiate()'
+#     julia --project=bin bin/mcp_server.jl
+
+[deps]
+Jayhawk = "12faa926-1a3f-5f5e-81b2-8d3f7f967ea3"
+ModelContextProtocol = "c58f755f-f2a7-4f48-bf29-4e9659b78499"
+
+[compat]
+ModelContextProtocol = "0.4"
+julia = "1.10"

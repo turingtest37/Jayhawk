@@ -366,6 +366,78 @@ end
         Jayhawk.update!("DROP SILENT GRAPH <urn:r:Bad_R>")
     end
 
+    @testset "the agent-facing tools" begin
+        # These are the MCP surface, but they depend on nothing but the engine, so they are
+        # exercised here rather than through the protocol. bin/mcp_server.jl is the adapter.
+        Jayhawk.load_file!(fixture("person_to_employee.trig"))
+        # start from a clean source graph: an earlier testset left 9 triples here, and
+        # INSERT DATA of a triple that already exists is a silent no-op
+        Jayhawk.update!("DROP SILENT GRAPH <$DATA_GRAPH>")
+        Jayhawk.update!("""
+            INSERT DATA { GRAPH <$DATA_GRAPH> {
+              <urn:p1> a <$(GIST)Person> ; <$(GIST)isIdentifiedBy> <urn:id1> .
+              <urn:id1> a <$(GIST)ID> ; <$(GIST)containedText> "E-4471" .
+            } }""")
+        rule = "$(RULES)PersonToEmployee"
+
+        @testset "list_rules is a catalogue, not a query language" begin
+            out = tool_list_rules()
+            @test occursin(rule, out)
+            @test occursin("Person to Employee", out)          # skos:prefLabel
+            @test occursin("Construct", out)
+            @test occursin("pure", out)                        # says what the mode means
+            @test !occursin("CONSTRUCT {", out)                # no SPARQL at this level
+        end
+
+        @testset "explain_rule shows facts, not just SPARQL" begin
+            out = tool_explain_rule(rule; source = [DATA_GRAPH])
+            @test occursin("CONSTRUCT {", out)                 # the query, for the curious
+            @test occursin("would add 2 new triple(s)", out)   # and what it actually does
+            @test occursin("\"E-4471\"", out)                  # the literal it would create
+            @test occursin("Nothing was written", out)
+        end
+
+        @testset "explain_rule writes nothing" begin
+            before = length(firings())
+            tool_explain_rule(rule; source = [DATA_GRAPH])
+            tool_explain_rule(rule; source = [DATA_GRAPH])
+            @test length(firings()) == before
+            @test graph_size(DATA_GRAPH) == 4                  # source untouched
+        end
+
+        @testset "run_rule then undo_firing round-trips" begin
+            out = tool_run_rule(rule; source = [DATA_GRAPH], actor = "agent-7")
+            @test occursin("added 2 new triple(s)", out)
+
+            log = firings(rule = rule)
+            @test length(log) == 1
+            @test log[1].actor == "agent-7"
+
+            @test occursin("agent-7", tool_firings(rule = rule))
+
+            undone = tool_undo_firing(log[1].graph)
+            @test occursin("2 triple(s) removed", undone)
+            @test isempty(firings(rule = rule))
+            @test graph_size(DATA_GRAPH) == 4                  # source still untouched
+
+            # undoing twice is harmless, not an error
+            @test occursin("nothing to undo", tool_undo_firing(log[1].graph))
+        end
+
+        @testset "a second identical run derives nothing new" begin
+            # Construct against an unchanged source is idempotent once its output is in the
+            # working set -- prune_known! is what makes that visible.
+            f1 = run_rule(rule; source = [DATA_GRAPH])
+            f2 = run_rule(rule; source = [DATA_GRAPH, f1[1].graph])
+            @test f1[1].count == 2
+            @test f2[1].count == 0
+            @test graph_size(f2[1].graph) == 0    # contributed nothing, so left no graph
+            undo_firing!(f1[1].graph)
+        end
+
+        Jayhawk.update!("DROP SILENT GRAPH <$DATA_GRAPH>")
+    end
+
     engine_cleanup()
 
     @testset "engine cleanup left nothing behind" begin

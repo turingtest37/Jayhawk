@@ -171,6 +171,38 @@ run_rule(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint(), kw...) =
     run_rule(load_rule(rule_iri; ep = ep); ep = ep, kw...)
 
 """
+    dry_run(rule; source = String[], limit = 25, ep = endpoint())
+        -> (count = Int, sample = Vector)
+
+Compute what a rule *would* contribute, without keeping it or recording anything.
+
+This is the review surface. A human approving a rule should be reading the facts it
+produces, not its SPARQL, and an agent should be able to look before it leaps. The work
+happens in a scratch graph that is dropped on every path out, including on error.
+
+The count is of genuinely new triples -- facts the working set already held are pruned
+first, exactly as in a real application.
+"""
+function dry_run(spec::RuleSpec; source::AbstractVector = String[], limit::Integer = 25,
+                 ep::SparqlEndpoint = endpoint())
+    g = new_firing_graph()
+    try
+        update!(insert_query(spec; into = g, from = source); ep = ep)
+        prune_known!(g, source; ep = ep)
+        n = graph_size(g; ep = ep)
+        rows = select("""
+            SELECT ?s ?p ?o WHERE { GRAPH <$g> { ?s ?p ?o } }
+            ORDER BY ?s ?p ?o LIMIT $(Int(limit))"""; ep = ep)
+        (count = n, sample = rows)
+    finally
+        update!("DROP SILENT GRAPH <$g>"; ep = ep)
+    end
+end
+
+dry_run(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint(), kw...) =
+    dry_run(load_rule(rule_iri; ep = ep); ep = ep, kw...)
+
+"""
     undo_firing!(graph; ep = endpoint()) -> Nothing
 
 Reverse one firing: drop its graph and retract its provenance record.
@@ -212,5 +244,5 @@ function firings(; rule::Union{AbstractString,Nothing} = nothing,
       iteration = parse(Int, (r["iter"]::RDFLiteral).lexical)) for r in rows]
 end
 
-export Firing, apply_rule, run_rule, undo_firing!, firings, graph_size
+export Firing, apply_rule, run_rule, dry_run, undo_firing!, firings, graph_size
 export PROVENANCE_GRAPH, new_firing_graph

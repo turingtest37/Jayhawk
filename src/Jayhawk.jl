@@ -54,6 +54,7 @@ include("build.jl")
 # materialiser above -- it works in absolute IRIs and never calls makeqname or Core.eval.
 include("compile.jl")
 include("harness.jl")
+include("mcp.jl")
 
 # Jayhawk provides the framework for building applications that are graph-based and data-centric.
 

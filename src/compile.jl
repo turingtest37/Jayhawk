@@ -297,7 +297,29 @@ function list_rules(; ep::SparqlEndpoint = endpoint())
     sort!([_iri(r["r"]) for r in rows])
 end
 
+const SKOS_LABEL      = "http://www.w3.org/2004/02/skos/core#prefLabel"
+const SKOS_DEFINITION = "http://www.w3.org/2004/02/skos/core#definition"
+
+"""
+    rule_catalogue(; ep = endpoint()) -> Vector{NamedTuple}
+
+Every rule in the store with its mode, label and definition -- what a human or an agent
+needs to choose one, without reading any SPARQL.
+"""
+function rule_catalogue(; ep::SparqlEndpoint = endpoint())
+    rows = select("""
+        SELECT ?r ?mode ?label ?def WHERE {
+          ?r a <$C_RULE> ; <$P_MODE> ?mode .
+          OPTIONAL { ?r <$SKOS_LABEL> ?label }
+          OPTIONAL { ?r <$SKOS_DEFINITION> ?def }
+        } ORDER BY ?r"""; ep = ep)
+    lex(r, k) = haskey(r, k) && r[k] isa RDFLiteral ? (r[k]::RDFLiteral).lexical : ""
+    [(iri = _iri(r["r"]), mode = mode_symbol(_iri(r["mode"])),
+      label = lex(r, "label"), definition = lex(r, "def")) for r in rows]
+end
+
 export PatternTriple, RuleSpec, load_rule, load_pattern, load_variables, load_templates
+export rule_catalogue
 export compile_rule, compile_from_store, insert_query, list_rules, mode_symbol
 export var_of, term_sparql, bgp_text, vars_in, check_bound
 export GISTP_NS, MODE_CONSTRUCT, MODE_ASSERT, MODE_REWRITE
