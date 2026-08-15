@@ -57,15 +57,40 @@ function tool_explain_rule(rule::AbstractString; source::AbstractVector = String
     println(io, "\ncompiles to:\n")
     println(io, compile_rule(spec))
 
+    if mode_symbol(spec) === :Rewrite
+        println(io, "  interface I = L n R : ", length(interface(spec)), " triple(s) preserved")
+        risks = dangling_risks(spec)
+        isempty(risks) || println(io,
+            "\n  WARNING -- this rule deletes every triple the pattern knows about for ",
+            join(risks, ", "), ",\n  and never mentions them in R. SPARQL Update performs ",
+            "no dangling check, so anything\n  outside the pattern still referring to those ",
+            "nodes will point at nothing.")
+    end
+
     d = dry_run(spec; source = source, limit = limit, ep = ep)
-    println(io, "\ndry run against ",
-            isempty(source) ? "the default graph" : join(("<$g>" for g in source), " + "),
-            " would add ", d.count, " new triple(s)",
-            d.count == 0 ? "." : ":")
-    for r in d.sample
+    against = isempty(source) ? "the default graph" : join(("<$g>" for g in source), " + ")
+
+    show_triples(rows) = for r in rows
         println(io, "    ", sparql_text(r["s"]), " ", sparql_text(r["p"]), " ", sparql_text(r["o"]), " .")
     end
-    d.count > length(d.sample) && println(io, "    ... and ", d.count - length(d.sample), " more")
+
+    if hasproperty(d, :removed)
+        # A rewrite is the one mode that takes facts away, so the removals lead: that is
+        # what a reviewer needs to see before agreeing to it.
+        println(io, "\ndry run against ", against, " would REMOVE ", d.removed, " triple(s)",
+                d.removed == 0 ? "." : ":")
+        show_triples(d.removed_sample)
+        d.removed > length(d.removed_sample) &&
+            println(io, "    ... and ", d.removed - length(d.removed_sample), " more")
+        println(io, "\n  and ADD ", d.count, " triple(s)", d.count == 0 ? "." : ":")
+        show_triples(d.sample)
+        d.count > length(d.sample) && println(io, "    ... and ", d.count - length(d.sample), " more")
+    else
+        println(io, "\ndry run against ", against, " would add ", d.count, " new triple(s)",
+                d.count == 0 ? "." : ":")
+        show_triples(d.sample)
+        d.count > length(d.sample) && println(io, "    ... and ", d.count - length(d.sample), " more")
+    end
 
     # Fan-in is reported, never refused: many-to-one minting is often exactly right, so
     # whether it is a bug depends on modelling intent the pattern cannot state.
@@ -94,20 +119,46 @@ Apply a rule and report the firings it produced.
 
 Every firing lands in its own named graph, so the result is attributable and each one can be
 reversed individually with `undo_firing`.
+
+**A `gistp:Rewrite` requires `confirm = true`.** `Construct` and `Assert` only ever add, so
+the worst a mistaken call does is create a graph somebody drops again. A rewrite takes facts
+away from live data. It is still reversible -- the removed triples go to a tombstone in the
+same atomic update -- but "reversible" and "reviewed" are different things, and a destructive
+default is the wrong one to hand a model. The refusal names `explain_rule`, which shows the
+removals before any of this happens.
 """
 function tool_run_rule(rule::AbstractString; source::AbstractVector = String[],
                        actor::AbstractString = "mcp", max_iterations::Integer = 100,
-                       ep::SparqlEndpoint = endpoint())
-    fs = run_rule(rule; source = source, actor = actor,
+                       confirm::Bool = false, ep::SparqlEndpoint = endpoint())
+    spec = load_rule(rule; ep = ep)
+    if mode_symbol(spec) === :Rewrite && !confirm
+        d = dry_run(spec; source = source, ep = ep)
+        return """
+               Refused: <$rule> is a gistp:Rewrite, which DELETES from live data. Against \
+               $(join(("<$g>" for g in source), " + ")) it would remove $(d.removed) \
+               triple(s) and add $(d.count).
+
+               Run explain_rule first to see exactly which triples, then call run_rule again \
+               with confirm = true. The removal is reversible with undo_firing -- the deleted \
+               triples are kept in a tombstone graph -- but this is not a decision to take by \
+               default.
+               """
+    end
+
+    fs = run_rule(spec; source = source, actor = actor,
                   max_iterations = max_iterations, ep = ep)
-    total = isempty(fs) ? 0 : sum(f.count for f in fs)
-    total == 0 && return "Rule <$rule> applied and derived nothing new. No graph was created."
+    total   = isempty(fs) ? 0 : sum(f.count for f in fs)
+    removed = isempty(fs) ? 0 : sum(f.removed for f in fs)
+    total == 0 && removed == 0 &&
+        return "Rule <$rule> applied and changed nothing. No graph was created."
 
     io = IOBuffer()
-    println(io, "Rule <", rule, "> added ", total, " new triple(s) in ",
-            length(fs), " iteration(s).\n")
+    println(io, "Rule <", rule, "> added ", total, " triple(s)",
+            removed > 0 ? " and removed $removed" : "", " in ", length(fs), " iteration(s).\n")
     for f in fs
-        println(io, "  iteration ", f.iteration, ": ", f.count, " triple(s) -> <", f.graph, ">")
+        println(io, "  iteration ", f.iteration, ": +", f.count,
+                f.removed > 0 ? " / -$(f.removed)" : "", " -> <", f.graph, ">")
+        isempty(f.tombstone) || println(io, "      removed triples kept in <", f.tombstone, ">")
     end
     println(io, "\nUndo any of these with undo_firing on its graph IRI.")
     String(take!(io))

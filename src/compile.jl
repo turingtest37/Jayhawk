@@ -488,6 +488,71 @@ function check_variables(spec::RuleSpec)
     spec
 end
 
+# ---------------------------------------------------------------------------
+# The interface I = L ∩ R
+# ---------------------------------------------------------------------------
+
+# Identity of a pattern triple, for set arithmetic. `sparql_text` renders the term as
+# authored -- a variable's own IRI, not the SPARQL variable it will become -- which is
+# exactly the identity the intersection is over.
+_ptkey(t::PatternTriple) =
+    (sparql_text(t.subject), sparql_text(t.predicate), sparql_text(t.object))
+
+"""
+    interface(spec) -> Vector{PatternTriple}
+
+I, the part of the rewrite that is preserved: the triples appearing in **both** L and R.
+
+Computable as plain set intersection, and that is the payoff of the whole design. Variables
+are persistent typed individuals rather than SPARQL name-strings, so two pattern triples
+denote the same thing exactly when they are the same RDF triple -- no unification, no
+alpha-equivalence. Literal-position variables intersect correctly too, because
+`"?idText"^^gistp:var` is one RDF term wherever it appears.
+
+I is authored by repetition: whatever is to be preserved is written into both graphs.
+"""
+interface(spec::RuleSpec) =
+    (ks = Set(_ptkey(t) for t in spec.construct); [t for t in spec.match if _ptkey(t) in ks])
+
+"L ∖ I -- the triples a `Rewrite` deletes."
+match_only(spec::RuleSpec) =
+    (ks = Set(_ptkey(t) for t in spec.construct); [t for t in spec.match if !(_ptkey(t) in ks)])
+
+"R ∖ I -- the triples a `Rewrite` adds."
+construct_only(spec::RuleSpec) =
+    (ks = Set(_ptkey(t) for t in spec.match); [t for t in spec.construct if !(_ptkey(t) in ks)])
+
+"""
+    dangling_risks(spec) -> Vector{String}
+
+Variables whose every occurrence in L is deleted and which R never mentions.
+
+SPARQL Update is single-pushout: it deletes what it is told and performs no dangling check.
+So a rule that strips a node of all the triples the pattern knows about leaves anything
+*outside* the pattern still pointing at it -- a referent with no content. Double-pushout
+rewriting forbids exactly this.
+
+Reported rather than refused. Stripping a node is sometimes the intent, and whether some
+other triple elsewhere references it is a property of the data, not of the rule.
+`example_rule.trig` is the textbook case: its triple-level I is empty, so run as a Rewrite
+it would delete `:_ID_1`'s every triple while nothing in R mentions it.
+"""
+function dangling_risks(spec::RuleSpec)
+    deleted = match_only(spec)
+    kept    = Set(_ptkey(t) for t in interface(spec))
+    inR     = vars_in(spec.construct, spec)
+    risks   = String[]
+    for v in sort(collect(vars_in(spec.match, spec)))
+        v in inR && continue
+        # every triple of L mentioning v is being deleted?
+        mentions(t) = v in (var_of(t.subject, spec), var_of(t.predicate, spec), var_of(t.object, spec))
+        any(mentions, deleted) || continue
+        any(t -> mentions(t) && _ptkey(t) in kept, spec.match) && continue
+        push!(risks, v)
+    end
+    risks
+end
+
 """
     check_bound(spec)
 
@@ -532,25 +597,111 @@ function compile_rule(spec::RuleSpec)
     check_bound(spec)
     m = mode_symbol(spec)
 
-    if m === :Rewrite
-        error("""
-              rule <$(spec.iri)>: gistp:Rewrite is not supported yet. It needs the \
-              triple-level interface I = L ∩ R to split DELETE { L∖I } from INSERT { R∖I }, \
-              and derived_interface.rq computes shared *variables* rather than shared \
-              triples. Use gistp:Assert if the rule only adds facts.""")
-    end
-
     isempty(spec.match) && error("rule <$(spec.iri)>: match pattern <$(spec.match_graph)> is empty.")
     isempty(spec.construct) && error("rule <$(spec.iri)>: construct pattern <$(spec.construct_graph)> is empty.")
 
     # BINDs go after every triple pattern: BIND sees only variables already bound earlier in
     # its group, and check_mints has guaranteed each slot value is bound by L.
+    m === :Rewrite && return """
+    # Rewrite rule <$(spec.iri)>  (I = L n R holds $(length(interface(spec))) triple(s))
+    DELETE {
+    $(bgp_text(match_only(spec), spec))
+    }
+    INSERT {
+    $(bgp_text(construct_only(spec), spec))
+    }
+    WHERE {
+    $(bgp_text(spec.match, spec))$(binds_text(spec))
+    }
+    """
+
     """
     # $(m) rule <$(spec.iri)>
     CONSTRUCT {
     $(bgp_text(spec.construct, spec))
     }
     WHERE {
+    $(bgp_text(spec.match, spec))$(binds_text(spec))
+    }
+    """
+end
+
+"""
+    project_query(spec; triples, into, from = String[]) -> String
+
+Materialise an arbitrary sub-template of a rule into a graph, without touching anything else.
+
+Used to preview a `Rewrite`: running `match_only` and `construct_only` through this shows
+exactly what the rule *would* delete and add, computed from the live data, while the target
+graph stays untouched. `rewrite_query` is the same solutions with the same BINDs; only the
+templates differ.
+"""
+function project_query(spec::RuleSpec; triples::Vector{PatternTriple},
+                       into::AbstractString, from::AbstractVector = String[])
+    check_bound(spec)
+    isempty(triples) && return ""
+    using_lines = isempty(from) ? "" : join(("USING <$(check_iri(g))>" for g in from), "\n") * "\n"
+    """
+    INSERT {
+      GRAPH <$(check_iri(into))> {
+    $(bgp_text(triples, spec; indent = "    "))
+      }
+    }
+    $(using_lines)WHERE {
+    $(bgp_text(spec.match, spec))$(binds_text(spec))
+    }
+    """
+end
+
+"""
+    rewrite_query(spec; target, firing, tombstone, from = String[]) -> String
+
+A `gistp:Rewrite` as one atomic SPARQL Update, recorded so it can be reversed.
+
+Unlike `Construct` and `Assert`, a rewrite mutates the data. `target` is the graph it edits;
+`firing` and `tombstone` capture what was added and what was removed, which is what makes
+undo possible at all -- `DROP GRAPH` cannot restore a deletion.
+
+All four templates instantiate from the same solutions, and SPARQL evaluates the WHERE
+against the pre-update state with DELETE applied before INSERT, so the tombstone receives
+the triples as they were before removal. One request is one transaction, so a firing is
+never half-applied.
+"""
+function rewrite_query(spec::RuleSpec; target::AbstractString, firing::AbstractString,
+                       tombstone::AbstractString, from::AbstractVector = String[])
+    check_bound(spec)
+    mode_symbol(spec) === :Rewrite || error(
+        "rule <$(spec.iri)>: rewrite_query is only for gistp:Rewrite; this rule is " *
+        "$(mode_symbol(spec)). Use insert_query.")
+
+    gone  = match_only(spec)
+    added = construct_only(spec)
+    isempty(gone) && isempty(added) && error(
+        "rule <$(spec.iri)>: L and R are identical, so the rewrite deletes nothing and " *
+        "adds nothing. I = L = R.")
+
+    t, f, tomb = check_iri(target), check_iri(firing), check_iri(tombstone)
+    using_lines = isempty(from) ? "" : join(("USING <$(check_iri(g))>" for g in from), "\n") * "\n"
+
+    del = isempty(gone) ? "" : """
+    DELETE {
+      GRAPH <$t> {
+    $(bgp_text(gone, spec; indent = "    "))
+      }
+    }
+    """
+    ins_parts = String[]
+    isempty(added) || push!(ins_parts,
+        "  GRAPH <$t> {\n$(bgp_text(added, spec; indent = "    "))\n  }",
+        "  GRAPH <$f> {\n$(bgp_text(added, spec; indent = "    "))\n  }")
+    isempty(gone) || push!(ins_parts,
+        "  GRAPH <$tomb> {\n$(bgp_text(gone, spec; indent = "    "))\n  }")
+
+    """
+    $(del)INSERT {
+    $(join(ins_parts, "\n"))
+    }
+    $(using_lines)WHERE {
     $(bgp_text(spec.match, spec))$(binds_text(spec))
     }
     """
@@ -710,7 +861,8 @@ wrapper differs.
 function insert_query(spec::RuleSpec; into::AbstractString, from::AbstractVector = String[])
     check_bound(spec)
     mode_symbol(spec) === :Rewrite && error(
-        "rule <$(spec.iri)>: gistp:Rewrite is not supported yet; see compile_rule.")
+        "rule <$(spec.iri)>: gistp:Rewrite mutates the data, so it cannot be run through " *
+        "insert_query, which only ever adds to a firing graph. Use rewrite_query.")
     using_lines = isempty(from) ? "" :
         join(("USING <$(check_iri(g))>" for g in from), "\n") * "\n"
     """
@@ -773,7 +925,9 @@ end
 
 export PatternTriple, RuleSpec, MintSpec, load_rule, load_pattern, load_variables, load_mints
 export rule_catalogue
-export compile_rule, compile_from_store, insert_query, list_rules, mode_symbol
+export compile_rule, compile_from_store, insert_query, rewrite_query, project_query
+export list_rules, mode_symbol
+export interface, match_only, construct_only, dangling_risks
 export var_of, term_sparql, bgp_text, vars_in, check_bound, check_mints, check_variables
 export parse_template, template_slots, bind_text, minted_vars
 export ambiguous_separators, collision_queries, check_collisions, mint_fanin

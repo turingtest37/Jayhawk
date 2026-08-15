@@ -1047,11 +1047,94 @@ end
               body(person_to_employee(mode = Jayhawk.MODE_ASSERT))
     end
 
-    @testset "Rewrite is refused rather than mis-compiled" begin
-        err = try compile_rule(person_to_employee(mode = Jayhawk.MODE_REWRITE)) catch e; e end
-        msg = sprint(showerror, err)
-        @test occursin("not supported yet", msg)
-        @test occursin("triple-level", msg)      # says *why*: I = L ∩ R is uncomputed
+    @testset "the interface I = L ∩ R is plain set arithmetic" begin
+        # The payoff of persistent typed variables: two pattern triples denote the same
+        # thing exactly when they are the same RDF triple. No unification, no
+        # alpha-equivalence.
+        spec = person_to_employee()
+        # PersonToEmployee shares no *triple* between L and R -- only the node :_Person_1 --
+        # so its triple-level interface is empty. That is why it is a Construct rule and
+        # would be a bug as a Rewrite: everything in L would be deleted.
+        @test isempty(interface(spec))
+        @test length(match_only(spec)) == length(spec.match)
+        @test length(construct_only(spec)) == length(spec.construct)
+
+        # repeat one triple of L in R and it moves into I
+        shared = spec.match[1]
+        withI = RuleSpec(spec.iri, spec.mode, spec.match_graph, spec.construct_graph,
+                         spec.match, vcat(spec.construct, [shared]), spec.variables, spec.mints)
+        @test length(interface(withI)) == 1
+        @test length(match_only(withI)) == length(spec.match) - 1
+        @test length(construct_only(withI)) == length(spec.construct)
+        # I ∪ (L∖I) partitions L, with no overlap
+        @test length(interface(withI)) + length(match_only(withI)) == length(withI.match)
+    end
+
+    @testset "Rewrite compiles to DELETE L∖I / INSERT R∖I" begin
+        spec = person_to_employee(mode = Jayhawk.MODE_REWRITE)
+        shared = spec.match[1]                     # ?_Person_1 a gist:Person
+        rw = RuleSpec(spec.iri, spec.mode, spec.match_graph, spec.construct_graph,
+                      spec.match, vcat(spec.construct, [shared]), spec.variables, spec.mints)
+        q = compile_rule(rw)
+        @test occursin("DELETE {", q) && occursin("INSERT {", q)
+        @test !occursin("CONSTRUCT", q)
+        # the preserved triple appears in WHERE but in neither DELETE nor INSERT
+        preserved = "?_Person_1 <$(TYPE)> <$(G)Person> ."
+        delete_block = q[findfirst("DELETE {", q).start:findfirst("INSERT {", q).start]
+        @test !occursin(preserved, delete_block)
+        @test occursin(preserved, q)               # still matched
+        @test q == compile_rule(rw)                # byte-stable
+    end
+
+    @testset "a rewrite that changes nothing is refused" begin
+        spec = person_to_employee(mode = Jayhawk.MODE_REWRITE)
+        identical = RuleSpec(spec.iri, spec.mode, spec.match_graph, spec.construct_graph,
+                             spec.match, spec.match, spec.variables, spec.mints)
+        @test isempty(match_only(identical)) && isempty(construct_only(identical))
+        err = try rewrite_query(identical; target = "urn:t", firing = "urn:f",
+                                tombstone = "urn:tomb") catch e; e end
+        @test occursin("deletes nothing and adds nothing", sprint(showerror, err))
+    end
+
+    @testset "insert_query refuses a Rewrite, and rewrite_query refuses the others" begin
+        rw = person_to_employee(mode = Jayhawk.MODE_REWRITE)
+        @test occursin("rewrite_query", sprint(showerror,
+            try insert_query(rw; into = "urn:g") catch e; e end))
+        @test occursin("insert_query", sprint(showerror,
+            try rewrite_query(person_to_employee(); target = "urn:t", firing = "urn:f",
+                              tombstone = "urn:tomb") catch e; e end))
+    end
+
+    @testset "the dangling risk is detected, not silently deleted" begin
+        # SPARQL Update is single-pushout: it deletes what it is told and never checks for
+        # stranded referents. A variable whose every occurrence in L is removed, and which R
+        # never mentions, is exactly the shape that leaves orphans.
+        spec = person_to_employee(mode = Jayhawk.MODE_REWRITE)
+        shared = spec.match[1]
+        rw = RuleSpec(spec.iri, spec.mode, spec.match_graph, spec.construct_graph,
+                      spec.match, vcat(spec.construct, [shared]), spec.variables, spec.mints)
+        # ?_ID_1 loses both of its triples and appears nowhere in R
+        @test "?_ID_1" in dangling_risks(rw)
+        # ?_Person_1 survives -- one of its triples is preserved, and R uses it
+        @test !("?_Person_1" in dangling_risks(rw))
+        # a rule that preserves everything strands nothing
+        @test isempty(dangling_risks(RuleSpec(spec.iri, spec.mode, spec.match_graph,
+            spec.construct_graph, spec.match, spec.match, spec.variables, spec.mints)))
+    end
+
+    @testset "rewrite_query records what it removes" begin
+        spec = person_to_employee(mode = Jayhawk.MODE_REWRITE)
+        shared = spec.match[1]
+        rw = RuleSpec(spec.iri, spec.mode, spec.match_graph, spec.construct_graph,
+                      spec.match, vcat(spec.construct, [shared]), spec.variables, spec.mints)
+        q = rewrite_query(rw; target = "urn:t", firing = "urn:f", tombstone = "urn:tomb",
+                          from = ["urn:t"])
+        @test occursin("DELETE {\n  GRAPH <urn:t>", q)
+        @test occursin("GRAPH <urn:f>", q)         # what was added
+        @test occursin("GRAPH <urn:tomb>", q)      # what was removed -- undo needs this
+        @test occursin("USING <urn:t>", q)
+        # the tombstone template is exactly L∖I
+        @test occursin(bgp_text(match_only(rw), rw; indent = "    "), q)
     end
 
     @testset "unknown mode is refused" begin

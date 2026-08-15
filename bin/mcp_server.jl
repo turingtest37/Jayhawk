@@ -75,23 +75,28 @@ TOOLS = [
     MCP.MCPTool(
         name = "run_rule",
         description = """
-            Apply a rule to the given graphs. The derived triples land in a fresh named
-            graph rather than in the source data, so the change is attributable and can be
-            reversed with undo_firing. Returns the firing graph IRIs.""",
+            Apply a rule to the given graphs. Construct and Assert rules only add: their
+            derived triples land in a fresh named graph rather than in the source data, so
+            the change is attributable and reversible with undo_firing. A Rewrite rule
+            DELETES from the live data and refuses to run without confirm = true; call
+            explain_rule first to see exactly which triples it would remove.""",
         parameters = [
             MCP.ToolParameter(name = "rule", type = "string", required = true,
                 description = "IRI of the rule to apply."),
             MCP.ToolParameter(name = "source", type = "array", required = false,
-                description = "Named graph IRIs to apply the rule to. Omit for the default graph."),
+                description = "Named graph IRIs to apply the rule to. Omit for the default graph. A Rewrite needs exactly one -- it is the graph being edited."),
             MCP.ToolParameter(name = "actor", type = "string", required = false,
                 description = "Who to record as responsible, in the provenance graph."),
             MCP.ToolParameter(name = "max_iterations", type = "integer", required = false,
                 description = "Hard stop for Assert rules run to a fixpoint (default 100)."),
+            MCP.ToolParameter(name = "confirm", type = "boolean", required = false,
+                description = "Required for a Rewrite rule, which deletes from live data. Review explain_rule's output before setting it."),
         ],
         handler = guarded(a -> tool_run_rule(str(a, "rule");
                                              source = graphs(a),
                                              actor = str(a, "actor", "mcp"),
-                                             max_iterations = get(a, "max_iterations", 100)))),
+                                             max_iterations = get(a, "max_iterations", 100),
+                                             confirm = get(a, "confirm", false) === true))),
 
     MCP.MCPTool(
         name = "undo_firing",

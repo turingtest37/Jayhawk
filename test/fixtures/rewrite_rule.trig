@@ -1,0 +1,93 @@
+#  NOTE: copy of gistPatterns/example_rewrite_rule.trig, kept here so Jayhawk's suite is
+#  self-contained. The authoritative version lives in ~/dev/gistPatterns.
+#
+#  A rule that REMOVES facts, serialised as TriG.
+#
+#  The other two examples only add. This one migrates a modelling pattern: the gist ID
+#  structure -- a separate gist:ID node carrying the text -- is replaced by a flat
+#  ex:employeeNumber on the person, and the ID node is taken away.
+#
+#  That is what gistp:Rewrite is for, and it is the only mode where I matters. I is authored
+#  by repetition: `:_P a gist:Person` appears in BOTH graphs, so it survives. Everything else
+#  in L is in L \ I and is deleted.
+#
+#      I     = { :_P a gist:Person }                      preserved
+#      L \ I = { :_P gist:isIdentifiedBy :_I ,            deleted
+#                :_I a gist:ID ,
+#                :_I gist:containedText "?idText" }
+#      R \ I = { :_P ex:employeeNumber "?idText" }        added
+#
+#  Note what would happen WITHOUT the repetition: `:_P a gist:Person` would fall into L \ I
+#  and the rule would strip the person of their type on the way past. That is the whole
+#  reason the mode cannot be inferred from which triples happen to repeat.
+
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix ex:    <http://example.org/hr/> .
+@prefix :      <http://example.org/rules/> .
+
+#################################################################
+#    Default graph: the rule and its variables
+#################################################################
+
+:FlattenIdentifier
+    rdf:type gistp:Rule ;
+    skos:prefLabel "Flatten identifier" ;
+    skos:definition """Replace a person's gist:ID structure with a flat ex:employeeNumber,
+                       removing the identifier node.""" ;
+    gistp:hasMatchPattern     :FlattenIdentifier_L ;
+    gistp:hasConstructPattern :FlattenIdentifier_R ;
+    # Rewrite: this one takes facts away. Compiles to DELETE { L \ I } INSERT { R \ I }.
+    gistp:rewriteMode         gistp:Rewrite .
+
+:FlattenIdentifier_L rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "match: a Person identified by a gist:ID carrying text" .
+
+:FlattenIdentifier_R rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "construct: the same Person with a flat employee number" .
+
+# --- variables -------------------------------------------------------------
+
+:_P rdf:type gist:Person , gistp:SparqlVariable ;
+    gistp:variableText "?_P" ;
+    skos:definition "The person. In I, because R repeats their type assertion." .
+
+:_I rdf:type gist:ID , gistp:SparqlVariable ;
+    gistp:variableText "?_I" ;
+    skos:definition """The identifier node being removed. Appears only in L, so every
+                       triple mentioning it is deleted -- see the dangling note below.""" .
+
+#################################################################
+#    L -- what must be true
+#################################################################
+
+:FlattenIdentifier_L {
+    :_P rdf:type gist:Person ;
+        gist:isIdentifiedBy :_I .
+
+    :_I rdf:type gist:ID ;
+        gist:containedText "?idText"^^gistp:var .
+}
+
+#################################################################
+#    R -- what becomes true
+#################################################################
+
+:FlattenIdentifier_R {
+    # repeated from L on purpose: this is how a triple is placed in I and thereby preserved
+    :_P rdf:type gist:Person ;
+        ex:employeeNumber "?idText"^^gistp:var .
+}
+
+# Dangling note. :_I loses every triple the pattern knows about and R never mentions it, so
+# anything OUTSIDE this pattern still pointing at that node is left referring to something
+# with no content. SPARQL Update is single-pushout and performs no dangling check; double-
+# pushout rewriting forbids exactly this. The compiler reports it rather than refusing,
+# because stripping a node is sometimes the intent and whether anything else references it
+# is a property of the data. A negative application condition would let the rule say "only
+# when nothing else refers to it" -- that vocabulary does not exist yet.

@@ -34,13 +34,24 @@ struct Firing
     iteration::Int
     count::Int
     source::Vector{String}
+    # Rewrite only. `tombstone` holds the triples the rewrite removed and `target` names the
+    # graph it removed them from; both are empty for the additive modes. DROP GRAPH undoes
+    # an addition but cannot restore a deletion, so a rewrite that recorded no tombstone
+    # would be irreversible -- and reversibility is the whole argument for letting an agent
+    # near this.
+    tombstone::String
+    target::String
+    removed::Int
 end
+
+Firing(g, r, m, i, c, s) = Firing(g, r, m, i, c, s, "", "", 0)
 
 Base.show(io::IO, f::Firing) = print(io,
     "Firing(", f.rule, " [", f.mode, "] iter ", f.iteration, " -> ",
-    f.count, " new triple", f.count == 1 ? "" : "s", " in <", f.graph, ">)")
+    f.count, " added", f.removed > 0 ? ", $(f.removed) removed" : "", " in <", f.graph, ">)")
 
 new_firing_graph() = string("urn:jayhawk:firing:", UUIDs.uuid4())
+new_tombstone_graph() = string("urn:jayhawk:tombstone:", UUIDs.uuid4())
 
 _now_xsd() = string(Dates.format(Dates.now(Dates.UTC), "yyyy-mm-ddTHH:MM:SS"), "Z")
 
@@ -84,6 +95,13 @@ function record_firing!(f::Firing; actor::AbstractString, ep::SparqlEndpoint = e
         join(("    <$(f.graph)> <$(JH_NS)sourceGraph> <$(check_iri(g))> ." for g in f.source), "\n") * "\n"
     mode_iri = f.mode === :Construct ? MODE_CONSTRUCT :
                f.mode === :Assert    ? MODE_ASSERT    : MODE_REWRITE
+    # A rewrite is only reversible if undo can find what it removed and where from, so both
+    # are part of the record rather than reconstructed later.
+    rw = isempty(f.tombstone) ? "" : """
+            <$(f.graph)> <$(JH_NS)tombstoneGraph> <$(f.tombstone)> ;
+                <$(JH_NS)targetGraph> <$(f.target)> ;
+                <$(JH_NS)removedCount> $(f.removed) .
+    """
     update!("""
         INSERT DATA { GRAPH <$PROVENANCE_GRAPH> {
             <$(f.graph)> a <$(PROV_NS)Entity> , <$(JH_NS)Firing> ;
@@ -93,7 +111,7 @@ function record_firing!(f::Firing; actor::AbstractString, ep::SparqlEndpoint = e
                 <$(JH_NS)actor> "$(escape_literal(actor))" ;
                 <$(JH_NS)iteration> $(f.iteration) ;
                 <$(JH_NS)tripleCount> $(f.count) .
-        $(srcs)} }"""; ep = ep)
+        $(srcs)$(rw)} }"""; ep = ep)
     nothing
 end
 
@@ -118,6 +136,11 @@ function apply_rule(spec::RuleSpec; into::AbstractString = new_firing_graph(),
     # and nothing downstream ever notices. Static separator analysis happens in compile;
     # this catches what only the data can reveal.
     check_collisions(spec; from = source, ep = ep)
+
+    mode_symbol(spec) === :Rewrite &&
+        return apply_rewrite!(spec; into = into, source = source, actor = actor,
+                              iteration = iteration, ep = ep)
+
     update!(insert_query(spec; into = into, from = source); ep = ep)
     prune_known!(into, source; ep = ep)
     n = graph_size(into; ep = ep)
@@ -125,6 +148,54 @@ function apply_rule(spec::RuleSpec; into::AbstractString = new_firing_graph(),
     f = Firing(into, spec.iri, mode_symbol(spec), Int(iteration), n, String.(source))
     if n == 0
         update!("DROP SILENT GRAPH <$into>"; ep = ep)   # contributed nothing; leave no litter
+    else
+        record_firing!(f; actor = actor, ep = ep)
+    end
+    f
+end
+
+"""
+    apply_rewrite!(spec; into, source, actor, iteration, ep) -> Firing
+
+Apply a `gistp:Rewrite`: the one mode that changes the data rather than adding beside it.
+
+**Exactly one source graph, and it is the target.** The other modes read a union and write
+elsewhere, so any number of sources is meaningful. A deletion has to name the graph it
+deletes from, and "delete from the union of these three" is not something SPARQL can
+express or a person can review.
+
+The removed triples are captured into a tombstone graph by the same atomic update that
+removes them, because `DROP GRAPH` can undo an addition but nothing can undo a deletion
+that was never recorded.
+"""
+function apply_rewrite!(spec::RuleSpec; into::AbstractString, source::AbstractVector,
+                        actor::AbstractString, iteration::Integer,
+                        ep::SparqlEndpoint = endpoint())
+    length(source) == 1 || throw(ArgumentError(
+        "rule <$(spec.iri)>: gistp:Rewrite needs exactly one source graph, which is the " *
+        "graph it edits; got $(length(source)). Construct and Assert read a union and " *
+        "write elsewhere, but a deletion has to name what it deletes from."))
+    target = String(source[1])
+    tomb   = new_tombstone_graph()
+
+    risks = dangling_risks(spec)
+    isempty(risks) || @warn(
+        "rule <$(spec.iri)> deletes every triple the pattern knows about for " *
+        "$(join(risks, ", ")), and the construct pattern never mentions them. SPARQL " *
+        "Update is single-pushout and performs no dangling check, so anything outside " *
+        "the pattern still referring to those nodes will be left pointing at nothing.",
+        rule = spec.iri, variables = risks)
+
+    update!(rewrite_query(spec; target = target, firing = into, tombstone = tomb,
+                          from = [target]); ep = ep)
+
+    added   = graph_size(into; ep = ep)
+    removed = graph_size(tomb; ep = ep)
+    f = Firing(into, spec.iri, :Rewrite, Int(iteration), added, [target], tomb, target, removed)
+
+    if added == 0 && removed == 0
+        update!("DROP SILENT GRAPH <$into>"; ep = ep)
+        update!("DROP SILENT GRAPH <$tomb>"; ep = ep)
     else
         record_firing!(f; actor = actor, ep = ep)
     end
@@ -165,8 +236,6 @@ function run_rule(spec::RuleSpec; source::AbstractVector = String[],
                   actor::AbstractString = "jayhawk", max_iterations::Integer = 100,
                   ep::SparqlEndpoint = endpoint())
     mode = mode_symbol(spec)
-    mode === :Rewrite && error(
-        "rule <$(spec.iri)>: gistp:Rewrite is not supported yet; see compile_rule.")
     max_iterations >= 1 || throw(ArgumentError(
         "max_iterations must be at least 1, got $max_iterations."))
     mode === :Assert && isempty(source) && throw(ArgumentError(
@@ -178,7 +247,12 @@ function run_rule(spec::RuleSpec; source::AbstractVector = String[],
     firings = Firing[]
     working = String[String.(source)...]
 
-    if mode === :Construct
+    # Construct applies once by definition. Rewrite also applies once, deliberately:
+    # iterating a rule that deletes needs a negative application condition to say when it
+    # has already fired, and there is no NAC vocabulary yet. Usually a rewrite cannot
+    # re-match anyway, because L \ I is exactly what it just removed -- but "usually" is
+    # not a termination argument, and a loop that deletes is not one to guess at.
+    if mode === :Construct || mode === :Rewrite
         push!(firings, apply_rule(spec; source = working, actor = actor, iteration = 1, ep = ep))
         return firings
     end
@@ -200,6 +274,36 @@ run_rule(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint(), kw...) =
     run_rule(load_rule(rule_iri; ep = ep); ep = ep, kw...)
 
 """
+    dry_run_rewrite(spec; source, limit, ep) -> (count, sample, removed, removed_sample)
+
+What a `Rewrite` would delete and add, computed from the live data without touching it.
+
+Both halves are projected into scratch graphs from the *same* match solutions the real
+rewrite would use, so this is a preview rather than an estimate. The target graph is only
+ever read. Both scratch graphs are dropped on every path out, including on error.
+"""
+function dry_run_rewrite(spec::RuleSpec; source::AbstractVector, limit::Integer = 25,
+                         ep::SparqlEndpoint = endpoint())
+    length(source) == 1 || throw(ArgumentError(
+        "rule <$(spec.iri)>: gistp:Rewrite needs exactly one source graph; got $(length(source))."))
+    gadd, gdel = new_firing_graph(), new_firing_graph()
+    peek(g) = select("""
+        SELECT ?s ?p ?o WHERE { GRAPH <$g> { ?s ?p ?o } }
+        ORDER BY ?s ?p ?o LIMIT $(Int(limit))"""; ep = ep)
+    try
+        for (g, ts) in ((gadd, construct_only(spec)), (gdel, match_only(spec)))
+            q = project_query(spec; triples = ts, into = g, from = source)
+            isempty(q) || update!(q; ep = ep)
+        end
+        (count = graph_size(gadd; ep = ep), sample = peek(gadd),
+         removed = graph_size(gdel; ep = ep), removed_sample = peek(gdel))
+    finally
+        update!("DROP SILENT GRAPH <$gadd>"; ep = ep)
+        update!("DROP SILENT GRAPH <$gdel>"; ep = ep)
+    end
+end
+
+"""
     dry_run(rule; source = String[], limit = 25, ep = endpoint())
         -> (count = Int, sample = Vector)
 
@@ -214,6 +318,8 @@ first, exactly as in a real application.
 """
 function dry_run(spec::RuleSpec; source::AbstractVector = String[], limit::Integer = 25,
                  ep::SparqlEndpoint = endpoint())
+    mode_symbol(spec) === :Rewrite &&
+        return dry_run_rewrite(spec; source = source, limit = limit, ep = ep)
     g = new_firing_graph()
     try
         update!(insert_query(spec; into = g, from = source); ep = ep)
@@ -272,6 +378,24 @@ function undo_firing!(graph::AbstractString; force::Bool = false,
         "for it. undo_firing! reverses graphs this engine created and nothing else -- it " *
         "is not a general DROP GRAPH. Use `firings()` to list what can be undone, or pass " *
         "force = true if you are cleaning up a firing whose provenance write failed.")
+
+    # A Rewrite changed the data in place, so reversing it is not a DROP. Retract what the
+    # rule added and restore what it removed, in that order and in one request, reading both
+    # halves out of the record the firing itself wrote.
+    rw = select("""
+        SELECT ?target ?tomb WHERE { GRAPH <$PROVENANCE_GRAPH> {
+          <$g> <$(JH_NS)targetGraph> ?target ; <$(JH_NS)tombstoneGraph> ?tomb } }"""; ep = ep)
+    if !isempty(rw)
+        target = (rw[1]["target"]::IRIRef).value
+        tomb   = (rw[1]["tomb"]::IRIRef).value
+        update!("""
+            DELETE { GRAPH <$target> { ?s ?p ?o } }
+            WHERE  { GRAPH <$g> { ?s ?p ?o } } ;
+            INSERT { GRAPH <$target> { ?s ?p ?o } }
+            WHERE  { GRAPH <$tomb> { ?s ?p ?o } } ;
+            DROP SILENT GRAPH <$tomb>"""; ep = ep)
+    end
+
     update!("DROP SILENT GRAPH <$g>"; ep = ep)
     update!("""
         DELETE WHERE { GRAPH <$PROVENANCE_GRAPH> { <$g> ?p ?o } }"""; ep = ep)
@@ -304,5 +428,5 @@ function firings(; rule::Union{AbstractString,Nothing} = nothing,
       iteration = parse(Int, (r["iter"]::RDFLiteral).lexical)) for r in rows]
 end
 
-export Firing, apply_rule, run_rule, dry_run, undo_firing!, is_firing, firings, graph_size
-export PROVENANCE_GRAPH, new_firing_graph
+export Firing, apply_rule, apply_rewrite!, run_rule, dry_run, dry_run_rewrite, undo_firing!, is_firing, firings, graph_size
+export PROVENANCE_GRAPH, new_firing_graph, new_tombstone_graph

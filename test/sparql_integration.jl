@@ -158,7 +158,8 @@ function engine_cleanup()
               "$(RULES)PersonToEmployee_L", "$(RULES)PersonToEmployee_R",
               "http://example.org/tcrules/PartOfTransitive_L",
               "http://example.org/tcrules/PartOfTransitive_R",
-              "$(RULES)PersonToEmployeeRecord_L", "$(RULES)PersonToEmployeeRecord_R")
+              "$(RULES)PersonToEmployeeRecord_L", "$(RULES)PersonToEmployeeRecord_R",
+              "$(RULES)FlattenIdentifier_L", "$(RULES)FlattenIdentifier_R")
         Jayhawk.update!("DROP SILENT GRAPH <$g>")
     end
     # the rules and their variable declarations live in the default graph
@@ -350,29 +351,6 @@ end
         for f in firings(); undo_firing!(f.graph); end
     end
 
-    @testset "Rewrite mode is refused against a live store" begin
-        # Deliberately not supported in round 1: DELETE { L∖I } needs the triple-level
-        # interface, and derived_interface.rq computes shared *variables*.
-        Jayhawk.update!("""
-            INSERT DATA {
-              <urn:r:Bad> a <$(Jayhawk.C_RULE)> ;
-                  <$(Jayhawk.P_MATCH)> <urn:r:Bad_L> ;
-                  <$(Jayhawk.P_CONSTRUCT)> <urn:r:Bad_R> ;
-                  <$(Jayhawk.P_MODE)> <$(Jayhawk.MODE_REWRITE)> .
-              <urn:r:v> a <$(Jayhawk.C_SPARQLVAR)> ; <$(Jayhawk.P_VARIABLETEXT)> "?v" .
-            }
-            ;
-            INSERT DATA {
-              GRAPH <urn:r:Bad_L> { <urn:r:v> a <urn:r:Thing> }
-              GRAPH <urn:r:Bad_R> { <urn:r:v> a <urn:r:Other> }
-            }""")
-        err = try compile_from_store("urn:r:Bad") catch e; e end
-        @test occursin("not supported yet", sprint(showerror, err))
-        @test_throws Exception run_rule("urn:r:Bad")
-
-        Jayhawk.update!("DROP SILENT GRAPH <urn:r:Bad_L>")
-        Jayhawk.update!("DROP SILENT GRAPH <urn:r:Bad_R>")
-    end
 
     @testset "minting: a rule that creates a node that did not exist" begin
         Jayhawk.load_file!(fixture("minting_rule.trig"))
@@ -497,6 +475,93 @@ end
         Jayhawk.update!("DROP SILENT GRAPH <$DATA_GRAPH>")
     end
 
+    @testset "Rewrite: the mode that takes facts away" begin
+        Jayhawk.load_file!(fixture("rewrite_rule.trig"))
+        rule = "$(RULES)FlattenIdentifier"
+        Jayhawk.update!("DROP SILENT GRAPH <$DATA_GRAPH>")
+        Jayhawk.update!("""
+            INSERT DATA { GRAPH <$DATA_GRAPH> {
+              <urn:p1> a <$(GIST)Person> ; <$(GIST)isIdentifiedBy> <urn:id1> .
+              <urn:id1> a <$(GIST)ID> ; <$(GIST)containedText> "E-4471" .
+              <urn:p9> a <$(GIST)Person> .
+            } }""")
+        snapshot() = Set((sparql_text(r["s"]), sparql_text(r["p"]), sparql_text(r["o"]))
+                         for r in select("SELECT ?s ?p ?o WHERE { GRAPH <$DATA_GRAPH> { ?s ?p ?o } }"))
+        original = snapshot()
+        @test length(original) == 5
+
+        @testset "I is computed from the store, not assumed" begin
+            spec = load_rule(rule)
+            @test mode_symbol(spec) === :Rewrite
+            @test length(interface(spec)) == 1        # :_P a gist:Person, repeated in R
+            @test length(match_only(spec)) == 3
+            @test length(construct_only(spec)) == 1
+            @test dangling_risks(spec) == ["?_I"]     # the identifier node is stranded
+        end
+
+        @testset "dry_run previews both halves and changes nothing" begin
+            d = dry_run(rule; source = [DATA_GRAPH])
+            @test d.removed == 3
+            @test d.count == 1
+            @test snapshot() == original              # target untouched
+        end
+
+        local f
+        @testset "applying it mutates in place and records a tombstone" begin
+            f = run_rule(rule; source = [DATA_GRAPH], actor = "integration")[1]
+            @test f.mode === :Rewrite
+            @test f.count == 1 && f.removed == 3
+            @test !isempty(f.tombstone)
+            @test f.target == DATA_GRAPH
+
+            now = snapshot()
+            @test length(now) == 3
+            # the preserved triple survived -- it is in I, because R repeats it
+            @test ("<urn:p1>", "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+                   "<$(GIST)Person>") in now
+            @test ("<urn:p1>", "<$(HR)employeeNumber>", "\"E-4471\"") in now
+            @test !any(sub == "<urn:id1>" for (sub, _, _) in now)
+            # p9 has no identifier, so L never matched it
+            @test ("<urn:p9>", "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>",
+                   "<$(GIST)Person>") in now
+
+            tomb = Set((sparql_text(r["s"]), sparql_text(r["p"]), sparql_text(r["o"]))
+                       for r in select("SELECT ?s ?p ?o WHERE { GRAPH <$(f.tombstone)> { ?s ?p ?o } }"))
+            @test tomb == setdiff(original, now)
+        end
+
+        @testset "undo restores the graph exactly" begin
+            # DROP alone cannot do this: a deletion has to be replayed from the tombstone.
+            undo_firing!(f.graph)
+            @test snapshot() == original
+            @test graph_size(f.tombstone) == 0
+            @test graph_size(f.graph) == 0
+            @test isempty(firings(rule = rule))
+        end
+
+        @testset "the MCP tool refuses to delete without confirmation" begin
+            out = tool_run_rule(rule; source = [DATA_GRAPH])
+            @test occursin("Refused", out)
+            @test occursin("DELETES", out)
+            @test occursin("remove 3", out)
+            @test snapshot() == original              # nothing happened
+
+            out2 = tool_run_rule(rule; source = [DATA_GRAPH], confirm = true, actor = "agent")
+            @test occursin("removed 3", out2)
+            @test length(snapshot()) == 3
+            for fr in firings(rule = rule); undo_firing!(fr.graph); end
+            @test snapshot() == original
+        end
+
+        @testset "a rewrite needs exactly one target graph" begin
+            # "delete from the union of these three" is neither expressible nor reviewable
+            @test_throws ArgumentError run_rule(rule; source = String[])
+            @test_throws ArgumentError run_rule(rule; source = [DATA_GRAPH, TC_GRAPH])
+        end
+
+        Jayhawk.update!("DROP SILENT GRAPH <$DATA_GRAPH>")
+    end
+
     @testset "the agent-facing tools" begin
         # These are the MCP surface, but they depend on nothing but the engine, so they are
         # exercised here rather than through the protocol. bin/mcp_server.jl is the adapter.
@@ -538,7 +603,7 @@ end
 
         @testset "run_rule then undo_firing round-trips" begin
             out = tool_run_rule(rule; source = [DATA_GRAPH], actor = "agent-7")
-            @test occursin("added 2 new triple(s)", out)
+            @test occursin("added 2 triple(s)", out)
 
             log = firings(rule = rule)
             @test length(log) == 1
