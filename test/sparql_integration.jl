@@ -135,3 +135,243 @@ server_reachable() =
         @test r[1]["n"]["value"] == "0"
     end
 end
+
+# ===========================================================================
+# The Function-Graph engine: pattern -> SPARQL -> store.
+# ===========================================================================
+
+const GIST  = "https://w3id.org/semanticarts/ns/ontology/gist/"
+const HR    = "http://example.org/hr/"
+const RULES = "http://example.org/rules/"
+const TC    = "http://example.org/tc/"
+const DATA_GRAPH = "urn:jayhawk:engine-test"
+const TC_GRAPH   = "urn:jayhawk:engine-test-tc"
+
+fixture(name) = joinpath(@__DIR__, "fixtures", name)
+
+"Drop everything this file creates, including every firing it produced."
+function engine_cleanup()
+    for f in firings()
+        undo_firing!(f.graph)
+    end
+    for g in (DATA_GRAPH, TC_GRAPH, Jayhawk.PROVENANCE_GRAPH,
+              "$(RULES)PersonToEmployee_L", "$(RULES)PersonToEmployee_R",
+              "http://example.org/tcrules/PartOfTransitive_L",
+              "http://example.org/tcrules/PartOfTransitive_R")
+        Jayhawk.update!("DROP SILENT GRAPH <$g>")
+    end
+    # the rules and their variable declarations live in the default graph
+    Jayhawk.update!("""
+        DELETE WHERE { ?s <$(Jayhawk.P_MATCH)> ?o } ;
+        DELETE WHERE { ?s <$(Jayhawk.P_CONSTRUCT)> ?o } ;
+        DELETE WHERE { ?s <$(Jayhawk.P_MODE)> ?o } ;
+        DELETE WHERE { ?s <$(Jayhawk.P_VARIABLETEXT)> ?o } ;
+        DELETE WHERE { ?s <$(Jayhawk.P_IRITEMPLATE)> ?o } ;
+        DELETE WHERE { ?s a <$(Jayhawk.C_RULE)> } ;
+        DELETE WHERE { ?s a <$(Jayhawk.C_SPARQLVAR)> } ;
+        DELETE WHERE { ?s a <$(Jayhawk.GISTP_NS)SparqlPattern> }""")
+end
+
+@testset "Function-Graph engine (Fuseki)" begin
+
+    engine_cleanup()
+
+    @testset "SELECT preserves literal datatypes" begin
+        # The test that could not pass before src/term.jl existed. Serd's Literal has one
+        # `langordt` field for two exclusive concepts and its parser never stores a
+        # datatype, so `"42"^^ex:custom` came back byte-identical to plain `"42"`.
+        # SPARQL Results JSON carries the datatype; term_from_json keeps it.
+        Jayhawk.update!("""
+            INSERT DATA { GRAPH <$DATA_GRAPH> {
+              <urn:dt:s> <urn:dt:int>   "42"^^<http://www.w3.org/2001/XMLSchema#integer> ;
+                         <urn:dt:var>   "?x"^^<$(Jayhawk.GISTP_VAR)> ;
+                         <urn:dt:plain> "42" ;
+                         <urn:dt:lang>  "hello"@en .
+            } }""")
+        rows = select("SELECT ?p ?o WHERE { GRAPH <$DATA_GRAPH> { <urn:dt:s> ?p ?o } }")
+        by = Dict((r["p"]::IRIRef).value => r["o"] for r in rows)
+
+        @test by["urn:dt:int"] == RDFLiteral("42", "http://www.w3.org/2001/XMLSchema#integer")
+        @test by["urn:dt:var"] == RDFLiteral("?x", Jayhawk.GISTP_VAR)
+        @test by["urn:dt:plain"] == RDFLiteral("42")
+        @test by["urn:dt:lang"] == RDFLiteral("hello", nothing, "en")
+
+        # the distinction that matters: a gistp:var literal is not a plain string
+        @test by["urn:dt:var"] != RDFLiteral("?x")
+        @test is_var_literal(by["urn:dt:var"])
+        @test !is_var_literal(by["urn:dt:plain"])
+        # and a typed integer is not the plain literal with the same lexical form
+        @test by["urn:dt:int"] != by["urn:dt:plain"]
+
+        Jayhawk.update!("DROP SILENT GRAPH <$DATA_GRAPH>")
+    end
+
+    @testset "a rule loads out of the store" begin
+        # Jena parses the TriG, over the Graph Store Protocol. Julia never parses RDF.
+        Jayhawk.load_file!(fixture("person_to_employee.trig"))
+
+        @test "$(RULES)PersonToEmployee" in list_rules()
+
+        spec = load_rule("$(RULES)PersonToEmployee")
+        @test mode_symbol(spec) === :Construct
+        @test spec.match_graph == "$(RULES)PersonToEmployee_L"
+        @test spec.construct_graph == "$(RULES)PersonToEmployee_R"
+        @test length(spec.match) == 4       # the pattern IS its graph
+        @test length(spec.construct) == 2
+        @test spec.variables["$(RULES)_Person_1"] == "?_Person_1"
+        @test spec.variables["$(RULES)_ID_1"] == "?_ID_1"
+        @test spec.templates["$(RULES)_Person_1"] == ":_Employee_{person_id}"
+
+        # the literal-position variable survived the round trip through the store
+        @test any(is_var_literal(t.object) for t in spec.match)
+    end
+
+    @testset "compiled SPARQL is stable and runs" begin
+        q = compile_from_store("$(RULES)PersonToEmployee")
+        @test occursin("CONSTRUCT {", q)
+        @test occursin("?_Person_1", q)      # IRI-position variable
+        @test occursin("?idText", q)         # literal-position variable
+        @test !occursin("gistp", q)          # the marker datatype is consumed, not emitted
+        # sorted on load, so compiling twice gives byte-identical text
+        @test q == compile_from_store("$(RULES)PersonToEmployee")
+    end
+
+    @testset "Construct: apply, attribute, undo" begin
+        Jayhawk.update!("""
+            INSERT DATA { GRAPH <$DATA_GRAPH> {
+              <urn:p1> a <$(GIST)Person> ; <$(GIST)isIdentifiedBy> <urn:id1> .
+              <urn:id1> a <$(GIST)ID> ; <$(GIST)containedText> "E-4471" .
+              <urn:p2> a <$(GIST)Person> ; <$(GIST)isIdentifiedBy> <urn:id2> .
+              <urn:id2> a <$(GIST)ID> ; <$(GIST)containedText> "E-9902" .
+              <urn:p3> a <$(GIST)Person> .
+            } }""")
+
+        fs = run_rule("$(RULES)PersonToEmployee"; source = [DATA_GRAPH], actor = "integration")
+        @test length(fs) == 1                     # Construct applies exactly once
+        f = fs[1]
+        @test f.mode === :Construct
+        @test f.count == 4                        # two people, two triples each
+
+        produced = Set((sparql_text(r["s"]), sparql_text(r["p"]), sparql_text(r["o"]))
+                       for r in select("SELECT ?s ?p ?o WHERE { GRAPH <$(f.graph)> { ?s ?p ?o } }"))
+        @test ("<urn:p1>", "<$(HR)employeeNumber>", "\"E-4471\"") in produced
+        @test ("<urn:p2>", "<$(HR)employeeNumber>", "\"E-9902\"") in produced
+        # p3 has no identifier, so the match pattern does not select it
+        @test !any(s == "<urn:p3>" for (s, _, _) in produced)
+
+        @testset "the firing is attributable" begin
+            log = firings(rule = "$(RULES)PersonToEmployee")
+            @test length(log) == 1
+            @test log[1].graph == f.graph
+            @test log[1].actor == "integration"
+            @test log[1].count == 4
+            @test log[1].iteration == 1
+        end
+
+        @testset "undo is complete" begin
+            undo_firing!(f.graph)
+            @test graph_size(f.graph) == 0
+            @test isempty(firings(rule = "$(RULES)PersonToEmployee"))
+            # the source data is untouched -- round 1 rules only ever add
+            @test graph_size(DATA_GRAPH) == 9
+        end
+    end
+
+    @testset "Assert iterates to a least fixpoint" begin
+        Jayhawk.load_file!(fixture("transitive_rule.trig"))
+        # a chain of four edges: a -> b -> c -> d -> e
+        Jayhawk.update!("""
+            INSERT DATA { GRAPH <$TC_GRAPH> {
+              <$(TC)a> <$(TC)partOf> <$(TC)b> .
+              <$(TC)b> <$(TC)partOf> <$(TC)c> .
+              <$(TC)c> <$(TC)partOf> <$(TC)d> .
+              <$(TC)d> <$(TC)partOf> <$(TC)e> .
+            } }""")
+
+        rule = "http://example.org/tcrules/PartOfTransitive"
+        @test mode_symbol(load_rule(rule)) === :Assert
+
+        fs = run_rule(rule; source = [TC_GRAPH], actor = "integration")
+        # the transitive closure of a 4-edge chain has 4+3+2+1 = 10 pairs; 4 were given
+        @test sum(f.count for f in fs) == 6
+        @test all(f.mode === :Assert for f in fs)
+        @test [f.iteration for f in fs] == collect(1:length(fs))
+        # it converged: the driver stops when a round contributes nothing, and the empty
+        # final round leaves no graph behind
+        @test length(fs) >= 2
+
+        @testset "every derived edge is a real path" begin
+            derived = Set((sparql_text(r["s"]), sparql_text(r["o"]))
+                          for f in fs
+                          for r in select("SELECT ?s ?o WHERE { GRAPH <$(f.graph)> { ?s ?p ?o } }"))
+            @test ("<$(TC)a>", "<$(TC)e>") in derived    # the longest shortcut
+            @test ("<$(TC)a>", "<$(TC)c>") in derived
+            @test !(("<$(TC)e>", "<$(TC)a>") in derived) # closure is not symmetric
+        end
+
+        @testset "no firing restates a fact the working set already held" begin
+            # prune_known! is what makes the fixpoint terminate: without it a round
+            # re-derives what it derived before, count never reaches zero, and the
+            # driver spins until the iteration cap.
+            for f in fs
+                n = select("""SELECT (COUNT(*) AS ?n) WHERE {
+                                GRAPH <$(f.graph)> { ?s ?p ?o }
+                                GRAPH <$TC_GRAPH>  { ?s ?p ?o } }""")
+                @test parse(Int, (n[1]["n"]::RDFLiteral).lexical) == 0
+            end
+        end
+
+        for f in fs
+            undo_firing!(f.graph)
+        end
+        @test graph_size(TC_GRAPH) == 4     # back to the four given edges
+    end
+
+    @testset "the iteration cap raises rather than returning a partial answer" begin
+        rule = "http://example.org/tcrules/PartOfTransitive"
+        err = try
+            run_rule(rule; source = [TC_GRAPH], max_iterations = 1)
+            nothing
+        catch e
+            e
+        end
+        @test err !== nothing
+        msg = sprint(showerror, err)
+        @test occursin("PartOfTransitive", msg)     # names the offending rule
+        @test occursin("chase", msg)                # and says why a cap is needed at all
+        for f in firings(); undo_firing!(f.graph); end
+    end
+
+    @testset "Rewrite mode is refused against a live store" begin
+        # Deliberately not supported in round 1: DELETE { L∖I } needs the triple-level
+        # interface, and derived_interface.rq computes shared *variables*.
+        Jayhawk.update!("""
+            INSERT DATA {
+              <urn:r:Bad> a <$(Jayhawk.C_RULE)> ;
+                  <$(Jayhawk.P_MATCH)> <urn:r:Bad_L> ;
+                  <$(Jayhawk.P_CONSTRUCT)> <urn:r:Bad_R> ;
+                  <$(Jayhawk.P_MODE)> <$(Jayhawk.MODE_REWRITE)> .
+              <urn:r:v> a <$(Jayhawk.C_SPARQLVAR)> ; <$(Jayhawk.P_VARIABLETEXT)> "?v" .
+            }
+            ;
+            INSERT DATA {
+              GRAPH <urn:r:Bad_L> { <urn:r:v> a <urn:r:Thing> }
+              GRAPH <urn:r:Bad_R> { <urn:r:v> a <urn:r:Other> }
+            }""")
+        err = try compile_from_store("urn:r:Bad") catch e; e end
+        @test occursin("not supported yet", sprint(showerror, err))
+        @test_throws Exception run_rule("urn:r:Bad")
+
+        Jayhawk.update!("DROP SILENT GRAPH <urn:r:Bad_L>")
+        Jayhawk.update!("DROP SILENT GRAPH <urn:r:Bad_R>")
+    end
+
+    engine_cleanup()
+
+    @testset "engine cleanup left nothing behind" begin
+        @test isempty(list_rules())
+        @test isempty(firings())
+        @test graph_size(DATA_GRAPH) == 0
+        @test graph_size(TC_GRAPH) == 0
+    end
+end

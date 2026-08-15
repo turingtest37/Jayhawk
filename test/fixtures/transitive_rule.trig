@@ -1,0 +1,49 @@
+#  Transitive closure of ex:partOf, as a gistp:Assert rule.
+#
+#  Exists to exercise the fixpoint driver, which the Person-to-Employee example cannot:
+#  that rule reads gist:Person and writes ex:Employee, so its output can never match its own
+#  input and it converges after exactly one round. This one feeds itself, so it iterates
+#  until nothing new is derived -- the least fixpoint, which is what gistp:Assert means.
+#
+#     default graph   the Rule and its variable declarations
+#     named graph L   the match pattern's triples, and nothing else
+#     named graph R   the construct pattern's triples, and nothing else
+
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix ex:    <http://example.org/tc/> .
+@prefix :      <http://example.org/tcrules/> .
+
+:PartOfTransitive
+    rdf:type gistp:Rule ;
+    skos:prefLabel "partOf is transitive" ;
+    skos:definition "If a is part of b and b is part of c, then a is part of c." ;
+    gistp:hasMatchPattern     :PartOfTransitive_L ;
+    gistp:hasConstructPattern :PartOfTransitive_R ;
+    # Assert, not Construct: the result is G union f(G), iterated to a least fixpoint.
+    # Compiles to exactly the same SPARQL as Construct would; only the driver differs.
+    gistp:rewriteMode         gistp:Assert .
+
+:PartOfTransitive_L rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "match: a two-step partOf chain" .
+
+:PartOfTransitive_R rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "construct: the shortcut edge" .
+
+# --- variables -------------------------------------------------------------
+# All three are shared between L and R or bound by L, so nothing trips the
+# use-before-def check. None carries an iriTemplate: this rule mints no IRIs, which is
+# what guarantees it terminates.
+:_a rdf:type gistp:SparqlVariable ; gistp:variableText "?a" .
+:_b rdf:type gistp:SparqlVariable ; gistp:variableText "?b" .
+:_c rdf:type gistp:SparqlVariable ; gistp:variableText "?c" .
+
+:PartOfTransitive_L {
+    :_a ex:partOf :_b .
+    :_b ex:partOf :_c .
+}
+
+:PartOfTransitive_R {
+    :_a ex:partOf :_c .
+}

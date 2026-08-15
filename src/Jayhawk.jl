@@ -50,6 +50,10 @@ include("analyze.jl")
 include("generate.jl")
 include("execute.jl")
 include("build.jl")
+# The Function-Graph engine: pattern -> SPARQL -> store. Deliberately independent of the
+# materialiser above -- it works in absolute IRIs and never calls makeqname or Core.eval.
+include("compile.jl")
+include("harness.jl")
 
 # Jayhawk provides the framework for building applications that are graph-based and data-centric.
 

@@ -978,6 +978,149 @@ end
     end
 end
 
+@testset "compiler (pure)" begin
+    # compile_rule is a pure function of a RuleSpec, so the whole of it is testable with
+    # no server running. These specs are built by hand; loading one out of a store is
+    # exercised in test/sparql_integration.jl.
+    G    = "https://w3id.org/semanticarts/ns/ontology/gist/"
+    HR   = "http://example.org/hr/"
+    R    = "http://example.org/rules/"
+    TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+
+    iri(s) = IRIRef(s)
+    var(s) = RDFLiteral(s, Jayhawk.GISTP_VAR)
+
+    person_to_employee(; mode = Jayhawk.MODE_CONSTRUCT) = RuleSpec(
+        "$(R)PersonToEmployee", mode, "$(R)PersonToEmployee_L", "$(R)PersonToEmployee_R",
+        [PatternTriple(iri("$(R)_Person_1"), iri(TYPE),              iri("$(G)Person")),
+         PatternTriple(iri("$(R)_Person_1"), iri("$(G)isIdentifiedBy"), iri("$(R)_ID_1")),
+         PatternTriple(iri("$(R)_ID_1"),     iri(TYPE),              iri("$(G)ID")),
+         PatternTriple(iri("$(R)_ID_1"),     iri("$(G)containedText"), var("?idText"))],
+        [PatternTriple(iri("$(R)_Person_1"), iri(TYPE),                iri("$(HR)Employee")),
+         PatternTriple(iri("$(R)_Person_1"), iri("$(HR)employeeNumber"), var("?idText"))],
+        Dict("$(R)_Person_1" => "?_Person_1", "$(R)_ID_1" => "?_ID_1"),
+        Dict("$(R)_Person_1" => ":_Employee_{person_id}"))
+
+    @testset "golden snapshot" begin
+        # Byte-for-byte. Terms are emitted as absolute IRIs, so the output never depends on
+        # a PREFIX declaration or on the global prefix registry.
+        expected = """
+        # Construct rule <http://example.org/rules/PersonToEmployee>
+        CONSTRUCT {
+          ?_Person_1 <http://example.org/hr/employeeNumber> ?idText .
+          ?_Person_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/hr/Employee> .
+        }
+        WHERE {
+          ?_ID_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/semanticarts/ns/ontology/gist/ID> .
+          ?_ID_1 <https://w3id.org/semanticarts/ns/ontology/gist/containedText> ?idText .
+          ?_Person_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/semanticarts/ns/ontology/gist/Person> .
+          ?_Person_1 <https://w3id.org/semanticarts/ns/ontology/gist/isIdentifiedBy> ?_ID_1 .
+        }
+        """
+        # note: patterns are sorted on load, so build the spec in sorted order to compare
+        spec = person_to_employee()
+        sorted = RuleSpec(spec.iri, spec.mode, spec.match_graph, spec.construct_graph,
+                          sort(spec.match; by = t -> (sparql_text(t.subject), sparql_text(t.predicate), sparql_text(t.object))),
+                          sort(spec.construct; by = t -> (sparql_text(t.subject), sparql_text(t.predicate), sparql_text(t.object))),
+                          spec.variables, spec.templates)
+        @test compile_rule(sorted) == expected
+    end
+
+    @testset "both variable mechanisms resolve" begin
+        spec = person_to_employee()
+        # IRI position: a declared individual, resolved by RDF identity
+        @test var_of(iri("$(R)_Person_1"), spec) == "?_Person_1"
+        # literal position: no declaration anywhere, recognised only by ^^gistp:var
+        @test var_of(var("?idText"), spec) == "?idText"
+        # constants stay constants
+        @test var_of(iri("$(G)Person"), spec) === nothing
+        @test var_of(RDFLiteral("?idText"), spec) === nothing   # untyped: a plain string
+        @test term_sparql(iri("$(G)Person"), spec) == "<$(G)Person>"
+        @test term_sparql(RDFLiteral("plain"), spec) == "\"plain\""
+    end
+
+    @testset "Construct and Assert emit identical SPARQL" begin
+        # The whole point of the mode split: one compiler, two drivers. Only the leading
+        # comment differs, so compare the bodies.
+        body(s) = join(filter(l -> !startswith(l, "#"), split(compile_rule(s), "\n")), "\n")
+        @test body(person_to_employee(mode = Jayhawk.MODE_CONSTRUCT)) ==
+              body(person_to_employee(mode = Jayhawk.MODE_ASSERT))
+    end
+
+    @testset "Rewrite is refused rather than mis-compiled" begin
+        err = try compile_rule(person_to_employee(mode = Jayhawk.MODE_REWRITE)) catch e; e end
+        msg = sprint(showerror, err)
+        @test occursin("not supported yet", msg)
+        @test occursin("triple-level", msg)      # says *why*: I = L ∩ R is uncomputed
+    end
+
+    @testset "unknown mode is refused" begin
+        @test_throws ArgumentError compile_rule(person_to_employee(mode = "http://ex.org/Nope"))
+    end
+
+    @testset "use-before-def: a typo in a literal variable is caught" begin
+        # The failure an LLM author hits most: literal-position variables are matched across
+        # L and R by string equality of the lexical form, so ?idtext against ?idText is a
+        # name error nowhere -- it just silently constructs nothing.
+        spec = person_to_employee()
+        typo = RuleSpec(spec.iri, spec.mode, spec.match_graph, spec.construct_graph,
+                        spec.match,
+                        [PatternTriple(iri("$(R)_Person_1"), iri("$(HR)employeeNumber"), var("?idtext"))],
+                        spec.variables, spec.templates)
+        err = try compile_rule(typo) catch e; e end
+        msg = sprint(showerror, err)
+        @test occursin("?idtext", msg)
+        @test occursin("never binds", msg)
+        @test occursin("typo", msg)
+    end
+
+    @testset "minting via iriTemplate is refused with its own message" begin
+        # A variable that appears only in R *and* has an iriTemplate is the minting case.
+        # Real, but the vocabulary never says where a template's slots get their values.
+        spec = person_to_employee()
+        minting = RuleSpec(spec.iri, spec.mode, spec.match_graph, spec.construct_graph,
+                           # L no longer binds ?_Person_1
+                           [PatternTriple(iri("$(R)_ID_1"), iri(TYPE), iri("$(G)ID"))],
+                           [PatternTriple(iri("$(R)_Person_1"), iri(TYPE), iri("$(HR)Employee"))],
+                           spec.variables, spec.templates)
+        err = try compile_rule(minting) catch e; e end
+        msg = sprint(showerror, err)
+        @test occursin("mints", msg)
+        @test occursin("iriTemplate", msg)
+    end
+
+    @testset "empty patterns are refused" begin
+        spec = person_to_employee()
+        empty_l = RuleSpec(spec.iri, spec.mode, spec.match_graph, spec.construct_graph,
+                           PatternTriple[], spec.construct, spec.variables, spec.templates)
+        # an empty L binds nothing, so use-before-def fires first -- either way it is refused
+        @test_throws Exception compile_rule(empty_l)
+    end
+
+    @testset "insert_query wraps the same patterns with USING" begin
+        spec = person_to_employee()
+        q = insert_query(spec; into = "urn:firing:x", from = ["urn:a", "urn:b"])
+        @test occursin("INSERT {", q)
+        @test occursin("GRAPH <urn:firing:x>", q)
+        @test occursin("USING <urn:a>", q)
+        @test occursin("USING <urn:b>", q)
+        # the match pattern is character-identical to the CONSTRUCT form's
+        @test occursin(bgp_text(spec.match, spec), q)
+        # no USING at all when the working set is the store's default graph
+        @test !occursin("USING", insert_query(spec; into = "urn:firing:x"))
+    end
+
+    @testset "illegal IRIs are refused, not emitted" begin
+        spec = person_to_employee()
+        # keep L otherwise intact, so the binding check passes and emission is reached
+        bad = RuleSpec(spec.iri, spec.mode, spec.match_graph, spec.construct_graph,
+                       vcat(spec.match,
+                            [PatternTriple(iri("http://ex.org/a b"), iri(TYPE), iri("$(G)ID"))]),
+                       spec.construct, spec.variables, spec.templates)
+        @test_throws ArgumentError compile_rule(bad)
+    end
+end
+
 # Everything above is hermetic: no network, no server, ~6 seconds. Keep it that way.
 #
 # The SPARQL integration tests need a live Apache Jena Fuseki and are therefore opt-in.

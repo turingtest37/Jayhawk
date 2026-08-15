@@ -1,0 +1,95 @@
+#  NOTE: this is a copy of gistPatterns/example_rule.trig, kept here so that Jayhawk's
+#  test suite is self-contained and does not reach into a sibling repository. The
+#  authoritative version lives in ~/dev/gistPatterns, where verify.py validates it against
+#  gistPatternShapes.ttl. If the two drift, that one wins.
+#
+# A complete rewrite rule, serialised as TriG.
+#
+# Replaces process_instances_example.ttl, which was not valid Turtle and parsed to zero
+# triples. Read this alongside the skos:scopeNote on gistp:SparqlPattern.
+#
+# Layout, and the reason for it:
+#
+#   default graph   the Rule, and the *description* of each variable -- variableText,
+#                   iriTemplate, oneOf, and the rdf:type gistp:SparqlVariable assertion
+#   named graph L   the match pattern's triples, and nothing else
+#   named graph R   the construct pattern's triples, and nothing else
+#
+# Keeping description out of the named graphs is what lets a compiler emit
+# GRAPH <pattern> { ?s ?p ?o } straight out as a Basic Graph Pattern. Nothing has to be
+# filtered, and there is no predicate blacklist to keep in step with the vocabulary.
+
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix ex:    <http://example.org/hr/> .
+@prefix :      <http://example.org/rules/> .
+
+#################################################################
+#    Default graph: the rule and its variables
+#################################################################
+
+:PersonToEmployee
+    rdf:type gistp:Rule ;
+    skos:prefLabel "Person to Employee" ;
+    skos:definition "Every gist:Person bearing an identifier becomes an ex:Employee carrying the same identifier text." ;
+    gistp:hasMatchPattern     :PersonToEmployee_L ;
+    gistp:hasConstructPattern :PersonToEmployee_R ;
+    # Pure function G -> f(G): compiles to CONSTRUCT { R } WHERE { L }.
+    gistp:rewriteMode         gistp:Construct .
+
+:PersonToEmployee_L rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "match: a Person with an identifier" .
+
+:PersonToEmployee_R rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "construct: the corresponding Employee" .
+
+# --- variables -------------------------------------------------------------
+# Each is an individual typed BOTH as its real domain type and as a SparqlVariable, so the
+# pattern is simultaneously valid domain data and a placeholder. A reasoner or SHACL
+# processor can check it like any other instance data, which an opaque SPARQL string blob
+# could never allow.
+
+:_Person_1
+    rdf:type gist:Person , gistp:SparqlVariable ;
+    gistp:variableText "?_Person_1" ;
+    gistp:iriTemplate ":_Employee_{person_id}" ;
+    skos:definition "The person being reclassified. Shared between L and R, so it is in the derived interface I." .
+
+:_ID_1
+    rdf:type gist:ID , gistp:SparqlVariable ;
+    gistp:variableText "?_ID_1" ;
+    skos:definition "The person's identifier. Also shared, also in I." .
+
+#################################################################
+#    L -- the match pattern
+#################################################################
+
+:PersonToEmployee_L {
+    :_Person_1 rdf:type gist:Person ;
+               gist:isIdentifiedBy :_ID_1 .
+
+    :_ID_1 rdf:type gist:ID ;
+           gist:containedText "?idText"^^gistp:var .
+}
+
+#################################################################
+#    R -- the construct pattern
+#################################################################
+
+:PersonToEmployee_R {
+    :_Person_1 rdf:type ex:Employee ;
+               ex:employeeNumber "?idText"^^gistp:var .
+}
+
+# Derived interface I = L n R = { :_Person_1 }, plus the literal variable ?idText carried
+# across. Non-empty, so this rewrites rather than replaces and the NonEmptyInterfaceShape
+# warning does not fire.
+#
+# Note what I does *not* record: whether `:_Person_1 rdf:type gist:Person` is preserved or
+# deleted-and-reasserted. Extensionally identical, but different under critical-pair
+# analysis. Deriving I as L n R takes the maximal reading, which is the right default.
