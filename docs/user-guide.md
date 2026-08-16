@@ -1,5 +1,7 @@
 # Jayhawk User Guide
 
+*Also published as a web page: [Rules You Can Draw](https://claude.ai/code/artifact/387c189b-0e2a-4546-a6da-cc166369088d). This file is the source of truth.*
+
 Jayhawk turns **RDF graph patterns into functions that take a graph and produce a graph**.
 
 A rule is two pictures: what must be true (**L**), and what becomes true (**R**). Both are
@@ -369,5 +371,6 @@ Each message names the fix.
 
 - `examples/moneygraph/` — the four rules above, runnable, and exercised by the test suite
   so this guide cannot drift from the engine.
-- `docs/developer-guide.md` — how the compiler works and how to extend it.
+- `docs/developer-guide.md` — how the compiler works and how to extend it
+  ([web version](https://claude.ai/code/artifact/2ccf34ca-2b5e-4b39-bcb2-c983678008c6)).
 - `~/dev/gistPatterns` — the pattern vocabulary itself, its SHACL shapes, and `verify.py`.

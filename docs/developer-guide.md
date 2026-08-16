@@ -1,8 +1,10 @@
 # Jayhawk Developer Guide
 
+*Also published as a web page: [SPARQL Matches, Julia Computes](https://claude.ai/code/artifact/2ccf34ca-2b5e-4b39-bcb2-c983678008c6). This file is the source of truth.*
+
 How the engine is built, which invariants hold it together, and where the sharp edges are.
 
-For *using* it, read `docs/user-guide.md` first — this assumes you know what a rule is.
+For *using* it, read [`docs/user-guide.md`](https://claude.ai/code/artifact/387c189b-0e2a-4546-a6da-cc166369088d) first — this assumes you know what a rule is.
 
 ---
 

@@ -29,6 +29,12 @@ julia --project=bin bin/mcp_server.jl                    # MCP server over stdio
 
 Skills in `.claude/skills/` cover the details: `jl-test`, `jl-probe`, `sparql`, `ttl`.
 
+## Documentation
+
+- `docs/user-guide.md` — writing, running, reviewing and undoing rules ([web](https://claude.ai/code/artifact/387c189b-0e2a-4546-a6da-cc166369088d))
+- `docs/developer-guide.md` — architecture, invariants, how to extend ([web](https://claude.ai/code/artifact/2ccf34ca-2b5e-4b39-bcb2-c983678008c6))
+- `examples/moneygraph/` — four runnable rules, one per feature, exercised by the test suite
+
 ## The engine
 
 ### Three phases, one of them impure
