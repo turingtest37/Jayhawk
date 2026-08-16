@@ -20,7 +20,7 @@ import EzXML: XMLDocument, parsexml, findall, namespaces, namespace
 # passes a `SparqlEndpoint` instead of mutating them -- see `set_endpoint!`.
 
 "String representation of the graph store's SPARQL query service URL."
-const spqservice = get(ENV, "JAYHAWK_SPARQL_SERVICE", "http://localhost:3030/jayhawk")
+const spqservice = get(ENV, "JAYHAWK_SPARQL_SERVICE", "http://localhost:3040/jayhawk")
 
 "String representation of the graph store's SPARQL update service URL."
 const spqupdservice = get(ENV, "JAYHAWK_UPDATE_SERVICE", spqservice * "/update")

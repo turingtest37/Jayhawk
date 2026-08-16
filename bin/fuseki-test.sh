@@ -18,7 +18,7 @@
 set -e
 
 FUSEKI_JAR="${FUSEKI_JAR:-$HOME/dev/apache-jena-fuseki-5.6.0/fuseki-server.jar}"
-PORT="${FUSEKI_TEST_PORT:-3030}"
+PORT="${FUSEKI_TEST_PORT:-3040}"
 DATASET="${FUSEKI_TEST_DATASET:-jayhawk}"
 GRAPH="urn:ontology"
 

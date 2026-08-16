@@ -4,7 +4,7 @@
 #
 #     julia --project=. bin/mcp_server.jl
 #
-# Configure the store with JAYHAWK_SPARQL_SERVICE (default http://localhost:3030/jayhawk),
+# Configure the store with JAYHAWK_SPARQL_SERVICE (default http://localhost:3040/jayhawk),
 # started by ./resource/fuseki-test.sh start.
 #
 # This adapter deliberately lives outside the package. ModelContextProtocol.jl pulls in

@@ -20,7 +20,7 @@ Jayhawk is two things that share a repository and very little code.
 
 ```bash
 julia --project=. test/runtests.jl                       # hermetic, ~6s, no server
-./resource/fuseki-test.sh start                          # local Fuseki on :3030/jayhawk
+./resource/fuseki-test.sh start                          # local Fuseki on :3040/jayhawk
 JAYHAWK_TEST_SPARQL=1 julia --project=. test/runtests.jl # + integration tests
 
 julia --project=bin -e 'using Pkg; Pkg.instantiate()'    # once
@@ -110,7 +110,7 @@ Process-global state in the materialiser, one piece deliberately corrupt:
 
 - **Serd** — Turtle parsing for the materialiser only. A local fork at `../Serd.jl`
   (`jayhawk-1`), so the project is not clonable without that sibling checkout.
-- **Fuseki** — default `http://localhost:3030/jayhawk`, overridable via
+- **Fuseki** — default `http://localhost:3040/jayhawk`, overridable via
   `JAYHAWK_SPARQL_SERVICE` / `JAYHAWK_UPDATE_SERVICE` before Julia starts, or at runtime with
   `set_endpoint!`.
 - **ModelContextProtocol.jl** — `bin/Project.toml` only, never a Jayhawk dependency: it is

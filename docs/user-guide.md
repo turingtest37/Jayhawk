@@ -18,11 +18,11 @@ You need Julia 1.10+, a checkout of Jayhawk, and Apache Jena Fuseki.
 
 ```bash
 cd ~/dev/Jayhawk
-./resource/fuseki-test.sh start          # in-memory Fuseki on :3030/jayhawk
+./resource/fuseki-test.sh start          # in-memory Fuseki on :3040/jayhawk
 julia --project=. -e 'using Jayhawk'
 ```
 
-The engine talks to `http://localhost:3030/jayhawk` by default. Point it elsewhere with
+The engine talks to `http://localhost:3040/jayhawk` by default. Point it elsewhere with
 `JAYHAWK_SPARQL_SERVICE` before Julia starts, or at runtime:
 
 ```julia

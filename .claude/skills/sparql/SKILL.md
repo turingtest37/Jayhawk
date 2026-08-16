@@ -31,10 +31,10 @@ With dataset `/jayhawk` on port 3030:
 
 | purpose | URL |
 |---|---|
-| query | `http://localhost:3030/jayhawk` |
-| update | `http://localhost:3030/jayhawk/update` |
-| Graph Store read/write | `http://localhost:3030/jayhawk/data` |
-| Graph Store read-only | `http://localhost:3030/jayhawk/get` |
+| query | `http://localhost:3040/jayhawk` |
+| update | `http://localhost:3040/jayhawk/update` |
+| Graph Store read/write | `http://localhost:3040/jayhawk/data` |
+| Graph Store read-only | `http://localhost:3040/jayhawk/get` |
 
 **Query is the bare dataset path.** `/jayhawk/sparql` and `/jayhawk/query` both return
 **404** under `FusekiMainCmd`, and so does `/$/ping` — the admin routes only exist under
@@ -48,7 +48,7 @@ Fuseki differs from the GraphDB setup this project used previously, where query 
 ### curl + jq — fastest, no startup cost
 
 ```sh
-B=http://localhost:3030/jayhawk
+B=http://localhost:3040/jayhawk
 curl -s -G $B --data-urlencode 'query=SELECT ?c WHERE {
     GRAPH <urn:ontology> { ?c a <http://www.w3.org/2002/07/owl#Class> } } LIMIT 5' \
   -H 'Accept: application/sparql-results+json' | jq -r '.results.bindings[].c.value'
@@ -77,7 +77,7 @@ curl -X POST -H 'Content-Type: text/turtle;charset=utf-8' \
 
 ```sh
 /Users/doug/apache-jena-5.6.0/bin/rsparql \
-  --service http://localhost:3030/jayhawk \
+  --service http://localhost:3040/jayhawk \
   'SELECT (COUNT(*) AS ?n) WHERE { GRAPH <urn:ontology> { ?s ?p ?o } }'
 ```
 
@@ -106,7 +106,7 @@ setting it afterwards has no effect and there is no runtime setter.
 JAYHAWK_SPARQL_SERVICE=http://localhost:3031/other julia --project=. script.jl
 ```
 
-Defaults are `http://localhost:3030/jayhawk` and `<base>/update`, matching the rig.
+Defaults are `http://localhost:3040/jayhawk` and `<base>/update`, matching the rig.
 
 ## The `urn:ontology` convention
 

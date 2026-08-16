@@ -11,7 +11,7 @@
 #
 # The endpoint is baked into `Jayhawk.spqservice` as a `const` at module load, so
 # JAYHAWK_SPARQL_SERVICE must be exported *before* julia starts if the rig is not on
-# the default port. The default (http://localhost:3030/jayhawk) already matches
+# the default port. The default (http://localhost:3040/jayhawk) already matches
 # resource/fuseki-test.sh.
 #
 # These tests build and drop their own named graph and never touch <urn:ontology>, so

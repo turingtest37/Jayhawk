@@ -5555,7 +5555,7 @@
       22  "String representation of the graph store's SPARQL query servic
           e URL."
       23  const spqservice = get(ENV, "JAYHAWK_SPARQL_SERVICE", "http://l
-          ocalhost:3030/jayhawk")
+          ocalhost:3040/jayhawk")
      ...
       25  "String representation of the graph store's SPARQL update servi
           ce URL."
@@ -7456,7 +7456,7 @@
        4 #
        5 #     julia --project=. bin/mcp_server.jl
        7 # Configure the store with JAYHAWK_SPARQL_SERVICE (default http:
-         //localhost:3030/jayhawk),
+         //localhost:3040/jayhawk),
        8 # started by ./resource/fuseki-test.sh start.
       10 # This adapter deliberately lives outside the package. ModelCont
          extProtocol.jl pulls in
@@ -7657,7 +7657,7 @@
        22 +julia --project=. test/runtests.jl                       # her
           +metic, ~6s, no server                                         
        23 +./resource/fuseki-test.sh start                          # loc
-          +al Fuseki on :3030/jayhawk                                    
+          +al Fuseki on :3040/jayhawk                                    
        24 +JAYHAWK_TEST_SPARQL=1 julia --project=. test/runtests.jl # + i
           +ntegration tests                                              
        25  
@@ -7844,7 +7844,7 @@
           + fork at `../Serd.jl`                                         
       106 +  (`jayhawk-1`), so the project is not clonable without that s
           +ibling checkout.                                              
-      107 +- **Fuseki** — default `http://localhost:3030/jayhawk`, overri
+      107 +- **Fuseki** — default `http://localhost:3040/jayhawk`, overri
           +dable via                                                     
       108 +  `JAYHAWK_SPARQL_SERVICE` / `JAYHAWK_UPDATE_SERVICE` before J
           +ulia starts, or at runtime with                               
