@@ -36,7 +36,7 @@ end
 
 @testset "REVIEW: Round 4 (gistp:oneOf)" begin
 
-@testset "FINDING -- an enumerated IRI is emitted unvalidated" begin
+@testset "an enumerated IRI is validated like every other -- FIXED" begin
     # values_text renders each member with `sparql_text`, which wraps an IRI in <> and
     # checks nothing. `term_sparql`, which every other IRI in the query goes through, calls
     # `check_iri` first. So one rendering path validates and the other does not.
@@ -46,12 +46,8 @@ end
     # just one loaded from a store". By that standard this is the same hole in a new place.
     payload = "http://ex.org/a> } INSERT { <urn:pwned> <urn:p> <urn:o> } WHERE { VALUES ?c { <http://ex.org/b"
     s = enum_spec(values = RDFTerm[iri(payload)])
-    q = failure(() -> compile_rule(s)) === nothing ? compile_rule(s) : ""
-    @test_broken isempty(q)                       # ought to be refused
-    if !isempty(q)
-        @info "an enumerated IRI escapes its <> and opens a second clause" leaked =
-            occursin("} INSERT {", q)
-    end
+    # FIXED: values_text now runs members through check_iri, as term_sparql already did.
+    @test failure(() -> compile_rule(s)) isa ArgumentError
 
     # a literal member IS safe, because sparql_text escapes literals
     quoted = enum_spec(values = RDFTerm[RDFLiteral("a\" } INSERT { <urn:x> <urn:y> <urn:z> } #")])
@@ -195,19 +191,18 @@ end
     undo_firing!(f.graph)
 end
 
-@testset "FINDING -- an empty rdf:List is unreachable from the store" begin
+@testset "an empty rdf:List is diagnosed as one -- FIXED" begin
     # check_enums refuses an empty enumeration, but load_enums only creates a dict entry
     # when the property path yields a value. gistp:oneOf () is rdf:nil, the path matches
     # nothing, and the variable comes back simply un-enumerated -- so the check cannot fire
     # on a rule that was loaded, only on one built in Julia.
+    # FIXED: load_enums collects declared enumerations separately from their members, so
+    # rdf:nil is an empty enumeration rather than no enumeration, and the author is told
+    # about the truncated list instead of about a variable they never mistyped.
     spec = load_enum_rule("()"; in_l = false)
-    @test !haskey(spec.enums, "$(R)_c")                 # silently not an enumeration
-    err = failure(() -> compile_rule(spec))
-    @test err !== nothing                               # it still fails...
-    msg = sprint(showerror, err)
-    @info "gistp:oneOf () is diagnosed as" message = first(msg, 150)
-    # ...but as use-before-def, which points the author at the wrong thing
-    @test_broken occursin("never fire", msg)
+    @test haskey(spec.enums, "$(R)_c")
+    @test isempty(spec.enums["$(R)_c"])
+    @test occursin("never fire", sprint(showerror, failure(() -> compile_rule(spec))))
 end
 
 @testset "duplicate members collapse" begin

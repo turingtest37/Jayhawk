@@ -192,7 +192,17 @@ function load_enums(graphs::AbstractVector; ep::SparqlEndpoint = endpoint())
              <$P_ONEOF>/<$RDF_REST>*/<$RDF_FIRST> ?val .
           $(_occurs_in(graphs))
         }"""; ep = ep)
-    out = Dict{String,Vector{RDFTerm}}()
+    # Declared enumerations are collected separately from their members, so an empty list
+    # is distinguishable from no list at all. gistp:oneOf () is rdf:nil: the property path
+    # below matches nothing, and without this the variable would come back merely
+    # un-enumerated and be diagnosed later as an unbound variable -- pointing the author at
+    # a typo rather than at the truncated list they actually wrote.
+    declared = select("""
+        SELECT DISTINCT ?v WHERE {
+          ?v a <$C_SPARQLVAR> ; <$P_ONEOF> ?list .
+          $(_occurs_in(graphs))
+        }"""; ep = ep)
+    out = Dict{String,Vector{RDFTerm}}(_iri(r["v"]) => RDFTerm[] for r in declared)
     for r in rows
         push!(get!(out, _iri(r["v"]), RDFTerm[]), r["val"])
     end
@@ -618,8 +628,12 @@ function values_text(spec::RuleSpec)
     isempty(spec.enums) && return ""
     # Members are sorted HERE, not only in load_enums: a hand-built spec has whatever order
     # the author wrote, and the byte-stability guarantee has to hold however the spec arrived.
+    # Members go through the same validation as every other IRI the compiler emits.
+    # sparql_text alone wraps an IRI in <> and checks nothing, so a member containing '>'
+    # would close the clause and open another -- the variableText hole, in a new place.
+    member(t) = (t isa IRIRef && check_iri(t.value); sparql_text(t))
     lines = ("  VALUES $(spec.variables[iri]) " *
-             "{ $(join(sort(sparql_text.(spec.enums[iri])), " ")) }"
+             "{ $(join(sort(member.(spec.enums[iri])), " ")) }"
              for iri in sort(collect(keys(spec.enums))))
     string("\n", join(lines, "\n"))
 end
@@ -653,6 +667,64 @@ function check_enums(spec::RuleSpec)
             "rule <$(spec.iri)>: <$iri> carries both gistp:oneOf and gistp:iriTemplate. " *
             "Enumerating and constructing are contradictory: oneOf says the value is one of " *
             "these, the template says it is computed from other bindings. Choose one.")
+    end
+    spec
+end
+
+"""
+    check_no_blanks(spec)
+
+Refuse a blank node anywhere in a pattern graph, and say what to write instead.
+
+A blank node is an **undeclared variable**, which is the one thing this design rejects
+everywhere else: variables are persistent typed individuals precisely so a pattern can be
+validated, diffed, and given metadata. A blank node has none of that, and it means three
+incompatible things depending on where it sits:
+
+  * in the match pattern it behaves as a non-selectable variable -- "some thing";
+  * in the construct pattern it is a *fresh* node per solution;
+  * across the two it connects nothing, because SPARQL scoping will not carry a blank node
+    from a WHERE clause into a CONSTRUCT template. The same label in L and R is two
+    different nodes.
+
+And in `DELETE { L ∖ I }` it is not merely ambiguous but illegal: SPARQL Update forbids
+blank nodes in a DELETE template, so a `Rewrite` carrying one emits a query the store
+rejects.
+
+Skolemising them to IRIs would fix the syntax and keep the bug: in L or in a DELETE a Skolem
+IRI is a *constant*, so the pattern would match exactly one node that exists nowhere and the
+rule would silently never fire. In R the right answer already exists and is better --
+`gistp:iriTemplate` is Skolemisation with the function stated, and stated is what makes it
+deterministic, which is what makes an `Assert` fixpoint converge.
+"""
+function check_no_blanks(spec::RuleSpec)
+    graphs = [("match pattern", spec.match_graph, spec.match),
+              ("construct pattern", spec.construct_graph, spec.construct),
+              (("negative condition", n.graph, n.triples) for n in spec.nacs)...]
+    for (role, graph, triples) in graphs
+        labels = String[]
+        for t in triples, pos in (t.subject, t.predicate, t.object)
+            pos isa BNode && !(pos.id in labels) && push!(labels, pos.id)
+        end
+        isempty(labels) && continue
+
+        # A precise fix beats a diagnosis. Emit the declarations to paste, and name the
+        # substitution to make, rather than leaving the author to work it out.
+        decls = join(("    :_b$i a gistp:SparqlVariable ; gistp:variableText \"?_b$i\" ." *
+                      "      # was _:$(labels[i+1])" for i in 0:length(labels)-1), "\n")
+        subs = join(("_:$(labels[i+1]) -> :_b$i" for i in 0:length(labels)-1), ", ")
+        error("""
+              rule <$(spec.iri)>: $role <$graph> contains $(length(labels)) blank node(s). A \
+              blank node is an undeclared variable -- it cannot be validated, cannot carry \
+              gistp:oneOf or gistp:iriTemplate, does not connect L to R (SPARQL will not \
+              carry it from WHERE into CONSTRUCT), and is illegal outright in the DELETE \
+              template a gistp:Rewrite emits.
+
+              Declare each one in the default graph:
+
+              $decls
+
+              then substitute in <$graph>: $subs""")
     end
     spec
 end
@@ -784,6 +856,7 @@ A variable is available to R if the match pattern binds it, **or** if it is mint
 minted variable is bound by the `BIND` the compiler emits, not by a triple pattern.
 """
 function check_bound(spec::RuleSpec)
+    check_no_blanks(spec)
     check_variables(spec)
     check_enums(spec)
     check_mints(spec)
@@ -1185,7 +1258,7 @@ export compile_rule, compile_from_store, insert_query, rewrite_query, project_qu
 export list_rules, mode_symbol
 export interface, match_only, construct_only, dangling_risks
 export var_of, term_sparql, bgp_text, vars_in, check_bound, check_mints, check_variables
-export NacSpec, nacs_text, where_body, strategy_symbol
+export NacSpec, nacs_text, where_body, strategy_symbol, check_no_blanks
 export load_enums, values_text, enum_vars, check_enums
 export load_nac_graphs, load_strategy, load_priority, load_max_iterations
 export STRATEGY_ONCE, STRATEGY_TOFIXPOINT

@@ -758,6 +758,90 @@ end
         Jayhawk.update!("DROP SILENT GRAPH <$OF>")
     end
 
+    @testset "Skolemising incoming blank nodes" begin
+        SK = "urn:jayhawk:skolem-test"
+        Jayhawk.update!("DROP SILENT GRAPH <$SK>")
+        Jayhawk.load_graph!("""
+            @prefix ex: <http://example.org/sk/> .
+            ex:s ex:p [ ex:q "inner" ; ex:r [ ex:deep "nested" ] ] .
+            ex:s2 ex:p ex:plain .
+            """, SK)
+
+        blanks() = length(select("""
+            SELECT ?s WHERE { GRAPH <$SK> { ?s ?p ?o }
+                              FILTER(isBlank(?s) || isBlank(?o)) }"""))
+
+        @testset "every blank node is named, and the structure survives" begin
+            @test blanks() == 4                       # two bnodes, four incident triples
+            n = skolemize!(graph = SK)
+            @test n == 4
+            @test blanks() == 0
+
+            # the nested link must still point at the same node it did before: a rewrite
+            # that renamed each occurrence independently would shred the graph
+            rows = select("""
+                SELECT ?deep WHERE { GRAPH <$SK> {
+                  <http://example.org/sk/s> <http://example.org/sk/p> ?outer .
+                  ?outer <http://example.org/sk/r> ?inner .
+                  ?inner <http://example.org/sk/deep> ?deep } }""")
+            @test length(rows) == 1
+            @test (rows[1]["deep"]::RDFLiteral).lexical == "nested"
+
+            # and the IRIs are in the documented namespace
+            subs = select("SELECT DISTINCT ?s WHERE { GRAPH <$SK> { ?s ?p ?o } }")
+            @test any(startswith((r["s"]::IRIRef).value, Jayhawk.SKOLEM_BASE) for r in subs)
+            # untouched data stays untouched
+            @test !isempty(select("""SELECT ?o WHERE { GRAPH <$SK> {
+                <http://example.org/sk/s2> <http://example.org/sk/p> ?o } }"""))
+        end
+
+        @testset "two loads do not merge, because their blank nodes never denoted the same thing" begin
+            # A fresh namespace per call is correctness, not convenience: blank nodes in two
+            # documents are distinct by RDF semantics, so reusing a base would silently
+            # identify them.
+            doc = """@prefix ex: <http://example.org/sk/> . ex:a ex:p [ ex:q "v" ] ."""
+            for g in ("urn:jayhawk:sk-a", "urn:jayhawk:sk-b")
+                Jayhawk.update!("DROP SILENT GRAPH <$g>")
+                Jayhawk.load_graph!(doc, g; skolemize = true)   # the flag on the exact scope
+            end
+            got(g) = Set((r["s"]::IRIRef).value for r in
+                select("SELECT DISTINCT ?s WHERE { GRAPH <$g> { ?s <http://example.org/sk/q> ?o } }"))
+            a, b = got("urn:jayhawk:sk-a"), got("urn:jayhawk:sk-b")
+            @test length(a) == 1 && length(b) == 1
+            @test isempty(intersect(a, b))            # distinct documents, distinct nodes
+            for g in ("urn:jayhawk:sk-a", "urn:jayhawk:sk-b")
+                Jayhawk.update!("DROP SILENT GRAPH <$g>")
+            end
+        end
+
+        @testset "base chooses the namespace, and nothing more" begin
+            # It does NOT make two loads share identity, and cannot: the label comes from
+            # the store's internal id for the node, minted afresh on every parse. Two loads
+            # of the same file are two documents, so disjoint names are the right answer --
+            # but it means these IRIs are stable going forward, not reproducible backward.
+            doc = """@prefix ex: <http://example.org/sk/> . ex:a ex:p [ ex:q "v" ] ."""
+            for g in ("urn:jayhawk:sk-c", "urn:jayhawk:sk-d")
+                Jayhawk.update!("DROP SILENT GRAPH <$g>")
+                Jayhawk.load_graph!(doc, g)
+                skolemize!(graph = g, base = "urn:jayhawk:shared:")
+            end
+            got(g) = Set((r["s"]::IRIRef).value for r in
+                select("SELECT DISTINCT ?s WHERE { GRAPH <$g> { ?s <http://example.org/sk/q> ?o } }"))
+            c, d = got("urn:jayhawk:sk-c"), got("urn:jayhawk:sk-d")
+            @test all(startswith(x, "urn:jayhawk:shared:") for x in union(c, d))
+            @test c != d                              # not reproducible, and correctly so
+            for g in ("urn:jayhawk:sk-c", "urn:jayhawk:sk-d")
+                Jayhawk.update!("DROP SILENT GRAPH <$g>")
+            end
+        end
+
+        @testset "skolemising a graph with no blank nodes is a no-op" begin
+            @test skolemize!(graph = SK) == 0
+        end
+
+        Jayhawk.update!("DROP SILENT GRAPH <$SK>")
+    end
+
     @testset "the agent-facing tools" begin
         # These are the MCP surface, but they depend on nothing but the engine, so they are
         # exercised here rather than through the protocol. bin/mcp_server.jl is the adapter.

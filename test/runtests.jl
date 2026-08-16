@@ -1537,6 +1537,64 @@ end
                     try run_rule(bounded; source = ["urn:g"]) catch e; e end)))
     end
 
+    @testset "a blank node in a pattern is refused, with the fix spelled out" begin
+        # A blank node is an undeclared variable: it cannot be validated, cannot carry
+        # oneOf or iriTemplate, does not connect L to R (SPARQL will not carry one from
+        # WHERE into CONSTRUCT), and is illegal outright in the DELETE a Rewrite emits.
+        base = person_to_employee()
+        withbn(field) = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+            field === :L ? vcat(base.match,
+                    [PatternTriple(BNode("x"), iri("$(G)isIdentifiedBy"), iri("$(R)_ID_1"))]) : base.match,
+            field === :R ? vcat(base.construct,
+                    [PatternTriple(iri("$(R)_Person_1"), iri("$(HR)worksAt"), BNode("y"))]) : base.construct,
+            base.variables, base.mints)
+
+        for (where, spec) in ((:L, withbn(:L)), (:R, withbn(:R)))
+            err = try compile_rule(spec) catch e; e end
+            msg = sprint(showerror, err)
+            @test occursin("blank node", msg)
+            # the message has to be actionable, not just correct
+            @test occursin("gistp:SparqlVariable", msg)
+            @test occursin("gistp:variableText", msg)
+            @test occursin("->", msg)                 # the substitution to make
+        end
+
+        # a negative condition is checked too
+        nacbn = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+            base.match, base.construct, base.variables, base.mints,
+            Dict{String,Vector{RDFTerm}}(),
+            [NacSpec("$(R)N", [PatternTriple(BNode("z"), iri(TYPE), iri("$(HR)Employee"))])],
+            nothing, 0, nothing)
+        @test occursin("negative condition", sprint(showerror,
+            try compile_rule(nacbn) catch e; e end))
+
+        # and a rule with none still compiles
+        @test compile_rule(base) isa String
+    end
+
+    @testset "an enumerated IRI is validated like every other" begin
+        # values_text used sparql_text, which wraps an IRI in <> and checks nothing, while
+        # every other IRI goes through term_sparql -> check_iri. A member containing '>'
+        # closed the clause and opened another.
+        payload = "http://ex.org/a> } INSERT { <urn:x> <urn:y> <urn:z> } WHERE { VALUES ?c { <http://ex.org/b"
+        s = person_to_employee()
+        bad = RuleSpec(s.iri, s.mode, s.match_graph, s.construct_graph, s.match, s.construct,
+                       merge(s.variables, Dict("$(R)_c" => "?c")), s.mints,
+                       Dict{String,Vector{RDFTerm}}("$(R)_c" => RDFTerm[iri(payload)]),
+                       NacSpec[], nothing, 0, nothing)
+        @test_throws ArgumentError compile_rule(bad)
+
+        # a literal member stays safe by escaping, which is the correct mechanism -- the
+        # payload text may appear, so long as it cannot terminate the literal
+        ok = RuleSpec(s.iri, s.mode, s.match_graph, s.construct_graph, s.match, s.construct,
+                      merge(s.variables, Dict("$(R)_c" => "?c")), s.mints,
+                      Dict{String,Vector{RDFTerm}}("$(R)_c" =>
+                          RDFTerm[RDFLiteral("a\" } INSERT { <urn:x> <urn:y> <urn:z> } #")]),
+                      NacSpec[], nothing, 0, nothing)
+        q = compile_rule(ok)
+        @test occursin("\\\" } INSERT {", q)
+    end
+
     @testset "insert_query wraps the same patterns with USING" begin
         spec = person_to_employee()
         q = insert_query(spec; into = "urn:firing:x", from = ["urn:a", "urn:b"])

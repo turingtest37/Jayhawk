@@ -3,6 +3,7 @@ using Mustache
 using HTTP
 using JSON
 using Dates
+using UUIDs
 
 import EzXML: XMLDocument, parsexml, findall, namespaces, namespace
 
@@ -197,14 +198,93 @@ For a TriG payload -- which names its own graphs -- POST to the *dataset* rather
 single graph; see [`load_dataset!`](@ref).
 """
 function load_graph!(content::AbstractString, graph_iri::AbstractString;
-                     ep::SparqlEndpoint = endpoint(), syntax::AbstractString = "text/turtle")
+                     ep::SparqlEndpoint = endpoint(), syntax::AbstractString = "text/turtle",
+                     skolemize::Bool = false)
     url = string(ep.gsp, "?graph=", URIs.escapeuri(graph_iri))
     try
         HTTP.put(url, Dict("Content-Type" => syntax), String(content); readtimeout = ep.timeout)
     catch e
         _http_error(e, "Graph Store PUT", url)
     end
+    # This targets one named graph, so the scope of the rewrite is exactly what was just
+    # loaded. A TriG payload spans graphs and has no such scope, which is why
+    # `load_dataset!` has no equivalent flag: call `skolemize!` on the graphs you meant.
+    skolemize && skolemize!(; graph = graph_iri, ep = ep)
     nothing
+end
+
+"Namespace for Skolem IRIs minted from incoming blank nodes."
+const SKOLEM_BASE = "urn:jayhawk:genid:"
+
+"""
+    skolemize!(; graph = nothing, base = SKOLEM_BASE * <fresh uuid> * ":", ep = endpoint())
+        -> Int
+
+Replace every blank node in `graph` (or in the whole dataset) with a Skolem IRI, and return
+how many triples were rewritten.
+
+RDF 1.1 §3.5 blesses this: a blank node is an existential, and naming it makes it an ordinary
+constant that can be referenced, transported and compared. Two things specific to this engine
+make it worth doing on the way in:
+
+  * **An agent cannot refer to a blank node.** It has no IRI, so `explain_rule` can display
+    one but `run_rule` and `undo_firing` cannot be pointed at it and no rule can be written
+    about it. For a surface whose whole premise is "named, attributable, reversible", a node
+    with no name sits outside the contract.
+  * **Blank node labels do not survive a serialisation round trip.** Identity holds inside
+    one store -- a firing graph, a tombstone and an undo all agree -- but a dump and reload
+    renumbers them, so provenance recorded before an export stops resolving after the
+    import.
+
+`base` chooses the namespace and nothing more. It defaults to a fresh one per call, which is
+the correct default rather than a convenience: blank nodes in two documents denote different
+things, so two loads must not be merged by naming them alike.
+
+**Skolem IRIs are not reproducible.** The label comes from the store's internal identifier
+for the node, which is minted afresh on every parse, so loading the same file twice yields
+two disjoint sets of IRIs even under one `base`. That is semantically right -- the two loads
+really are two documents -- but it means these IRIs are stable going *forward* (an export
+now carries them, and provenance keeps resolving) and cannot be used to recognise the same
+node across a re-ingest. Making them reproducible would mean hashing each node's
+surroundings, which is graph isomorphism.
+
+Not for patterns. In a match pattern a Skolem IRI is a *constant*, so the pattern would match
+one node that exists nowhere and the rule would silently never fire; in a construct pattern
+`gistp:iriTemplate` already does the job, deterministically. See `check_no_blanks`.
+"""
+function skolemize!(; graph::Union{AbstractString,Nothing} = nothing,
+                    base::AbstractString = string(SKOLEM_BASE, UUIDs.uuid4(), ":"),
+                    ep::SparqlEndpoint = endpoint())
+    scope = graph === nothing ? "?g" : "<$(check_iri(graph))>"
+    b = check_iri(base)
+    # STR() on a blank node is a type error in the SPARQL spec and lenient in Jena, where it
+    # yields "_:label". That leniency is what lets this be one update instead of an export,
+    # a text rewrite and a reload -- there is no standard way to name a blank node from
+    # inside a query. STRAFTER drops the "_:" so the Skolem IRI reads cleanly.
+    skolem(v) = "IRI(CONCAT(\"$b\", ENCODE_FOR_URI(STRAFTER(STR($v), \"_:\"))))"
+    before = _count_blank(scope; ep = ep)
+    update!("""
+        DELETE { GRAPH $scope { ?s ?p ?o } }
+        INSERT { GRAPH $scope { ?s2 ?p ?o2 } }
+        WHERE {
+          GRAPH $scope { ?s ?p ?o }
+          FILTER(isBlank(?s) || isBlank(?o))
+          BIND(IF(isBlank(?s), $(skolem("?s")), ?s) AS ?s2)
+          BIND(IF(isBlank(?o), $(skolem("?o")), ?o) AS ?o2)
+        }"""; ep = ep)
+    remaining = _count_blank(scope; ep = ep)
+    remaining == 0 || @warn(
+        "skolemize!: $remaining triple(s) still carry a blank node. STR() on a blank node " *
+        "is non-standard, so a store stricter than Jena will not support this.",
+        graph = graph, remaining = remaining)
+    before - remaining
+end
+
+function _count_blank(scope::AbstractString; ep::SparqlEndpoint = endpoint())
+    rows = select("""
+        SELECT (COUNT(*) AS ?n) WHERE {
+          GRAPH $scope { ?s ?p ?o } FILTER(isBlank(?s) || isBlank(?o)) }"""; ep = ep)
+    isempty(rows) ? 0 : parse(Int, (rows[1]["n"]::RDFLiteral).lexical)
 end
 
 """
@@ -263,4 +343,4 @@ function usparql(upd::String; dict=Dict(), ep::SparqlEndpoint = endpoint())
 end
 
 export SparqlEndpoint, endpoint, set_endpoint!
-export select, ask, update!, load_graph!, load_dataset!, load_file!
+export select, ask, update!, load_graph!, load_dataset!, load_file!, skolemize!
