@@ -148,6 +148,7 @@ const DATA_GRAPH = "urn:jayhawk:engine-test"
 const TC_GRAPH   = "urn:jayhawk:engine-test-tc"
 
 fixture(name) = joinpath(@__DIR__, "fixtures", name)
+example(name) = joinpath(@__DIR__, "..", "examples", "moneygraph", name)
 
 "Drop everything this file creates, including every firing it produced."
 function engine_cleanup()
@@ -840,6 +841,97 @@ end
         end
 
         Jayhawk.update!("DROP SILENT GRAPH <$SK>")
+    end
+
+    @testset "the moneygraph worked examples" begin
+        # Every figure in docs/user-guide.md comes from here. The guide quotes measured
+        # output, so if a rule changes behaviour the documentation fails with the code
+        # rather than quietly describing an engine that no longer exists.
+        MGD = "urn:jayhawk:example:moneygraph"
+        MGR = "https://w3id.org/moneygraph/ns/rules/"
+        MG  = "https://w3id.org/moneygraph/ns/ontology/"
+        MG3 = "https://w3id.org/moneygraph/ns/data/"
+        MGX = "https://w3id.org/moneygraph/ns/example/"
+
+        engine_cleanup()
+        Jayhawk.update!("DROP SILENT GRAPH <$MGD>")
+        for f in sort(readdir(joinpath(@__DIR__, "..", "examples", "moneygraph")))
+            endswith(f, ".trig") && Jayhawk.load_file!(example(f))
+        end
+
+        @testset "all four rules load and compile" begin
+            @test length(list_rules()) == 4
+            for r in ("ClassifyBond", "MintCouponEvent", "DomesticListing", "RetireListing")
+                @test compile_from_store("$MGR$r") isa String
+            end
+        end
+
+        @testset "1. classify: two instruments qualify as bonds" begin
+            fs = run_rule("$(MGR)ClassifyBond"; source = [MGD], actor = "docs")
+            @test sum(f.count for f in fs) == 2
+            bonds = Set((r["s"]::IRIRef).value for f in fs
+                        for r in select("SELECT ?s WHERE { GRAPH <$(f.graph)> { ?s ?p ?o } }"))
+            @test bonds == Set(["$(MG3)T4875", "$(MG3)IBM2029"])
+            # AAPL has no coupon rate, so L never reaches it
+            @test !any(occursin("AAPL", b) for b in bonds)
+            # merge, so the minting rule downstream has bonds to see
+            for f in fs
+                Jayhawk.update!("INSERT { GRAPH <$MGD> { ?s ?p ?o } } WHERE { GRAPH <$(f.graph)> { ?s ?p ?o } }")
+            end
+        end
+
+        @testset "2. mint: one event, because the guard declines the other" begin
+            fs = run_rule("$(MGR)MintCouponEvent"; source = [MGD], actor = "docs")
+            @test sum(f.count for f in fs) == 2       # one event, two triples about it
+            minted = Set((r["s"]::IRIRef).value for f in fs
+                         for r in select("SELECT DISTINCT ?s WHERE { GRAPH <$(f.graph)> { ?s ?p ?o } }"))
+            @test minted == Set(["$(MG3)coupon/T4875"])
+            # IBM2029 already had an event, so the negative condition refused the match --
+            # not the pruning: the gist:isAbout triple would have been genuinely new.
+            @test !any(occursin("IBM2029", m) for m in minted)
+            @test length(fs) == 1                     # and the guard converges it in one round
+            for f in fs
+                undo_firing!(f.graph)
+            end
+        end
+
+        @testset "3. oneOf constrains: only the enumerated exchanges" begin
+            fs = run_rule("$(MGR)DomesticListing"; source = [MGD], actor = "docs")
+            listed = Set((r["s"]::IRIRef).value for f in fs
+                         for r in select("SELECT ?s WHERE { GRAPH <$(f.graph)> { ?s ?p ?o } }"))
+            @test listed == Set(["$(MG3)AAPL", "$(MG3)ENRN"])
+            # NESN is on SIX, which is not in the enumeration
+            @test !any(occursin("NESN", l) for l in listed)
+            @test occursin("VALUES ?_Exch", compile_from_store("$(MGR)DomesticListing"))
+            for f in fs
+                undo_firing!(f.graph)
+            end
+        end
+
+        @testset "4. rewrite: one triple out, one in, undo exact" begin
+            snap() = Set((sparql_text(r["s"]), sparql_text(r["p"]), sparql_text(r["o"]))
+                         for r in select("SELECT ?s ?p ?o WHERE { GRAPH <$MGD> { ?s ?p ?o } }"))
+            before = snap()
+            spec = load_rule("$(MGR)RetireListing")
+            @test length(interface(spec)) == 2        # type and delisting date preserved
+            @test length(match_only(spec)) == 1
+            @test length(construct_only(spec)) == 1
+            @test isempty(dangling_risks(spec))       # R still mentions the exchange
+
+            f = run_rule("$(MGR)RetireListing"; source = [MGD], actor = "docs")[1]
+            @test f.count == 1 && f.removed == 1
+            now = snap()
+            @test ("<$(MG3)ENRN>", "<$(MG)isListedOn>", "<$(MG3)NYSE>") in setdiff(before, now)
+            @test ("<$(MG3)ENRN>", "<$(MGX)formerlyListedOn>", "<$(MG3)NYSE>") in setdiff(now, before)
+            # the delisting date and the type survived, because R repeats them
+            @test ("<$(MG3)ENRN>", "<$(MGX)delistedOn>", "\"2001-11-28\"^^<http://www.w3.org/2001/XMLSchema#date>") in now
+
+            undo_firing!(f.graph)
+            @test snap() == before
+        end
+
+        Jayhawk.update!("DROP SILENT GRAPH <$MGD>")
+        engine_cleanup()
     end
 
     @testset "the agent-facing tools" begin

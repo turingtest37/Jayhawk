@@ -1,0 +1,42 @@
+#  RULE 1 -- the simplest useful shape: classify what is already there.
+#
+#  A financial instrument carrying both a coupon rate and a maturity date is a bond. That is
+#  a definition, not a change of mind, so the rule only ADDS: gistp:Assert.
+#
+#  What to notice:
+#    * ?rate and ?maturity are LITERAL-position variables, written "?rate"^^gistp:var.
+#      They are matched but never used in R -- the rule needs them to exist, not to say
+#      anything about their values.
+#    * :_Sec appears in both graphs, so the instrument keeps its identity across the rewrite.
+#    * No iriTemplate anywhere: nothing here is created, only described.
+
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix mg:    <https://w3id.org/moneygraph/ns/ontology/> .
+@prefix :      <https://w3id.org/moneygraph/ns/rules/> .
+
+:ClassifyBond
+    rdf:type gistp:Rule ;
+    skos:prefLabel "Classify bond" ;
+    skos:definition "An instrument with a coupon rate and a maturity date is a mg:Bond." ;
+    gistp:hasMatchPattern     :ClassifyBond_L ;
+    gistp:hasConstructPattern :ClassifyBond_R ;
+    gistp:rewriteMode         gistp:Assert .
+
+:ClassifyBond_L rdf:type gistp:SparqlPattern .
+:ClassifyBond_R rdf:type gistp:SparqlPattern .
+
+:_Sec rdf:type gist:FinancialInstrument , gistp:SparqlVariable ;
+      gistp:variableText "?_Sec" .
+
+:ClassifyBond_L {
+    :_Sec rdf:type gist:FinancialInstrument ;
+          mg:couponRate   "?rate"^^gistp:var ;
+          mg:maturityDate "?maturity"^^gistp:var .
+}
+
+:ClassifyBond_R {
+    :_Sec rdf:type mg:Bond .
+}

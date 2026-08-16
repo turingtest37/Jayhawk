@@ -1,0 +1,68 @@
+#  RULE 2 -- create something that did not exist, once.
+#
+#  Every bond needs a coupon payment event. This mints one, with an IRI derived from the
+#  bond's own, and declines any bond that already has one.
+#
+#  What to notice:
+#    * :_Event carries a gistp:iriTemplate, and THAT is what makes it minted rather than
+#      matched -- so it must not appear in L. Its slot binds by RDF identity, not by the
+#      slot name happening to match a variable's name.
+#    * The negative condition mentions :_Event, the variable being CREATED. That is legal
+#      because the guard is emitted after the BIND that constructs it, and it is what makes
+#      the rule idempotent by statement rather than by accident.
+#    * The slot is bound to the TICKER, not to gist:name. Minting from a display name gives
+#      "coupon/IBM%203.30%25%20of%202029" -- correct, legal, and unreadable. ENCODE_FOR_URI
+#      is not slugging: it percent-encodes rather than tidying. Mint from a controlled
+#      identifier, never from free text.
+#    * gistp:strategy ToFixpoint with a stated budget. Minting is deterministic, so this
+#      would converge anyway -- but a rule that says when it is done is better than one that
+#      merely happens to stop.
+
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix mg:    <https://w3id.org/moneygraph/ns/ontology/> .
+@prefix mgx:   <https://w3id.org/moneygraph/ns/example/> .
+@prefix :      <https://w3id.org/moneygraph/ns/rules/> .
+
+:MintCouponEvent
+    rdf:type gistp:Rule ;
+    skos:prefLabel "Mint coupon payment event" ;
+    skos:definition "Every bond gets a coupon payment event, unless it already has one." ;
+    gistp:hasMatchPattern      :MintCouponEvent_L ;
+    gistp:hasConstructPattern  :MintCouponEvent_R ;
+    gistp:hasNegativeCondition :MintCouponEvent_NoEventYet ;
+    gistp:rewriteMode          gistp:Assert ;
+    gistp:strategy             gistp:ToFixpoint ;
+    gistp:maxIterations        5 ;
+    gistp:priority             50 .
+
+:MintCouponEvent_L           rdf:type gistp:SparqlPattern .
+:MintCouponEvent_R           rdf:type gistp:SparqlPattern .
+:MintCouponEvent_NoEventYet  rdf:type gistp:SparqlPattern .
+
+:_Bond rdf:type mg:Bond , gistp:SparqlVariable ;
+       gistp:variableText "?_Bond" .
+
+#  Minted. Absent from L; present in R and in the guard.
+:_Event rdf:type mg:CouponPaymentEvent , gistp:SparqlVariable ;
+        gistp:variableText "?_Event" ;
+        gistp:iriTemplate  "https://w3id.org/moneygraph/ns/data/coupon/{bond}" ;
+        gistp:hasSlot [ rdf:type gistp:TemplateSlot ;
+                        gistp:slotName  "bond" ;
+                        gistp:slotValue "?ticker"^^gistp:var ] .
+
+:MintCouponEvent_L {
+    :_Bond rdf:type mg:Bond ;
+           mgx:ticker "?ticker"^^gistp:var .
+}
+
+:MintCouponEvent_R {
+    :_Event rdf:type mg:CouponPaymentEvent ;
+            gist:isAbout :_Bond .
+}
+
+:MintCouponEvent_NoEventYet {
+    :_Event rdf:type mg:CouponPaymentEvent .
+}

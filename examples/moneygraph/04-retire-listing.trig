@@ -1,0 +1,57 @@
+#  RULE 4 -- gistp:Rewrite, the mode that takes facts away.
+#
+#  A delisted security should no longer claim a current listing. This removes the listing
+#  and records it as a former one.
+#
+#  What to notice:
+#    * I is authored by REPETITION. Two triples appear in both graphs, so they survive:
+#      the instrument's type, and the delisting date. Everything else in L is deleted.
+#
+#        I     = { :_Sec a gist:FinancialInstrument , :_Sec mgx:delistedOn ?when }
+#        L \ I = { :_Sec mg:isListedOn :_Exch }                     deleted
+#        R \ I = { :_Sec mgx:formerlyListedOn :_Exch }              added
+#
+#      Drop the repetition and the rule would strip the instrument of its type on the way
+#      past, which is exactly why the mode cannot be inferred from what happens to repeat.
+#    * :_Exch survives as a dangling risk only if R never mentions it. Here R does, so the
+#      exchange keeps a referent and the compiler reports nothing.
+#    * Running this needs confirm = true through MCP: it deletes from live data. The removed
+#      triples go to a tombstone graph in the same atomic update, so undo is exact.
+
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix mg:    <https://w3id.org/moneygraph/ns/ontology/> .
+@prefix mgx:   <https://w3id.org/moneygraph/ns/example/> .
+@prefix :      <https://w3id.org/moneygraph/ns/rules/> .
+
+:RetireListing
+    rdf:type gistp:Rule ;
+    skos:prefLabel "Retire listing" ;
+    skos:definition "A delisted security's current listing becomes a former listing." ;
+    gistp:hasMatchPattern     :RetireListing_L ;
+    gistp:hasConstructPattern :RetireListing_R ;
+    gistp:rewriteMode         gistp:Rewrite ;
+    gistp:strategy            gistp:Once .
+
+:RetireListing_L rdf:type gistp:SparqlPattern .
+:RetireListing_R rdf:type gistp:SparqlPattern .
+
+:_Sec  rdf:type gist:FinancialInstrument , gistp:SparqlVariable ;
+       gistp:variableText "?_Sec" .
+:_Exch rdf:type mg:Exchange , gistp:SparqlVariable ;
+       gistp:variableText "?_Exch" .
+
+:RetireListing_L {
+    :_Sec rdf:type gist:FinancialInstrument ;
+          mg:isListedOn  :_Exch ;
+          mgx:delistedOn "?when"^^gistp:var .
+}
+
+:RetireListing_R {
+    #  repeated from L on purpose: this is how a triple is placed in I and preserved
+    :_Sec rdf:type gist:FinancialInstrument ;
+          mgx:delistedOn        "?when"^^gistp:var ;
+          mgx:formerlyListedOn  :_Exch .
+}

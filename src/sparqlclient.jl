@@ -117,7 +117,6 @@ buildquerystr(content::String, m::Dict) = string("query=", URIs.escapeuri(render
 
 buildpostbody(content::String, m::Dict) = render_query(content, m)
 
-buildqueryfile(filename::String, m::Dict) = buildquerystr(read(filename, String), m)
 
 "Raise a legible error instead of letting HTTP.jl's StatusError escape with the body buried."
 function _http_error(e, what::AbstractString, url::AbstractString)

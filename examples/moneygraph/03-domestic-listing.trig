@@ -1,0 +1,48 @@
+#  RULE 3 -- gistp:oneOf, in its CONSTRAINING reading.
+#
+#  Tag every security listed on a US exchange. The set of US exchanges is a fixed list, so
+#  it is an enumeration rather than something to look up.
+#
+#  What to notice:
+#    * gistp:oneOf compiles to a SPARQL VALUES clause. Because :_Exch is ALSO bound by the
+#      match pattern, that clause is a join -- it narrows the matches. The very same clause
+#      would GENERATE if :_Exch appeared only in R: one result per value, a coproduct.
+#      Nothing in the vocabulary says which reading applies. The rest of the rule decides.
+#    * Construct, not Assert: this is a report, so the answer is f(G) on its own.
+
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix mg:    <https://w3id.org/moneygraph/ns/ontology/> .
+@prefix mg3:   <https://w3id.org/moneygraph/ns/data/> .
+@prefix mgx:   <https://w3id.org/moneygraph/ns/example/> .
+@prefix :      <https://w3id.org/moneygraph/ns/rules/> .
+
+:DomesticListing
+    rdf:type gistp:Rule ;
+    skos:prefLabel "Domestic listing" ;
+    skos:definition "A security listed on a US exchange is domestically listed." ;
+    gistp:hasMatchPattern     :DomesticListing_L ;
+    gistp:hasConstructPattern :DomesticListing_R ;
+    gistp:rewriteMode         gistp:Construct .
+
+:DomesticListing_L rdf:type gistp:SparqlPattern .
+:DomesticListing_R rdf:type gistp:SparqlPattern .
+
+:_Sec rdf:type gist:FinancialInstrument , gistp:SparqlVariable ;
+      gistp:variableText "?_Sec" .
+
+#  The enumeration. :_Exch is bound by L as well, so this constrains.
+:_Exch rdf:type mg:Exchange , gistp:SparqlVariable ;
+       gistp:variableText "?_Exch" ;
+       gistp:oneOf ( mg3:NASDAQ mg3:NYSE ) .
+
+:DomesticListing_L {
+    :_Sec rdf:type gist:FinancialInstrument ;
+          mg:isListedOn :_Exch .
+}
+
+:DomesticListing_R {
+    :_Sec mgx:isDomesticallyListed :_Exch .
+}

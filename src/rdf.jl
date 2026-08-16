@@ -260,5 +260,7 @@ export expand_uris
 
 # `parsent` was exported here but defined nowhere; its only caller was the `build`/
 # `objfromdict` pair in sparqlclient.jl, which has been removed along with it.
-export localname, ns, MaybeURI, MaybeString, xsdtype2j, @U_str, valueof
+# MaybeURI, MaybeString, xsdtype2j and valueof were exported here and defined nowhere --
+# the same class of stale entry as `parsent`, which the SPARQL client cleanup removed.
+export localname, ns, @U_str
 export makeqname, sanitize_name

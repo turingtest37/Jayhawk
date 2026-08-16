@@ -1,0 +1,58 @@
+#  A small slice of an investment graph, enough to run every rule in this directory.
+#
+#  The vocabulary is real: mg: is the moneygraph ontology (~/dev/moneygraph), gist: is gist
+#  Core. mgx: holds the two predicates this example adds for the delisting rule, which the
+#  published ontology does not define -- kept in a separate namespace so it is obvious which
+#  terms are borrowed and which are invented here.
+
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix gist: <https://w3id.org/semanticarts/ns/ontology/gist/> .
+@prefix mg:   <https://w3id.org/moneygraph/ns/ontology/> .
+@prefix mg3:  <https://w3id.org/moneygraph/ns/data/> .
+@prefix mgx:  <https://w3id.org/moneygraph/ns/example/> .
+
+<urn:jayhawk:example:moneygraph> {
+
+    #  Two exchanges, one domestic and one not.
+    mg3:NASDAQ a mg:Exchange .
+    mg3:SIX    a mg:Exchange .
+
+    #  A common stock: listed, no coupon. Should NOT be classified as a bond.
+    mg3:AAPL a gist:FinancialInstrument ;
+        gist:name       "Apple Inc. common stock" ;
+        mg:isListedOn   mg3:NASDAQ ;
+        mg:isIssuedBy   mg3:AppleInc .
+
+    #  A second, listed on an exchange outside the enumeration.
+    mg3:NESN a gist:FinancialInstrument ;
+        gist:name       "Nestle SA registered shares" ;
+        mg:isListedOn   mg3:SIX ;
+        mg:isIssuedBy   mg3:NestleSA .
+
+    #  A treasury note: coupon and maturity, so the classification rule should reach it.
+    mg3:T4875 a gist:FinancialInstrument ;
+        gist:name       "US Treasury 4.25% of 2031" ;
+        mgx:ticker      "T4875" ;
+        mg:couponRate   0.0425 ;
+        mg:maturityDate "2031-05-15"^^xsd:date ;
+        mg:isIssuedBy   mg3:USTreasury .
+
+    #  A corporate bond, likewise -- and already carrying its coupon event, so the minting
+    #  rule's negative condition has something to decline.
+    mg3:IBM2029 a gist:FinancialInstrument ;
+        gist:name       "IBM 3.30% of 2029" ;
+        mgx:ticker      "IBM2029" ;
+        mg:couponRate   0.0330 ;
+        mg:maturityDate "2029-05-15"^^xsd:date ;
+        mg:isIssuedBy   mg3:IBMCorp .
+
+    <https://w3id.org/moneygraph/ns/data/coupon/IBM2029> a mg:CouponPaymentEvent .
+
+    #  A delisted security, for the rewrite.
+    mg3:ENRN a gist:FinancialInstrument ;
+        gist:name        "Enron Corp common stock" ;
+        mg:isListedOn    mg3:NYSE ;
+        mgx:delistedOn   "2001-11-28"^^xsd:date .
+    mg3:NYSE a mg:Exchange .
+}
