@@ -1,5 +1,4 @@
 using URIs
-using Mustache
 using HTTP
 using JSON
 using Dates
@@ -81,17 +80,44 @@ UPDHEADERS = Dict(
 spqparams() = Dict()
 spqparams(d::Dict) = merge(spqparams(), d)
 
-# Mustache rendering is applied *only* when bindings are supplied. Generated SPARQL is full
-# of braces, and `{{` -- legal in SPARQL as nested group patterns -- is Mustache's opening
-# delimiter, so rendering unconditionally would silently corrupt compiler output.
-render_query(content::AbstractString, m::AbstractDict) =
-    isempty(m) ? String(content) : Mustache.render(String(content), m)
+"""
+    render_query(content, bindings) -> String
+
+Substitute `{{name}}` for each supplied binding, and touch nothing else.
+
+Deliberately *not* Mustache, though the delimiters are its. `{{` is legal SPARQL -- a nested
+group pattern -- and Mustache reads it as a section, so rendering
+`SELECT ?s WHERE { GRAPH <g> {{ ?s ?p ?o }} }` against any non-empty binding set deleted the
+whole group as an unresolved section and left `SELECT ?s WHERE { GRAPH <g>  }`. That happened
+to produce an HTTP 400; had the eaten group been an OPTIONAL or a FILTER it would have
+returned a confidently wrong answer instead.
+
+Plain replacement cannot do that: a brace pair that is not a supplied key is not a key, and
+is left exactly as written.
+
+A binding that matches nothing warns rather than raising. It is usually a typo, which is
+worth saying out loud -- but passing a shared dictionary across several queries is a
+reasonable thing to do, and refusing a harmless extra key would make templating hazardous
+in a different direction.
+"""
+function render_query(content::AbstractString, bindings::AbstractDict)
+    out = String(content)
+    for (k, v) in bindings
+        token = "{{$k}}"
+        if occursin(token, out)
+            out = replace(out, token => string(v))
+        else
+            @warn "binding matches nothing in the query; check for a typo" key = String(k) token
+        end
+    end
+    out
+end
 
 buildquerystr(content::String, m::Dict) = string("query=", URIs.escapeuri(render_query(content, m)))
 
 buildpostbody(content::String, m::Dict) = render_query(content, m)
 
-buildqueryfile(filename::String, m::Dict) = buildquerystr(Mustache.load(filename), m)
+buildqueryfile(filename::String, m::Dict) = buildquerystr(read(filename, String), m)
 
 "Raise a legible error instead of letting HTTP.jl's StatusError escape with the body buried."
 function _http_error(e, what::AbstractString, url::AbstractString)
@@ -333,7 +359,7 @@ end
 
 Run a SPARQL Update.
 
-`dict` supplies Mustache template bindings. It has to go to the `m` *keyword* --
+`dict` supplies {{name}} bindings, substituted by render_query. It has to go to the `m` *keyword* --
 `runsparql(upd, true, dict)` passed it as a third positional argument to a function that
 accepts two, so every call to `usparql` died with a `MethodError` before reaching the
 server.

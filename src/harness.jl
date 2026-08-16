@@ -116,6 +116,25 @@ function record_firing!(f::Firing; actor::AbstractString, ep::SparqlEndpoint = e
 end
 
 """
+    check_target_empty(into; ep)
+
+Refuse to write a firing into a graph that already holds something.
+
+`into` is a public keyword, and pointing it at occupied data makes two things wrong at once:
+`Firing.count` reports that graph's whole size as facts this rule contributed, and
+`undo_firing!` later DROPs the caller's data along with the result. The default is a fresh
+UUID graph, so this only fires when somebody named one deliberately.
+"""
+function check_target_empty(into::AbstractString; ep::SparqlEndpoint = endpoint())
+    n = graph_size(into; ep = ep)
+    n == 0 || throw(ArgumentError(
+        "target graph <$into> already holds $n triple(s). A firing graph must start empty: " *
+        "its size is reported as the facts this rule contributed, and undo_firing! drops " *
+        "the whole graph. Use a fresh graph, or omit `into` to get one."))
+    nothing
+end
+
+"""
     apply_rule(rule; into = new_firing_graph(), source = String[], actor = "jayhawk",
                iteration = 1, ep = endpoint()) -> Firing
 
@@ -136,6 +155,7 @@ function apply_rule(spec::RuleSpec; into::AbstractString = new_firing_graph(),
     # and nothing downstream ever notices. Static separator analysis happens in compile;
     # this catches what only the data can reveal.
     check_collisions(spec; from = source, ep = ep)
+    check_target_empty(into; ep = ep)
 
     mode_symbol(spec) === :Rewrite &&
         return apply_rewrite!(spec; into = into, source = source, actor = actor,
@@ -478,5 +498,5 @@ function firings(; rule::Union{AbstractString,Nothing} = nothing,
       tombstone = haskey(r, "tomb") ? (r["tomb"]::IRIRef).value : "") for r in rows]
 end
 
-export Firing, apply_rule, apply_rewrite!, run_rule, effective_strategy, dry_run, dry_run_rewrite, undo_firing!, is_firing, firings, graph_size
+export Firing, apply_rule, apply_rewrite!, check_target_empty, run_rule, effective_strategy, dry_run, dry_run_rewrite, undo_firing!, is_firing, firings, graph_size
 export PROVENANCE_GRAPH, new_firing_graph, new_tombstone_graph

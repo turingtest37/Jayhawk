@@ -360,9 +360,14 @@ function term_sparql(t::RDFTerm, spec::RuleSpec)
 end
 
 "Render a list of pattern triples as a Basic Graph Pattern."
-bgp_text(ts::Vector{PatternTriple}, spec::RuleSpec; indent::AbstractString = "  ") =
-    join(("$indent$(term_sparql(t.subject, spec)) $(term_sparql(t.predicate, spec)) " *
-          "$(term_sparql(t.object, spec)) ." for t in ts), "\n")
+function bgp_text(ts::Vector{PatternTriple}, spec::RuleSpec; indent::AbstractString = "  ")
+    # Sorted HERE, not only in load_pattern. "Same spec, same bytes" has to hold for every
+    # RuleSpec however it was built -- including one an MCP client hands in -- and a BGP is
+    # a set, so the order it was written in carries no meaning to preserve.
+    lines = ("$indent$(term_sparql(t.subject, spec)) $(term_sparql(t.predicate, spec)) " *
+             "$(term_sparql(t.object, spec)) ." for t in ts)
+    join(sort(collect(lines)), "\n")
+end
 
 "Every distinct SPARQL variable appearing anywhere in a pattern."
 function vars_in(ts::Vector{PatternTriple}, spec::RuleSpec)
@@ -500,6 +505,14 @@ function check_mints(spec::RuleSpec)
             "template expands to an absolute IRI; a bare local part leaves the minting " *
             "namespace implicit, which silently mints into whichever namespace the rule " *
             "document's empty prefix happens to name.")
+
+        wanted_now = template_slots(m.template)
+        isempty(wanted_now) && error(
+            "rule <$(spec.iri)>: iriTemplate $(repr(m.template)) on <$iri> has no {slot}, " *
+            "so it expands to the same IRI for every match and collapses every solution " *
+            "onto one node. If a single fixed node is what you want, write that IRI " *
+            "directly in the construct pattern -- a template with nothing to substitute " *
+            "buys nothing and reads as a mistake.")
 
         amb = ambiguous_separators(m.template)
         isempty(amb) || error(
@@ -730,6 +743,34 @@ function check_no_blanks(spec::RuleSpec)
 end
 
 """
+    check_positions(spec)
+
+Refuse a term in a position RDF does not allow it to occupy.
+
+A literal cannot be a subject and nothing but an IRI can be a predicate. Emitting one
+produces SPARQL the store rejects, so the author learns about it as an opaque HTTP 400 from
+Fuseki rather than as a statement about their rule. The pattern graphs themselves cannot
+contain such a triple -- RDF forbids it too -- but a hand-built `RuleSpec` can, and an MCP
+client hands specs in.
+"""
+function check_positions(spec::RuleSpec)
+    graphs = [("match pattern", spec.match_graph, spec.match),
+              ("construct pattern", spec.construct_graph, spec.construct),
+              (("negative condition", n.graph, n.triples) for n in spec.nacs)...]
+    for (role, graph, triples) in graphs, t in triples
+        t.subject isa RDFLiteral && error(
+            "rule <$(spec.iri)>: $role <$graph> has the literal $(sparql_text(t.subject)) " *
+            "as a subject. RDF has no literal subjects, so this cannot be matched or " *
+            "constructed.")
+        t.predicate isa IRIRef || error(
+            "rule <$(spec.iri)>: $role <$graph> has $(sparql_text(t.predicate)) as a " *
+            "predicate. Only an IRI can be a predicate -- including a variable, which is " *
+            "an IRI at pattern level.")
+    end
+    spec
+end
+
+"""
     check_variables(spec)
 
 Reject a rule whose `gistp:variableText` is not a legal SPARQL variable.
@@ -857,6 +898,7 @@ minted variable is bound by the `BIND` the compiler emits, not by a triple patte
 """
 function check_bound(spec::RuleSpec)
     check_no_blanks(spec)
+    check_positions(spec)
     check_variables(spec)
     check_enums(spec)
     check_mints(spec)
@@ -1258,7 +1300,7 @@ export compile_rule, compile_from_store, insert_query, rewrite_query, project_qu
 export list_rules, mode_symbol
 export interface, match_only, construct_only, dangling_risks
 export var_of, term_sparql, bgp_text, vars_in, check_bound, check_mints, check_variables
-export NacSpec, nacs_text, where_body, strategy_symbol, check_no_blanks
+export NacSpec, nacs_text, where_body, strategy_symbol, check_no_blanks, check_positions
 export load_enums, values_text, enum_vars, check_enums
 export load_nac_graphs, load_strategy, load_priority, load_max_iterations
 export STRATEGY_ONCE, STRATEGY_TOFIXPOINT

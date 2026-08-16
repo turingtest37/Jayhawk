@@ -136,11 +136,28 @@ function sparql_text(t::RDFLiteral)
     s
 end
 
-"An IRI that contains a character SPARQL forbids inside `<...>` cannot be emitted safely."
+"RFC 3986 §3.1: a scheme is a letter followed by letters, digits, `+`, `-` or `.`, then `:`."
+const ABSOLUTE_IRI_RE = r"^[a-zA-Z][a-zA-Z0-9+.\-]*:"
+
+"""
+    check_iri(v) -> v
+
+Reject an IRI the engine cannot emit safely, or one that is not absolute.
+
+Two separate hazards. A character SPARQL forbids inside `<...>` lets a value close its own
+brackets and start a new clause. And a *relative* IRI is legal to write but resolves against
+whatever base the query happens to carry -- so `GRAPH <../data>` silently addresses a graph
+nobody named. The engine works in absolute IRIs throughout, so the second is as much a
+correctness problem as the first is a security one.
+"""
 function check_iri(v::AbstractString)
     bad = findfirst(c -> c in ('<', '>', '"', '{', '}', '|', '^', '`', '\\') || isspace(c), v)
     bad === nothing || throw(ArgumentError(
         "IRI contains a character illegal inside <>: $(repr(v[bad])) in $(repr(String(v)))"))
+    occursin(ABSOLUTE_IRI_RE, v) || throw(ArgumentError(
+        "$(repr(String(v))) is not an absolute IRI: it has no scheme. A relative reference " *
+        "resolves against whatever base the query carries, so it would address something " *
+        "nobody named. The engine works in absolute IRIs throughout."))
     v
 end
 
@@ -184,4 +201,4 @@ end
 
 export RDFTerm, IRIRef, BNode, RDFLiteral
 export term_from_json, sparql_text, escape_literal, check_iri
-export is_var_literal, var_name, GISTP_VAR, VARIABLE_RE, XSD_STRING
+export is_var_literal, var_name, GISTP_VAR, VARIABLE_RE, XSD_STRING, ABSOLUTE_IRI_RE

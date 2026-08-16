@@ -1595,6 +1595,67 @@ end
         @test occursin("\\\" } INSERT {", q)
     end
 
+    @testset "a term in a position RDF forbids is refused" begin
+        # Emitting one produces SPARQL the store rejects, so without this the author meets
+        # an opaque HTTP 400 from Fuseki rather than a statement about their rule.
+        base = person_to_employee()
+        # R is reduced too: replacing all of L would otherwise unbind ?idText and trip
+        # use-before-def before the position check is reached.
+        simpleR = [PatternTriple(iri("$(R)_Person_1"), iri(TYPE), iri("$(HR)Employee"))]
+        with(ts) = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+                            ts, simpleR, base.variables, base.mints)
+        @test occursin("literal subjects", sprint(showerror, try compile_rule(with(
+            [PatternTriple(RDFLiteral("oops"), iri(TYPE), iri("$(G)Person"))])) catch e; e end))
+        @test occursin("predicate", sprint(showerror, try compile_rule(with(
+            [PatternTriple(iri("$(R)_Person_1"), RDFLiteral("oops"), iri("$(G)Person"))])) catch e; e end))
+        # a variable in predicate position is legal: it is an IRI at pattern level
+        @test compile_rule(with([PatternTriple(iri("$(R)_Person_1"), iri("$(R)_ID_1"),
+                                               iri("$(G)Person"))])) isa String
+    end
+
+    @testset "a template with no slot mints one node for every match" begin
+        # It expands to the same IRI whatever the binding, collapsing every solution onto
+        # one node. A fixed node is a legitimate thing to want -- but it is written as a
+        # constant in R, not as a template with nothing to substitute.
+        s = minting_rule(template = "http://example.org/hr/employee/fixed",
+                         slots = Dict{String,RDFTerm}())
+        msg = sprint(showerror, try compile_rule(s) catch e; e end)
+        @test occursin("no {slot}", msg)
+        @test occursin("directly in the construct pattern", msg)
+    end
+
+    @testset "same spec, same bytes -- whatever order it was built in" begin
+        # The sort lives in bgp_text, not only in load_pattern, so the guarantee holds for a
+        # spec an MCP client hands in as much as for one read from the store. A BGP is a set.
+        base = person_to_employee()
+        shuffled = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+                            reverse(base.match), reverse(base.construct),
+                            base.variables, base.mints)
+        @test compile_rule(base) == compile_rule(shuffled)
+    end
+
+    @testset "check_iri demands an absolute IRI" begin
+        for bad in ("", "../relative", "not-an-iri", "/absolute/path")
+            @test_throws ArgumentError check_iri(bad)
+        end
+        for good in ("http://ex.org/x", "urn:jayhawk:firing:1", "https://a.b/c#d")
+            @test check_iri(good) == good
+        end
+        # a relative graph IRI would resolve against whatever base the query carried
+        @test_throws ArgumentError insert_query(person_to_employee(); into = "relative")
+    end
+
+    @testset "templating cannot eat a SPARQL group pattern" begin
+        # `{{` is legal SPARQL -- a nested group -- and Mustache read it as a section, so
+        # any non-empty binding set deleted the whole group. Plain substitution cannot:
+        # a brace pair that is not a supplied key is left exactly as written.
+        q = "SELECT ?s WHERE { GRAPH <urn:g> {{ ?s ?p ?o }} }"
+        @test Jayhawk.render_query(q, Dict()) == q
+        @test Jayhawk.render_query(q, Dict("unused" => "x")) == q
+        @test Jayhawk.render_query("ASK { <urn:a> <urn:b> \"{{v}}\" }", Dict("v" => "hi")) ==
+              "ASK { <urn:a> <urn:b> \"hi\" }"
+    end
+
     @testset "insert_query wraps the same patterns with USING" begin
         spec = person_to_employee()
         q = insert_query(spec; into = "urn:firing:x", from = ["urn:a", "urn:b"])
