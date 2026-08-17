@@ -287,6 +287,25 @@ function run_rule(spec::RuleSpec; source::AbstractVector = String[],
 
     budget >= 1 || throw(ArgumentError(
         "max_iterations must be at least 1, got $budget."))
+
+    # A scoped rule that names no graphs does not read "nothing"; it reads the whole store.
+    # Without a dataset clause `GRAPH ?g` enumerates every named graph there is, which here
+    # means <urn:jayhawk:provenance> and every firing and tombstone ever written. Refusing is
+    # the only safe reading -- there is no sensible default set of graphs.
+    is_scoped(spec) && isempty(source) && throw(ArgumentError(
+        "rule <$(spec.iri)>: a rule with gistp:inGraph must name its graphs in `source`. " *
+        "With no dataset clause a graph variable ranges over every named graph in the " *
+        "store, including <$PROVENANCE_GRAPH> and every firing and tombstone -- so an " *
+        "empty `source` is not 'the default graph' here, it is everything."))
+
+    # Each round appends its firing graph to the working set, and the working set becomes the
+    # dataset clause -- so from round two a scoped rule would enumerate its own output as a
+    # graph to match in, and write into it.
+    is_scoped(spec) && strat === :ToFixpoint && throw(ArgumentError(
+        "rule <$(spec.iri)>: gistp:inGraph with a ToFixpoint strategy is not supported yet. " *
+        "Each iteration adds its firing graph to the working set, so the next round would " *
+        "bind that firing as a graph to match in. Declare gistp:strategy gistp:Once, or " *
+        "pass strategy = :Once."))
     strat === :ToFixpoint && isempty(source) && throw(ArgumentError(
         "rule <$(spec.iri)>: running to a fixpoint needs an explicit `source`. Each round " *
         "must see the previous round's output, and SPARQL's USING cannot name the store's " *

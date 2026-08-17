@@ -843,6 +843,63 @@ end
         Jayhawk.update!("DROP SILENT GRAPH <$SK>")
     end
 
+    @testset "gistp:inGraph reads per named graph" begin
+        # Round 5a: the read side. L and its guard are scoped to a graph variable; R uses
+        # that variable as an ordinary term, so "which graph did this come from" becomes a
+        # fact the rule asserts.
+        BKA, BKB = "urn:jayhawk:test:bookA", "urn:jayhawk:test:bookB"
+        BK, BKR  = "http://example.org/bk/", "http://example.org/bkrules/"
+
+        engine_cleanup()
+        Jayhawk.update!("DROP SILENT GRAPH <$BKA> ; DROP SILENT GRAPH <$BKB>")
+        Jayhawk.load_file!(fixture("scoped_rule.trig"))
+        spec = load_rule("$(BKR)PerBook")
+
+        @testset "the graph variable is discovered from the default graph" begin
+            # gistp:inGraph is a statement ABOUT the pattern, so it lives in the default
+            # graph and its object occupies no position inside any pattern. Without the
+            # scope branch in _occurs_in it is never found, and the compiler emits
+            # GRAPH <...:_Book> -- a constant naming a graph nobody created. The rule then
+            # runs, matches nothing, and reports success.
+            @test spec.match_scope == "$(BKR)_Book"
+            @test spec.nacs[1].scope == "$(BKR)_Book"
+            @test get(spec.variables, spec.match_scope, nothing) == "?_Book"
+            @test occursin("GRAPH ?_Book {", compile_rule(spec))
+            @test !occursin("GRAPH <$(BKR)_Book>", compile_rule(spec))
+        end
+
+        @testset "the guard is scoped to its own book, not to all of them" begin
+            fs = run_rule(spec; source = [BKA, BKB], actor = "docs", strategy = :Once)
+            held = Set((sparql_text(r["s"]), sparql_text(r["o"])) for f in fs
+                       for r in select("SELECT ?s ?o WHERE { GRAPH <$(f.graph)> { ?s ?p ?o } }"))
+            # s2 is Tagged in bookA and untagged in bookB, so it must be declined in A and
+            # allowed in B. Nesting the guard inside L's GRAPH group loses exactly this row:
+            # its ?_Book would be a fresh variable over every graph, making the guard read
+            # "not tagged in ANY book".
+            @test ("<$(BK)s2>", "<$BKB>") in held
+            @test !(("<$(BK)s2>", "<$BKA>") in held)
+            @test held == Set([("<$(BK)s1>", "<$BKA>"),
+                               ("<$(BK)s2>", "<$BKB>"),
+                               ("<$(BK)s3>", "<$BKB>")])
+            for f in fs
+                undo_firing!(f.graph)
+            end
+        end
+
+        @testset "a scoped rule refuses what it cannot do safely" begin
+            # Each of these is otherwise a silent wrong answer rather than a failure.
+            # No source: a graph variable would range over every named graph in the store,
+            # provenance and every tombstone included.
+            @test_throws ArgumentError run_rule(spec; source = String[], strategy = :Once)
+            # ToFixpoint: each round appends its firing graph to the working set, so round
+            # two would bind that firing as a book.
+            @test_throws ArgumentError run_rule(spec; source = [BKA], strategy = :ToFixpoint)
+        end
+
+        Jayhawk.update!("DROP SILENT GRAPH <$BKA> ; DROP SILENT GRAPH <$BKB>")
+        engine_cleanup()
+    end
+
     @testset "the moneygraph worked examples" begin
         # Every figure in docs/user-guide.md comes from here. The guide quotes measured
         # output, so if a rule changes behaviour the documentation fails with the code

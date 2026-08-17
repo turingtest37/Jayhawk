@@ -52,9 +52,19 @@ function tool_explain_rule(rule::AbstractString; source::AbstractVector = String
     io = IOBuffer()
     println(io, "Rule <", spec.iri, ">")
     println(io, "  mode              : ", mode_symbol(spec))
-    println(io, "  match pattern L   : <", spec.match_graph, "> (", length(spec.match), " triples)")
-    println(io, "  construct pattern R: <", spec.construct_graph, "> (", length(spec.construct), " triples)")
-    bound = sort(collect(vars_in(spec.match, spec)))
+    # A pattern's graph scope changes what it matches as much as its triples do, so a
+    # reviewer shown only the triple count is reviewing a different rule from the one that
+    # will run.
+    scope_of(s) = s === nothing ? "" :
+        haskey(spec.variables, s) ? "  in graph $(spec.variables[s])" : "  in graph <$s>"
+    println(io, "  match pattern L   : <", spec.match_graph, "> (", length(spec.match),
+            " triples)", scope_of(spec.match_scope))
+    println(io, "  construct pattern R: <", spec.construct_graph, "> (",
+            length(spec.construct), " triples)", scope_of(spec.construct_scope))
+    # A scoped L binds its graph variable through the GRAPH clause rather than through any
+    # triple, so `vars_in` alone under-reports what R may use.
+    bound = sort(collect(union(vars_in(spec.match, spec),
+                               scope_vars(spec.match_scope, spec))))
     println(io, "  variables bound by L: ", isempty(bound) ? "(none)" : join(bound, ", "))
 
     # The control settings decide whether this runs once or repeatedly, and what stops it.
@@ -72,7 +82,8 @@ function tool_explain_rule(rule::AbstractString; source::AbstractVector = String
         println(io, "  guards            : ", length(spec.nacs),
                 " negative condition(s); all must fail to match")
         for n in spec.nacs
-            println(io, "      NOT <", n.graph, ">  (", length(n.triples), " triple(s))")
+            println(io, "      NOT <", n.graph, ">  (", length(n.triples), " triple(s))",
+                    scope_of(n.scope))
         end
     end
     println(io, "\ncompiles to:\n")

@@ -311,7 +311,68 @@ every security — parameterised graph generation, with no extra vocabulary.
 
 ---
 
-## 8. Rewriting: taking facts away
+## 8. Named graphs: which graph a fact lives in
+
+Everything so far treats the working set as one pile of triples. `source` names graphs, but
+they are merged before L ever runs, so a pattern cannot tell which graph anything came from.
+
+`gistp:inGraph` scopes a **pattern** to a graph:
+
+```turtle
+:PerBook_L     rdf:type gistp:SparqlPattern ; gistp:inGraph :_Book .
+:PerBook_NoTag rdf:type gistp:SparqlPattern ; gistp:inGraph :_Book .
+:PerBook_R     rdf:type gistp:SparqlPattern .
+
+:_Book rdf:type gistp:SparqlVariable ; gistp:variableText "?_Book" .
+
+:PerBook_L     { :_Sec rdf:type ex:Security . }
+:PerBook_R     { :_Sec ex:heldIn :_Book . }
+:PerBook_NoTag { :_Sec rdf:type ex:Tagged . }
+```
+
+**The value reads two ways, and which one you get depends on what it is** — the same economy
+as `oneOf`. A declared `gistp:SparqlVariable` is a *graph variable*: it binds whichever graph
+each match came from, and R can then use it as an ordinary term. Any other IRI is a constant,
+and restricts the pattern to that one graph.
+
+Over two books that share a security:
+
+```
+<urn:book:A> { ex:s1 a ex:Security . ex:s2 a ex:Security , ex:Tagged . }
+<urn:book:B> { ex:s2 a ex:Security .  ex:s3 a ex:Security . }
+```
+
+```
+PerBook -> 3 triple(s)
+   ex:s1 ex:heldIn <urn:book:A>
+   ex:s2 ex:heldIn <urn:book:B>
+   ex:s3 ex:heldIn <urn:book:B>
+```
+
+`ex:s2` is the row worth staring at. It is Tagged in book A and untagged in book B, so the
+guard declines it in A and allows it in B. **A guard scoped to `?_Book` means "not in *this*
+book", not "not in any book"** — which is the whole reason to scope a guard at all.
+
+**A scope is a property of the pattern, not of a triple.** TriG cannot nest a `GRAPH` inside a
+graph, so one pattern is all-scoped or all-unscoped. A rule needing both writes two patterns.
+
+### What this round does not do
+
+Four things are refused rather than approximated, each with a message naming the fix:
+
+| Refused | Why |
+|---|---|
+| `inGraph` on **R** | Writing into a named graph needs undo to record which graph each triple went to. Until it does, an irreversible write is not something to get by default. |
+| `inGraph` with **`gistp:Rewrite`** | A rewrite deletes from exactly one target; a scoped match can bind several, so target, tombstone and undo record would each have to become a set. |
+| `inGraph` with **`ToFixpoint`** | Each round appends its firing graph to the working set, so round two would bind that firing as a graph to match in. |
+| `inGraph` with an empty **`source`** | With no dataset clause a graph variable ranges over *every* named graph in the store — provenance and every tombstone included. That is not "the default graph", it is everything. |
+
+So results still land in a firing graph, and you merge them where you want them. Per-graph
+write-back is the next increment.
+
+---
+
+## 9. Rewriting: taking facts away
 
 `gistp:Rewrite` is the only mode that deletes. What survives is **I**, the interface, and
 **I is authored by repetition**: whatever you want preserved, you write into *both* graphs.
@@ -365,7 +426,7 @@ run anything.
 
 ---
 
-## 9. Provenance and undo
+## 10. Provenance and undo
 
 Every application writes into its **own named graph** and records a provenance entry.
 
@@ -391,7 +452,7 @@ nothing else; it is not a general graph delete.
 
 ---
 
-## 10. Driving it from an agent
+## 11. Driving it from an agent
 
 ```bash
 julia --project=bin -e 'using Pkg; Pkg.instantiate()'
@@ -407,7 +468,7 @@ proposition — every operation is one somebody wrote and reviewed.
 
 ---
 
-## 11. When a rule is refused
+## 12. When a rule is refused
 
 Jayhawk would rather refuse a rule than compile it into something that quietly misbehaves.
 Each message names the fix.
@@ -424,6 +485,8 @@ Each message names the fix.
 | *running to a fixpoint needs an explicit `source`* | Each round has to see the previous round's output, and SPARQL's `USING` cannot name the store's default graph. Load the data into a named graph, or apply the rule `Once`. |
 | *a gistp:Rewrite run to a fixpoint with no gistp:hasNegativeCondition must state a bound* | A deleting rule has nothing to say when it is done. Add a guard or a `gistp:maxIterations`. |
 | *no rule found at `<…>`* | The IRI is wrong, or the rule's three declarations are not in the **default** graph. A rule that lives inside a named graph is invisible to `load_rule`. |
+| *gistp:inGraph must name a graph by IRI* | A graph name is an IRI. There is no `"?g"^^gistp:var` reading as there is for `gistp:slotValue` — no literal can name a graph. |
+| *a rule with gistp:inGraph must name its graphs in `source`* | A graph variable with no dataset clause ranges over every named graph in the store, provenance included. |
 
 ---
 

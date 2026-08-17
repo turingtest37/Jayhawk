@@ -19,7 +19,7 @@ Jayhawk is two things that share a repository and very little code.
 ## Commands
 
 ```bash
-julia --project=. test/runtests.jl                       # hermetic, ~16s, 315 assertions
+julia --project=. test/runtests.jl                       # hermetic, ~16s, 337 assertions
 ./bin/fuseki-test.sh start                               # local Fuseki on :3040/jayhawk
 JAYHAWK_TEST_SPARQL=1 julia --project=. test/runtests.jl # + integration tests
 
@@ -66,6 +66,14 @@ emitted *after* the `BIND`s so a guard may name a minted variable. `gistp:strate
 `gistp:priority` are loaded and validated; priority is displayed but not yet acted on.
 `gistp:oneOf` compiles to `VALUES`, which constrains when L also binds the variable and
 generates when it does not.
+
+`gistp:inGraph` scopes a *pattern* to a named graph -- a declared variable binds whichever
+graph matched, any other IRI is a constant. A scoped rule emits **both** `USING` and
+`USING NAMED`, because default and named graphs are disjoint namespaces and either alone
+blinds half the rule. Only the triples are wrapped: inside `GRAPH ?g { ... }` the variable
+`?g` is not yet bound, so a guard nested there would silently mean "in *any* graph". Round
+5a is read-side only; scope on R, with `Rewrite`, with `ToFixpoint`, or with an empty
+`source` is refused.
 
 All seven WHERE-clause builders route through `where_body`, so a guard cannot be honoured by
 only some of them.
@@ -137,7 +145,7 @@ Process-global state in the materialiser, one piece deliberately corrupt:
 | `Jayhawk.jl` | module, exports, `resource_dict`, `initialize`, `set_def_prefixes` |
 | `term.jl` | `RDFTerm` / `IRIRef` / `BNode` / `RDFLiteral`; SPARQL Results JSON |
 | `sparqlclient.jl` | `runsparql` plus the typed `select`/`ask`/`update!` and GSP loaders |
-| `compile.jl` | `load_rule`, `compile_rule`, `insert_query`, `rewrite_query`, `where_body`, `interface`, `rule_catalogue` |
+| `compile.jl` | `load_rule`, `compile_rule`, `insert_query`, `rewrite_query`, `where_body`, `dataset_lines`, `interface`, `rule_catalogue` |
 | `harness.jl` | `apply_rule`, `run_rule`, `dry_run`, `undo_firing!`, `firings` |
 | `mcp.jl` | the five agent-facing tools |
 | `analyze.jl` `generate.jl` `execute.jl` `build.jl` | the materialiser pipeline |

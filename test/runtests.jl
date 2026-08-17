@@ -1672,6 +1672,123 @@ end
         @test !occursin("USING", insert_query(spec; into = "urn:firing:x"))
     end
 
+    @testset "gistp:inGraph scopes the triples, not the clause" begin
+        # Build a scoped variant: L in ?_Book, a NAC in the same ?_Book, R using ?_Book as
+        # an ordinary object term (which is the whole provenance use case).
+        base = person_to_employee()
+        BOOK = "$(R)_Book"
+        vars = merge(base.variables, Dict(BOOK => "?_Book"))
+        nac  = NacSpec("$(R)PersonToEmployee_N",
+                       [PatternTriple(iri("$(R)_Person_1"), iri(TYPE), iri("$(HR)Retired"))],
+                       BOOK)
+        scoped = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+                          base.match,
+                          vcat(base.construct,
+                               [PatternTriple(iri("$(R)_Person_1"), iri("$(HR)heldIn"), iri(BOOK))]),
+                          vars, base.mints, base.enums, [nac],
+                          nothing, 0, nothing, BOOK, nothing)
+        q = compile_rule(scoped)
+
+        # L's triples are inside the group; the guard is NOT.
+        @test occursin("GRAPH ?_Book {", q)
+        @test occursin("FILTER NOT EXISTS {\n    GRAPH ?_Book {", q)
+        # The critical structural claim: the filter opens *after* L's group has closed.
+        # Nested inside it, `?_Book` would be a fresh variable over every named graph and
+        # the guard would silently mean "in ANY graph" -- measured against Fuseki.
+        @test findfirst("  }\n  # NOT <", q) !== nothing
+
+        # L's graph variable counts as bound, so R may use it. Without scope_vars this is
+        # refused as use-before-def on the one variable L most certainly binds.
+        @test occursin("?_Person_1 <$(HR)heldIn> ?_Book .", q)
+
+        # A constant scope renders as the graph, not as a variable.
+        konst = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+                         base.match, base.construct, base.variables, base.mints, base.enums,
+                         NacSpec[], nothing, 0, nothing, "urn:book:a", nothing)
+        @test occursin("GRAPH <urn:book:a> {", compile_rule(konst))
+    end
+
+    @testset "an unscoped rule emits exactly what it always did" begin
+        # The guarantee that keeps the golden snapshot honest: dataset_lines must early-return
+        # on the unscoped path rather than happen to produce the same bytes.
+        spec = person_to_employee()
+        @test !is_scoped(spec)
+        @test dataset_lines(spec, ["urn:a", "urn:b"]) == "USING <urn:a>\nUSING <urn:b>\n"
+        @test dataset_lines(spec, String[]) == ""
+        @test !occursin("NAMED", insert_query(spec; into = "urn:f", from = ["urn:a"]))
+    end
+
+    @testset "a scoped rule emits USING and USING NAMED together" begin
+        # Not generosity: default and named are disjoint namespaces. USING NAMED alone leaves
+        # the default graph EMPTY, so an unscoped pattern in the same rule matches nothing;
+        # USING alone leaves GRAPH <g> invisible. Both verified against Fuseki.
+        base = person_to_employee()
+        scoped = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+                          base.match, base.construct, base.variables, base.mints, base.enums,
+                          NacSpec[], nothing, 0, nothing, "urn:book:a", nothing)
+        @test is_scoped(scoped)
+        d = dataset_lines(scoped, ["urn:a"])
+        @test occursin("USING <urn:a>", d) && occursin("USING NAMED <urn:a>", d)
+        @test dataset_lines(scoped, String[]) == ""      # nothing to name, nothing emitted
+        f = dataset_lines(scoped, ["urn:a"]; keyword = "FROM")
+        @test occursin("FROM <urn:a>", f) && occursin("FROM NAMED <urn:a>", f)
+    end
+
+    @testset "the rewrite pruning and promotion ops carry no dataset clause" begin
+        # An invariant, not a formatting accident. USING/USING NAMED *replace* the dataset,
+        # so a graph absent from the clause is invisible even to GRAPH <constant> in the
+        # WHERE -- the update then succeeds with 204 having matched nothing. Splice
+        # using_lines into these two and op 2 stops pruning while op 5 stops copying, after
+        # op 4 has already deleted from the target. Silent data loss.
+        spec = person_to_employee(mode = Jayhawk.MODE_REWRITE)
+        shared = spec.match[1]
+        rw = RuleSpec(spec.iri, spec.mode, spec.match_graph, spec.construct_graph,
+                      spec.match, vcat(spec.construct, [shared]), spec.variables, spec.mints)
+        q = rewrite_query(rw; target = "urn:t", firing = "urn:f", tombstone = "urn:tomb",
+                          from = ["urn:t"])
+        for op in split(q, " ;\n")
+            occursin("?__s ?__p ?__o", op) || continue
+            @test !occursin("USING", op)
+        end
+    end
+
+    @testset "every unimplemented use of inGraph is refused, not approximated" begin
+        base = person_to_employee()
+        respec(; scope = nothing, cscope = nothing, mode = base.mode, nacs = NacSpec[]) =
+            RuleSpec(base.iri, mode, base.match_graph, base.construct_graph,
+                     base.match, base.construct, base.variables, base.mints, base.enums,
+                     nacs, nothing, 0, nothing, scope, cscope)
+
+        # writing into a named graph, before undo can reverse it
+        @test_throws ErrorException compile_rule(respec(scope = "urn:b", cscope = "urn:b"))
+        # a rewrite whose match binds several graphs, against a single-target tombstone
+        @test_throws ErrorException compile_rule(
+            respec(scope = "urn:b", mode = Jayhawk.MODE_REWRITE))
+        # a scope that is not a legal IRI must not reach the store
+        @test_throws ArgumentError compile_rule(respec(scope = "urn:b ad"))
+        # and the unscoped rule still compiles, which is what makes the above meaningful
+        @test compile_rule(respec()) isa String
+    end
+
+    @testset "a graph variable is discovered and validated like any other" begin
+        base = person_to_employee()
+        BOOK = "$(R)_Book"
+        # It resolves to its variableText...
+        withvar = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+                           base.match, base.construct,
+                           merge(base.variables, Dict(BOOK => "?_Book")),
+                           base.mints, base.enums, NacSpec[], nothing, 0, nothing, BOOK, nothing)
+        @test scope_vars(BOOK, withvar) == Set(["?_Book"])
+        @test occursin("GRAPH ?_Book {", compile_rule(withvar))
+        # ...and a variableText that could close the group and open another is refused, the
+        # same injection guard that covers every other position.
+        evil = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+                        base.match, base.construct,
+                        merge(base.variables, Dict(BOOK => "?b } } ; DROP ALL ; #")),
+                        base.mints, base.enums, NacSpec[], nothing, 0, nothing, BOOK, nothing)
+        @test_throws ErrorException compile_rule(evil)
+    end
+
     @testset "illegal IRIs are refused, not emitted" begin
         spec = person_to_employee()
         # keep L otherwise intact, so the binding check passes and emission is reached

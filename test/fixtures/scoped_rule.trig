@@ -1,0 +1,66 @@
+#  A rule scoped to a named graph, and a guard scoped to the same one.
+#
+#  Two books hold overlapping securities. The rule records which book each security is held
+#  in -- so the graph a fact came from becomes a fact -- and declines anything already
+#  tagged IN THAT BOOK.
+#
+#  The overlap is the point. ex:s2 is Tagged in book A but not in book B, so a correctly
+#  scoped guard must decline it in A and allow it in B. A guard nested inside L's own
+#  GRAPH group would re-quantify ?_Book over every named graph and silently drop the
+#  ex:s2/B row -- see the scopeNote on gistp:inGraph, and `where_body`.
+
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix ex:    <http://example.org/bk/> .
+@prefix :      <http://example.org/bkrules/> .
+
+:PerBook
+    rdf:type gistp:Rule ;
+    skos:prefLabel "Record which book a security is held in" ;
+    gistp:hasMatchPattern      :PerBook_L ;
+    gistp:hasConstructPattern  :PerBook_R ;
+    gistp:hasNegativeCondition :PerBook_NoTag ;
+    gistp:rewriteMode          gistp:Assert ;
+    gistp:strategy             gistp:Once .
+
+#  L and the guard read per book; R is unscoped, so the result lands in a firing graph.
+:PerBook_L     rdf:type gistp:SparqlPattern ; gistp:inGraph :_Book .
+:PerBook_NoTag rdf:type gistp:SparqlPattern ; gistp:inGraph :_Book .
+:PerBook_R     rdf:type gistp:SparqlPattern .
+
+#  A graph variable. It is declared like any other variable, and occupies no position inside
+#  any pattern graph -- gistp:inGraph names it from the default graph.
+:_Book rdf:type gistp:SparqlVariable ;
+       gistp:variableText "?_Book" .
+
+:_Sec rdf:type ex:Security , gistp:SparqlVariable ;
+      gistp:variableText "?_Sec" .
+
+:PerBook_L     { :_Sec rdf:type ex:Security . }
+:PerBook_R     { :_Sec ex:heldIn :_Book . }
+:PerBook_NoTag { :_Sec rdf:type ex:Tagged . }
+
+<urn:jayhawk:test:bookA> {
+  ex:s1 rdf:type ex:Security .
+  ex:s2 rdf:type ex:Security , ex:Tagged .
+}
+
+<urn:jayhawk:test:bookB> {
+  ex:s2 rdf:type ex:Security .
+  ex:s3 rdf:type ex:Security .
+}
+
+#  Compiles to:
+#
+#    CONSTRUCT { ?_Sec ex:heldIn ?_Book . }
+#    USING <urn:jayhawk:test:bookA>          # both forms, always: USING NAMED alone
+#    USING <urn:jayhawk:test:bookB>          # leaves the default graph EMPTY
+#    USING NAMED <urn:jayhawk:test:bookA>
+#    USING NAMED <urn:jayhawk:test:bookB>
+#    WHERE {
+#      GRAPH ?_Book { ?_Sec a ex:Security . }
+#      FILTER NOT EXISTS { GRAPH ?_Book { ?_Sec a ex:Tagged . } }
+#    }
+#
+#  yielding exactly:  s1 -> bookA,  s2 -> bookB,  s3 -> bookB

@@ -48,8 +48,9 @@ engine inherits a mutable process-global that two concurrent MCP sessions can co
       │  Graph Store Protocol POST          Jena parses. Julia never parses RDF.
       ▼
   triplestore
-      │  load_rule           SELECT × 11    metadata, NAC graphs, L, R, variables, mints,
-      ▼                     (+1 per NAC)    enums × 2, strategy, priority, maxIterations
+      │  load_rule           SELECT × 13    metadata, NAC graphs, L, R, L/R graph scopes,
+      ▼                     (+2 per NAC)    variables, mints, enums × 2, strategy,
+                                            priority, maxIterations
   RuleSpec                                  pure data
       │  compile_rule / insert_query / rewrite_query    PURE — no I/O, snapshot-testable
       ▼
@@ -61,7 +62,7 @@ engine inherits a mutable process-global that two concurrent MCP sessions can co
 
 `load_rule` does the I/O and nothing else; everything downstream of `RuleSpec` is pure. That
 split is what makes the interesting half testable against golden files with no server
-running: the hermetic suite is 315 assertions, and the 164 in its `compiler (pure)` testset
+running: the hermetic suite is 337 assertions, and the 186 in its `compiler (pure)` testset
 cover the whole of compilation without a Fuseki anywhere.
 
 ### Why the compiler reads from the store
@@ -87,6 +88,7 @@ struct RuleSpec
     enums::Dict{String,Vector{RDFTerm}}          # variable IRI  => gistp:oneOf values
     nacs::Vector{NacSpec}                        # negative conditions
     strategy, priority, max_iterations           # execution policy
+    match_scope, construct_scope                 # gistp:inGraph, or nothing
 end
 ```
 
@@ -127,6 +129,33 @@ The order is load-bearing:
 There are **seven** places that assemble a WHERE clause. They all route through this one
 function, because a guard honoured by only some of them means the thing that executes is not
 the thing that was reviewed.
+
+### `gistp:inGraph` scopes the triples, not the clause
+
+Wrapping the finished WHERE in one `GRAPH ?g { … }` looks equivalent and is not. SPARQL
+translates `GRAPH ?g { P }` to `Graph(?g, translate(P))`, so **`?g` is bound by the operator
+around the group and is still unbound while `P` runs** — `BIND(BOUND(?g) AS ?seen)` inside it
+yields `false` on every row. A guard nested in the same group gets a *fresh* `?g` over every
+named graph, silently turning "not in **this** graph" into "not in **any** graph": fewer
+solutions, no error, HTTP 200.
+
+So only `bgp_text` is wrapped. `VALUES` and `BIND` stay outside the group, and each condition
+wraps its own triples inside its own `FILTER NOT EXISTS`. `test/fixtures/scoped_rule.trig`
+turns on the one row that separates the two readings.
+
+The dataset clause is the other half, and `dataset_lines` is the only place that builds it —
+`insert_query`, `project_query`, `rewrite_query`, `collision_queries` and `mint_fanin` all
+call it, so a scoped rule cannot silently lose its collision gate. A scoped rule emits
+**both** `USING <g>` and `USING NAMED <g>` for every graph: default and named are disjoint
+namespaces, so `USING NAMED` alone leaves the default graph *empty* and `USING` alone leaves
+`GRAPH <g>` invisible. An unscoped rule short-circuits to exactly the old bytes, which is
+what keeps the golden snapshot meaningful.
+
+> **`rewrite_query`'s pruning and promotion operations must never receive a dataset clause.**
+> A graph absent from `USING`/`USING NAMED` is invisible even to a `GRAPH <constant>` in the
+> WHERE, and the update then succeeds with 204 having matched nothing. Splice `using_lines`
+> into those two and op 2 stops pruning while op 5 stops copying — after op 4 has already
+> deleted from the target. Silent data loss. There is a test asserting the absence.
 
 ### The interface, I = L ∩ R
 
@@ -209,8 +238,8 @@ Four suites, each with a different job.
 
 | Suite | Needs a server | What it is for |
 |---|---|---|
-| `test/runtests.jl` | no | ~16s warm, hermetic, 315 assertions. Pure compiler behaviour, golden SPARQL, every refusal. |
-| `test/sparql_integration.jl` | yes | 213 + 16 assertions. Live behaviour: what the store actually does. Opt-in via `JAYHAWK_TEST_SPARQL=1`. Includes the `moneygraph` testset that every figure in the user guide is measured from. |
+| `test/runtests.jl` | no | ~16s warm, hermetic, 337 assertions. Pure compiler behaviour, golden SPARQL, every refusal. |
+| `test/sparql_integration.jl` | yes | 223 + 16 assertions. Live behaviour: what the store actually does. Opt-in via `JAYHAWK_TEST_SPARQL=1`. Includes the `moneygraph` testset that every figure in the user guide is measured from. |
 | `test/review_fixes.jl`, `review_round4.jl` | yes | Independent verification of specific fixes, written from the *claims* rather than the implementation. |
 | `test/adversarial.jl` | yes | Deliberately hostile, and not part of `runtests.jl` — run it on its own. It found the Rewrite data-loss bug. |
 

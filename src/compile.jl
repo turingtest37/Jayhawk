@@ -25,6 +25,7 @@ const P_SLOTNAME     = GISTP_NS * "slotName"
 const P_SLOTVALUE    = GISTP_NS * "slotValue"
 const P_ONEOF        = GISTP_NS * "oneOf"
 const P_NAC          = GISTP_NS * "hasNegativeCondition"
+const P_INGRAPH      = GISTP_NS * "inGraph"
 
 const RDF_FIRST = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first"
 const RDF_REST  = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest"
@@ -75,7 +76,12 @@ Its own named graph, like L and R, and compiled to its own `FILTER NOT EXISTS`.
 struct NacSpec
     graph::String
     triples::Vector{PatternTriple}
+    # gistp:inGraph, if the condition is scoped: the IRI of a graph variable or of a constant
+    # graph. A guard scoped to the same variable as L reads "no such thing in THIS graph".
+    scope::Union{String,Nothing}
 end
+
+NacSpec(graph, triples) = NacSpec(graph, triples, nothing)
 
 """
 Everything the compiler needs about one rule, already fetched.
@@ -103,18 +109,29 @@ struct RuleSpec
     strategy::Union{Symbol,Nothing}     # :Once, :ToFixpoint, or unstated
     priority::Int
     max_iterations::Union{Int,Nothing}  # unstated means the caller's default
+    # gistp:inGraph on L and on R: the IRI of a graph variable or of a constant graph, or
+    # `nothing` for the graph-blind reading every rule had before named graphs. Scope is a
+    # property of the *pattern*, not of a triple -- TriG cannot nest a GRAPH inside a graph,
+    # so a per-triple graph term would have to be reified inside the pattern.
+    match_scope::Union{String,Nothing}
+    construct_scope::Union{String,Nothing}
 end
 
 # Every call site written before the control layer stays valid: a rule with no negative
 # conditions and no stated policy behaves exactly as it did.
 RuleSpec(iri, mode, lg, cg, match, construct, variables, mints) =
     RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-             Dict{String,Vector{RDFTerm}}(), NacSpec[], nothing, 0, nothing)
+             Dict{String,Vector{RDFTerm}}(), NacSpec[], nothing, 0, nothing, nothing, nothing)
 
 RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
          nacs, strategy, priority, maxit) =
     RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-             Dict{String,Vector{RDFTerm}}(), nacs, strategy, priority, maxit)
+             Dict{String,Vector{RDFTerm}}(), nacs, strategy, priority, maxit, nothing, nothing)
+
+RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
+         enums, nacs, strategy, priority, maxit) =
+    RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
+             enums, nacs, strategy, priority, maxit, nothing, nothing)
 
 mode_symbol(m::AbstractString) =
     m == MODE_CONSTRUCT ? :Construct :
@@ -162,7 +179,8 @@ function load_rule(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
     lg   = _iri(row["l"])
     cg   = _iri(row["c"])
 
-    nacs = [NacSpec(g, load_pattern(g; ep = ep)) for g in load_nac_graphs(r; ep = ep)]
+    nacs = [NacSpec(g, load_pattern(g; ep = ep), load_in_graph(g; ep = ep))
+            for g in load_nac_graphs(r; ep = ep)]
     # The negative conditions' graphs join the scoping set: a variable may appear ONLY
     # inside a condition -- that is the existentially-quantified case -- and without this it
     # would be loaded as no variable at all and emitted as a bare IRI.
@@ -173,7 +191,8 @@ function load_rule(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
              load_variables(graphs; ep = ep), load_mints(graphs; ep = ep),
              load_enums(graphs; ep = ep),
              nacs, load_strategy(r; ep = ep), load_priority(r; ep = ep),
-             load_max_iterations(r; ep = ep))
+             load_max_iterations(r; ep = ep),
+             load_in_graph(lg; ep = ep), load_in_graph(cg; ep = ep))
 end
 
 """
@@ -246,6 +265,32 @@ function load_max_iterations(rule_iri::AbstractString; ep::SparqlEndpoint = endp
     n
 end
 
+"""
+    load_in_graph(pattern_iri; ep = endpoint()) -> Union{String,Nothing}
+
+The `gistp:inGraph` of one pattern: the IRI of a graph variable or of a constant graph.
+
+Unlike a pattern's triples, this lives in the **default** graph -- it is a statement *about*
+the pattern, not part of it -- which is why it needs its own query and why the variable it
+names has to be fed to [`load_variables`](@ref) explicitly. See [`_occurs_in`](@ref).
+"""
+function load_in_graph(pattern_iri::AbstractString; ep::SparqlEndpoint = endpoint())
+    rows = select(
+        "SELECT ?g WHERE { <$(check_iri(pattern_iri))> <$P_INGRAPH> ?g }"; ep = ep)
+    isempty(rows) && return nothing
+    length(rows) == 1 || error(
+        "pattern <$pattern_iri> declares $(length(rows)) gistp:inGraph values; at most one " *
+        "is allowed. A pattern is evaluated in one graph. gistPatternShapes.ttl " *
+        "SparqlPatternShape enforces this -- validate first.")
+    g = rows[1]["g"]
+    g isa IRIRef || error(
+        "pattern <$pattern_iri>: gistp:inGraph is $(sparql_text(g)), which is not an IRI. " *
+        "A graph name is an IRI -- either a declared gistp:SparqlVariable or a constant " *
+        "graph. No literal can name a graph, so there is no \"?g\"^^gistp:var reading here " *
+        "as there is for gistp:slotValue.")
+    check_iri(g.value)
+end
+
 "Fetch the triples of one pattern graph, sorted so output is reproducible."
 function load_pattern(graph_iri::AbstractString; ep::SparqlEndpoint = endpoint())
     rows = select("""
@@ -265,11 +310,22 @@ This is what scopes a rule's declarations to that rule. A variable is an ordinar
 happens to be declared a `gistp:SparqlVariable`, so it can appear as subject, predicate or
 object; all three have to be looked for, and the position variables are suffixed per graph
 so two alternatives never accidentally share one.
+
+**A fourth position, off to one side.** A *graph* variable occupies no position inside any
+pattern graph: it is named by `<pattern> gistp:inGraph <var>` in the **default** graph. Left
+to the three alternatives above it would never be discovered, `var_of` would return nothing,
+and [`term_sparql`](@ref) would emit it as a bare IRI -- `GRAPH <…:_Book>`, a constant naming
+a graph nobody created. The rule would compile, validate, run, and match nothing, with no
+error anywhere. The last alternative below is what stops that.
 """
-_occurs_in(graphs) = join(
-    ("{ GRAPH <$(check_iri(g))> { { ?v ?p$i ?o$i } UNION { ?s$i ?v ?o$i } " *
-     "UNION { ?s$i ?p$i ?v } } }" for (i, g) in enumerate(graphs)),
-    "\n          UNION ")
+_occurs_in(graphs) = string(
+    join(("{ GRAPH <$(check_iri(g))> { { ?v ?p$i ?o$i } UNION { ?s$i ?v ?o$i } " *
+          "UNION { ?s$i ?p$i ?v } } }" for (i, g) in enumerate(graphs)),
+         "\n          UNION "),
+    isempty(graphs) ? "" :
+    "\n          UNION { VALUES ?pat { " *
+    join(("<$(check_iri(g))>" for g in graphs), " ") *
+    " } ?pat <$P_INGRAPH> ?v }")
 
 """
     load_variables(graphs; ep = endpoint()) -> Dict{String,String}
@@ -307,7 +363,12 @@ and for the same reason.
 Occurrence in the rule's own graphs is sufficient: a minted variable has to appear in R --
 that is what constructing it means -- and [`check_mints`](@ref) separately requires every
 `gistp:slotValue` to be a variable the match pattern binds, so a slot's supplying variable
-is always in L. Nothing the compiler needs is reachable only from the default graph.
+is always in L.
+
+That used to end "nothing the compiler needs is reachable only from the default graph". A
+*graph* variable is: `gistp:inGraph` is a statement about the pattern, so it sits in the
+default graph and its object occupies no position inside any pattern. [`_occurs_in`](@ref)
+carries a fourth alternative for exactly that case.
 """
 function load_mints(graphs::AbstractVector; ep::SparqlEndpoint = endpoint())
     rows = select("""
@@ -602,10 +663,47 @@ function nacs_text(spec::RuleSpec)
     blocks = String[]
     for n in spec.nacs
         isempty(n.triples) && continue
-        push!(blocks, "  # NOT <$(n.graph)>\n  FILTER NOT EXISTS {\n" *
-                      bgp_text(n.triples, spec; indent = "    ") * "\n  }")
+        # A scoped condition wraps its own triples, *inside* its own filter. It must not be
+        # nested in L's GRAPH group -- see `where_body`.
+        body = n.scope === nothing ?
+            bgp_text(n.triples, spec; indent = "    ") :
+            graph_wrap(bgp_text(n.triples, spec; indent = "      "),
+                       n.scope, spec; indent = "    ")
+        push!(blocks, "  # NOT <$(n.graph)>\n  FILTER NOT EXISTS {\n" * body * "\n  }")
     end
     isempty(blocks) ? "" : "\n" * join(blocks, "\n")
+end
+
+"""
+    is_scoped(spec) -> Bool
+
+Whether any of a rule's patterns names a graph. Decides the shape of the dataset clause.
+"""
+is_scoped(spec::RuleSpec) =
+    spec.match_scope !== nothing || spec.construct_scope !== nothing ||
+    any(n.scope !== nothing for n in spec.nacs)
+
+"""
+    dataset_lines(spec, from; keyword = "USING") -> String
+
+The dataset clause: `USING`/`USING NAMED` for an update, `FROM`/`FROM NAMED` for a select.
+
+**An unscoped rule emits exactly what it always did**, which is what keeps the golden
+snapshot and every substring assertion honest -- the early return is the guarantee, not a
+coincidence of formatting.
+
+A scoped rule emits **both** forms for every graph, and that is mandatory rather than
+generous. Default and named are disjoint namespaces: `USING NAMED <g>` alone leaves the
+query's default graph *empty*, so an unscoped pattern in the same rule would silently match
+nothing, and `USING <g>` alone leaves `GRAPH <g>` invisible. Measured both ways against
+Fuseki. Emitting both lets the unscoped half read the union while the scoped half addresses
+graphs individually; verified to join correctly across the two.
+"""
+function dataset_lines(spec::RuleSpec, from::AbstractVector; keyword::AbstractString = "USING")
+    isempty(from) && return ""
+    plain = join(("$keyword <$(check_iri(g))>" for g in from), "\n")
+    is_scoped(spec) || return plain * "\n"
+    plain * "\n" * join(("$keyword NAMED <$(check_iri(g))>" for g in from), "\n") * "\n"
 end
 
 """
@@ -620,9 +718,43 @@ BIND sees only variables bound earlier in its group, so it must follow the tripl
 `FILTER NOT EXISTS` must follow the BINDs in turn, because a condition is allowed to mention
 a *minted* variable -- "only create this if it does not already exist" -- and the filter can
 only test what is bound by the time it runs.
+
+**`gistp:inGraph` scopes the triples, not the clause.** Wrapping the finished string in one
+`GRAPH ?g { … }` looks equivalent and is not. SPARQL translates `GRAPH ?g { P }` to
+`Graph(?g, translate(P))`, so `?g` is bound by the operator *surrounding* the group and is
+still unbound while `P` is evaluated: `BIND(BOUND(?g) AS ?seen)` inside the group yields
+`false` on every row. A negative condition nested in the same group is worse than useless --
+its `?g` is a fresh variable ranging over every named graph, which silently turns "no such
+thing in THIS graph" into "no such thing in ANY graph", dropping solutions with no error.
+Measured against Fuseki, not reasoned from the spec.
+
+So only `bgp_text` is wrapped. VALUES and BIND stay outside the group, where `?g` is bound
+and a template may mint from it; each condition wraps its own triples inside its own filter.
 """
 where_body(spec::RuleSpec) =
-    string(bgp_text(spec.match, spec), values_text(spec), binds_text(spec), nacs_text(spec))
+    string(spec.match_scope === nothing ?
+               bgp_text(spec.match, spec) :
+               graph_wrap(bgp_text(spec.match, spec; indent = "    "),
+                          spec.match_scope, spec),
+           values_text(spec), binds_text(spec), nacs_text(spec))
+
+"""
+    graph_wrap(body, scope, spec; indent = "  ") -> String
+
+Wrap already-rendered triple text in `GRAPH <g> { … }` or `GRAPH ?g { … }`.
+
+`scope` is an IRI: a declared `gistp:SparqlVariable` renders as its variable, anything else
+as the constant graph it names. That either/or is decided here and nowhere else, and it is
+the same one [`term_sparql`](@ref) makes for a term -- so a graph variable goes through
+[`check_variables`](@ref)'s validation like every other, which is what keeps `variableText`
+from being splice-injected in graph position.
+"""
+function graph_wrap(body::AbstractString, scope::AbstractString, spec::RuleSpec;
+                    indent::AbstractString = "  ")
+    v = get(spec.variables, scope, nothing)
+    g = v === nothing ? "<$(check_iri(scope))>" : v
+    "$(indent)GRAPH $g {\n$body\n$indent}"
+end
 
 """
     values_text(spec) -> String
@@ -884,6 +1016,62 @@ function dangling_risks(spec::RuleSpec)
 end
 
 """
+    scope_vars(scope, spec) -> Set{String}
+
+The SPARQL variable a `gistp:inGraph` names, or an empty set if it names a constant graph.
+
+A one-element set rather than a `Union{String,Nothing}` so it composes with `vars_in`, which
+is what every binding question in the compiler is phrased against.
+"""
+scope_vars(scope::Union{String,Nothing}, spec::RuleSpec) =
+    scope === nothing || !haskey(spec.variables, scope) ?
+        Set{String}() : Set([spec.variables[scope]])
+
+"""
+    check_scopes(spec)
+
+Refuse every use of `gistp:inGraph` this round does not implement, and every one it cannot
+make safe. Each of these is otherwise a *silent* wrong answer, which is why they are errors
+rather than warnings.
+
+Round 5a scopes the read side only. Writing into a named graph needs `undo_firing!` to record
+which graph each triple went to before it can be reversed, and an unreversible write is not
+something to ship by omission.
+"""
+function check_scopes(spec::RuleSpec)
+    scoped = String[]
+    spec.match_scope === nothing || push!(scoped, spec.match_scope)
+    spec.construct_scope === nothing || push!(scoped, spec.construct_scope)
+    for n in spec.nacs
+        n.scope === nothing || push!(scoped, n.scope)
+    end
+    isempty(scoped) && return spec
+
+    spec.construct_scope === nothing || error(
+        "rule <$(spec.iri)>: gistp:inGraph on the construct pattern <$(spec.construct_graph)> " *
+        "is not supported yet. A rule that writes into a named graph has to record which " *
+        "graph each triple went to, or undo_firing! cannot reverse it -- and an " *
+        "irreversible write is not something to get by default. Scope the match pattern to " *
+        "read per graph; the results still land in a firing graph you can merge where you " *
+        "want them.")
+
+    mode_symbol(spec) === :Rewrite && error(
+        "rule <$(spec.iri)>: gistp:inGraph with gistp:Rewrite is not supported yet. A " *
+        "rewrite deletes from exactly one target graph, and a scoped match can bind several " *
+        "-- so the target, the tombstone and the undo record would each have to become a " *
+        "set. Use Construct or Assert, or drop the scope and name the graph in `source`.")
+
+    # A graph variable is spliced into query text like any other variable. `check_variables`
+    # validates every entry of spec.variables, so a scope that resolves there is already
+    # safe; one that does not is a constant graph IRI and must survive check_iri.
+    for s in scoped
+        haskey(spec.variables, s) && continue
+        check_iri(s)
+    end
+    spec
+end
+
+"""
     check_bound(spec)
 
 Reject a rule whose construct pattern uses a variable the match pattern never binds.
@@ -902,7 +1090,12 @@ function check_bound(spec::RuleSpec)
     check_variables(spec)
     check_enums(spec)
     check_mints(spec)
-    matched = vars_in(spec.match, spec)
+    check_scopes(spec)
+    # L's graph variable is bound by the GRAPH clause, not by any triple, so `vars_in` -- which
+    # walks subject, predicate and object -- cannot see it. Without this a rule that records
+    # which graph a fact came from, the whole point of scoping the match, is refused as
+    # use-before-def on the one variable L most definitely binds.
+    matched = union(vars_in(spec.match, spec), scope_vars(spec.match_scope, spec))
     # An enumerated variable is bound by its VALUES clause and a minted one by its BIND;
     # neither has to appear in a match triple to be available to R.
     bound   = union(matched, minted_vars(spec), enum_vars(spec))
@@ -975,7 +1168,7 @@ function project_query(spec::RuleSpec; triples::Vector{PatternTriple},
                        into::AbstractString, from::AbstractVector = String[])
     check_bound(spec)
     isempty(triples) && return ""
-    using_lines = isempty(from) ? "" : join(("USING <$(check_iri(g))>" for g in from), "\n") * "\n"
+    using_lines = dataset_lines(spec, from)
     """
     INSERT {
       GRAPH <$(check_iri(into))> {
@@ -1016,7 +1209,7 @@ function rewrite_query(spec::RuleSpec; target::AbstractString, firing::AbstractS
         "adds nothing. I = L = R.")
 
     t, f, tomb = check_iri(target), check_iri(firing), check_iri(tombstone)
-    using_lines = isempty(from) ? "" : join(("USING <$(check_iri(g))>" for g in from), "\n") * "\n"
+    using_lines = dataset_lines(spec, from)
     ops = String[]
 
     # Five operations, one request, one transaction. The obvious shape -- a single
@@ -1041,6 +1234,13 @@ function rewrite_query(spec::RuleSpec; target::AbstractString, firing::AbstractS
         push!(ops, """
         DELETE { GRAPH <$f> { ?__s ?__p ?__o } }
         WHERE  { GRAPH <$f> { ?__s ?__p ?__o } GRAPH <$t> { ?__s ?__p ?__o } }""")
+        # NO dataset clause here, and none in the promotion op below. This is an invariant,
+        # not an oversight: USING/USING NAMED *replace* the dataset, so a graph absent from
+        # the clause is invisible even to a GRAPH <constant> in the WHERE -- verified, it
+        # returns nothing and the update succeeds with 204. Splice `using_lines` in here and
+        # this op stops pruning, while the promotion op stops copying; op 4 has already run,
+        # so the target loses its triples and never receives the replacements. Silent data
+        # loss. `test/runtests.jl` asserts the absence.
     end
 
     if !isempty(gone)
@@ -1095,8 +1295,7 @@ a space inside a value becomes `%20`, so a raw space unambiguously separates the
 function collision_queries(spec::RuleSpec; from::AbstractVector = String[])
     out = Tuple{String,String}[]
     isempty(spec.mints) && return out
-    froms = isempty(from) ? "" :
-        join(("FROM <$(check_iri(g))>" for g in from), "\n") * "\n"
+    froms = dataset_lines(spec, from; keyword = "FROM")
 
     for iri in sort(collect(keys(spec.mints)))
         m = spec.mints[iri]
@@ -1189,7 +1388,7 @@ function mint_fanin(spec::RuleSpec; from::AbstractVector = String[],
     out = Tuple{String,Vector{Tuple{String,Int}}}[]
     isempty(spec.mints) && return out
     check_variables(spec)          # this builds SPARQL too; see check_collisions
-    froms = isempty(from) ? "" : join(("FROM <$(check_iri(g))>" for g in from), "\n") * "\n"
+    froms = dataset_lines(spec, from; keyword = "FROM")
     others = sort(collect(setdiff(vars_in(spec.construct, spec), minted_vars(spec))))
     isempty(others) && return out
     key = join(("ENCODE_FOR_URI(STR($o))" for o in others), ", \" \", ")
@@ -1232,8 +1431,7 @@ function insert_query(spec::RuleSpec; into::AbstractString, from::AbstractVector
     mode_symbol(spec) === :Rewrite && error(
         "rule <$(spec.iri)>: gistp:Rewrite mutates the data, so it cannot be run through " *
         "insert_query, which only ever adds to a firing graph. Use rewrite_query.")
-    using_lines = isempty(from) ? "" :
-        join(("USING <$(check_iri(g))>" for g in from), "\n") * "\n"
+    using_lines = dataset_lines(spec, from)
     """
     INSERT {
       GRAPH <$(check_iri(into))> {
@@ -1307,3 +1505,4 @@ export STRATEGY_ONCE, STRATEGY_TOFIXPOINT
 export parse_template, template_slots, bind_text, minted_vars
 export ambiguous_separators, collision_queries, check_collisions, mint_fanin
 export GISTP_NS, MODE_CONSTRUCT, MODE_ASSERT, MODE_REWRITE
+export load_in_graph, is_scoped, dataset_lines, graph_wrap, check_scopes, scope_vars
