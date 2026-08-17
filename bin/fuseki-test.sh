@@ -2,7 +2,7 @@
 #
 # Ephemeral in-memory Apache Jena Fuseki for testing Jayhawk.
 #
-#   ./resource/fuseki-test.sh start|stop|status|load|reset|url
+#   ./bin/fuseki-test.sh start|stop|status|load|reset|url
 #
 # Everything lives in memory and dies with the process: no TDB2 files, no state
 # carried between runs, nothing to clean up.
@@ -40,7 +40,7 @@ usage: $0 <command>
   start    launch an in-memory server on port $PORT with dataset /$DATASET
   stop     shut it down
   status   report whether it is up, and how many triples it holds
-  load     load resource/jayhawk.ttl + gistAcct3.0.0.ttl into <$GRAPH>
+  load     load resource/gistAcct3.0.0.ttl into <$GRAPH>
   reset    drop every graph, leaving the server running
   url      print the query endpoint (for JAYHAWK_SPARQL_SERVICE)
 
@@ -144,8 +144,9 @@ cmd_status() {
 
 cmd_load() {
     require_up
-    for f in jayhawk.ttl gistAcct3.0.0.ttl; do
-        path="$SCRIPT_DIR/$f"
+    # The script moved from resource/ to bin/, so the fixtures are no longer beside it.
+    for f in gistAcct3.0.0.ttl; do
+        path="$SCRIPT_DIR/../resource/$f"
         [ -f "$path" ] || { echo "missing fixture: $path" >&2; exit 1; }
         code=$(curl -s -o /dev/null -w '%{http_code}' \
             -X POST -H 'Content-Type: text/turtle;charset=utf-8' \

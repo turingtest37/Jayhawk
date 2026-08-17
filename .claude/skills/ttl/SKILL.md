@@ -37,7 +37,7 @@ this repo's fixtures:
 | file | result |
 |---|---|
 | `resource/gistAcct3.0.0.ttl` | exit 0, silent |
-| `resource/jayhawk.ttl` | **exit 1** — `[line: 144, col: 1] Bad IRI: <urn:data> Code: 61/SCHEME_PATTERN_MATCH_FAILED` |
+| `resource/jayhawk.ttl` (deleted) | **exit 1** — `[line: 144, col: 1] Bad IRI: <urn:data> Code: 61/SCHEME_PATTERN_MATCH_FAILED` |
 
 `<urn:data>` is a genuine defect: a URN needs `urn:NID:NSS` with a non-empty namespace
 -specific string. It is a warning, not a parse failure, so the file still loads
@@ -59,7 +59,7 @@ the empty string — a silent trap. Either keep stderr, or count N-Triples lines
 $JENA/bin/riot --output=ntriples file.ttl 2>/dev/null | wc -l
 ```
 
-Reference counts: `jayhawk.ttl` = 457, `gistAcct3.0.0.ttl` = 919.
+Reference count: `gistAcct3.0.0.ttl` = 919 (`jayhawk.ttl`, 457, was deleted).
 
 ## Compare two versions — use `rdfdiff`, never `sort | diff`
 
@@ -77,8 +77,8 @@ so reordering, reindenting, and renaming prefixes all correctly report as equal.
 Against a git revision:
 
 ```sh
-git show HEAD:resource/jayhawk.ttl > /tmp/old.ttl
-$JENA/bin/rdfdiff /tmp/old.ttl resource/jayhawk.ttl TTL TTL
+git show HEAD:resource/gistAcct3.0.0.ttl > /tmp/old.ttl
+$JENA/bin/rdfdiff /tmp/old.ttl resource/gistAcct3.0.0.ttl TTL TTL
 ```
 
 ### Why not `riot --output=ntriples | sort | diff`
@@ -109,7 +109,7 @@ parses through Serd, which disagrees with Jena in both directions. Verified:
 | case | `riot --validate` | Serd / Jayhawk |
 |---|---|---|
 | `"122.1"^^mine:myDecimal` with `mine:` declared locally | exit 0, accepted | **throws `KeyError`** |
-| `resource/jayhawk.ttl` (the `urn:data` warning) | **exit 1** | parses fine, 457 statements |
+| `resource/jayhawk.ttl` (the `urn:data` warning) | **exit 1** | parsed fine, 457 statements |
 | genuinely malformed Turtle | exit 1, `[line: 2, col: 12]` | throws `SerdException` |
 
 The first row is the dangerous one. Serd resolves a datatype CURIE against a

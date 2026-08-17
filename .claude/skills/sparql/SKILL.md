@@ -8,12 +8,12 @@ description: Run SPARQL queries and updates against this project's Apache Jena F
 ## The test server
 
 ```sh
-./resource/fuseki-test.sh start    # in-memory server, dataset /jayhawk, port 3030
-./resource/fuseki-test.sh load     # fixtures into <urn:ontology>  (1376 triples)
-./resource/fuseki-test.sh status   # up/down + triple count; exit 1 when down
-./resource/fuseki-test.sh reset    # DROP ALL, server stays up
-./resource/fuseki-test.sh stop
-./resource/fuseki-test.sh url      # prints the query endpoint
+./bin/fuseki-test.sh start    # in-memory server, dataset /jayhawk, port 3040
+./bin/fuseki-test.sh load     # gistAcct3.0.0.ttl into <urn:ontology>  (919 triples)
+./bin/fuseki-test.sh status   # up/down + triple count; exit 1 when down
+./bin/fuseki-test.sh reset    # DROP ALL, server stays up
+./bin/fuseki-test.sh stop
+./bin/fuseki-test.sh url      # prints the query endpoint
 ```
 
 Everything is in memory and dies with the process — no TDB2 files, no state between
@@ -27,7 +27,7 @@ the working directory or — launched from the install dir — mounts the pre-ex
 
 ## Endpoints — verified, not assumed
 
-With dataset `/jayhawk` on port 3030:
+With dataset `/jayhawk` on port 3040:
 
 | purpose | URL |
 |---|---|
@@ -69,7 +69,7 @@ Load a Turtle file into a named graph via the Graph Store Protocol:
 
 ```sh
 curl -X POST -H 'Content-Type: text/turtle;charset=utf-8' \
-  --data-binary @resource/jayhawk.ttl \
+  --data-binary @resource/gistAcct3.0.0.ttl \
   "$B/data?graph=urn%3Aontology"
 ```
 
@@ -121,7 +121,7 @@ reference, then write the query inline rather than calling a name that will not 
 ## Integration tests
 
 ```sh
-./resource/fuseki-test.sh start
+./bin/fuseki-test.sh start
 JAYHAWK_TEST_SPARQL=1 julia --project=. test/runtests.jl
 ```
 

@@ -2,10 +2,10 @@
 #
 # Expose the Function-Graph engine over the Model Context Protocol.
 #
-#     julia --project=. bin/mcp_server.jl
+#     julia --project=bin bin/mcp_server.jl
 #
 # Configure the store with JAYHAWK_SPARQL_SERVICE (default http://localhost:3040/jayhawk),
-# started by ./resource/fuseki-test.sh start.
+# started by ./bin/fuseki-test.sh start.
 #
 # This adapter deliberately lives outside the package. ModelContextProtocol.jl pulls in
 # JSON3, StructTypes, DataStructures, MacroTools and OrderedCollections, which is a lot of
@@ -13,8 +13,8 @@
 # collides with Jayhawk's own. Keeping the wiring in a script means the engine has no new
 # dependency and every tool stays testable without the protocol.
 #
-# Install the protocol package into this project first:
-#     julia --project=. -e 'using Pkg; Pkg.add(name="ModelContextProtocol", version="0.4.1")'
+# `bin/Project.toml` is that separate environment; instantiate it once:
+#     julia --project=bin -e 'using Pkg; Pkg.instantiate()'
 
 using Jayhawk
 import ModelContextProtocol as MCP

@@ -18,7 +18,7 @@ You need Julia 1.10+, a checkout of Jayhawk, and Apache Jena Fuseki.
 
 ```bash
 cd ~/dev/Jayhawk
-./resource/fuseki-test.sh start          # in-memory Fuseki on :3040/jayhawk
+./bin/fuseki-test.sh start               # in-memory Fuseki on :3040/jayhawk
 julia --project=. -e 'using Jayhawk'
 ```
 
@@ -37,9 +37,9 @@ behave the way your triplestore says they do.
 
 ## 2. Your first rule
 
-A rule needs three named graphs' worth of information: the rule declaration and its
-variables in the **default graph**, the match pattern **L**, and the construct pattern **R**.
-Because L and R are named graphs, rules are written in **TriG**, not Turtle.
+A rule needs three graphs' worth of information: the rule declaration and its variables in
+the **default graph**, the match pattern **L**, and the construct pattern **R**. Because L
+and R are named graphs, rules are written in **TriG**, not Turtle.
 
 Here is the whole of `examples/moneygraph/01-classify-bond.trig`, minus its prefixes:
 
@@ -90,8 +90,8 @@ D = "urn:jayhawk:example:moneygraph"
 load_file!("examples/moneygraph/data.trig")
 load_file!("examples/moneygraph/01-classify-bond.trig")
 
-firings = run_rule("https://w3id.org/moneygraph/ns/rules/ClassifyBond";
-                   source = [D], actor = "doug")
+fs = run_rule("https://w3id.org/moneygraph/ns/rules/ClassifyBond";
+              source = [D], actor = "doug")
 ```
 
 ```
@@ -99,6 +99,11 @@ ClassifyBond -> 2 triple(s)
    mg3:T4875   a mg:Bond
    mg3:IBM2029 a mg:Bond
 ```
+
+*Every output block in this guide is abridged the same way: the engine works in absolute
+IRIs and prints them in full, so `mg3:T4875` stands for
+`<https://w3id.org/moneygraph/ns/data/T4875>`. The triples themselves are the measured ones —
+`test/sparql_integration.jl` asserts them.*
 
 `mg3:AAPL` has no coupon rate, so L never reached it. That is the whole of the logic: a rule
 does not need an `if`, because a pattern that does not match does not fire.
@@ -115,8 +120,11 @@ print(tool_explain_rule("…/ClassifyBond"; source = [D]))
 ```
 Rule <…/ClassifyBond>
   mode              : Assert
+  match pattern L   : <…/ClassifyBond_L> (3 triples)
+  construct pattern R: <…/ClassifyBond_R> (1 triples)
   variables bound by L: ?_Sec, ?maturity, ?rate
   strategy          : ToFixpoint  (default for Assert)
+  iteration budget  : 100  (default)
   guards            : none -- this rule fires on every match
 
 compiles to:
@@ -196,6 +204,8 @@ pattern that must **not** match:
 :MintCouponEvent
     gistp:hasNegativeCondition :MintCouponEvent_NoEventYet .
 
+:MintCouponEvent_NoEventYet rdf:type gistp:SparqlPattern .    # a guard is a pattern like any other
+
 :MintCouponEvent_NoEventYet {
     :_Event rdf:type mg:CouponPaymentEvent .
 }
@@ -223,7 +233,54 @@ type assertion.
 
 ---
 
-## 6. Enumerations: one clause, two readings
+## 6. How often a rule runs
+
+A guard says *whether* a rule fires. Three more properties say *how often*, and they are the
+difference between a rule that stops because somebody decided it should and one that merely
+happens to.
+
+```turtle
+:MintCouponEvent
+    gistp:strategy      gistp:ToFixpoint ;
+    gistp:maxIterations 5 ;
+    gistp:priority      50 .
+```
+
+| Property | Values | Default |
+|---|---|---|
+| `gistp:strategy` | `gistp:Once`, `gistp:ToFixpoint` | `ToFixpoint` for `Assert`, `Once` for everything else |
+| `gistp:maxIterations` | a positive integer | 100 |
+| `gistp:priority` | an integer | 0 |
+
+**`ToFixpoint` re-runs until a pass changes nothing.** Each round's output joins the working
+set, so the next round sees it — that is how transitive closure works, and it is why a
+fixpoint run needs an explicit `source`: SPARQL's `USING` cannot name the store's default
+graph, so the working set has to be named graphs.
+
+**The budget is a hard stop, not a hint.** Exceed it and the run *fails* rather than
+returning a half-finished graph. If that happens, the usual cause is minting inside a
+fixpoint: `gistp:iriTemplate` invents terms, which turns fixpoint evaluation into the chase,
+and the chase need not terminate. A guard on the minted variable — §5 — is the fix, because
+then the second round declines what the first created.
+
+Strategy and budget are both overridable per call, which is the right place for a one-off:
+
+```julia
+run_rule(rule; source = [D], strategy = :Once)
+run_rule(rule; source = [D], max_iterations = 1000)
+```
+
+One combination is refused outright: a **`Rewrite` run to a fixpoint with no guard and no
+stated budget**. A deleting rule has nothing to tell it when it is done, so falling back to
+100 destructive passes is not a decision the engine will make on your behalf.
+
+`gistp:priority` is loaded, validated and shown by `explain_rule`, but nothing acts on it
+yet — `run_rule` takes one rule at a time. It is there so rule sets can be ordered when
+`run_rules` lands; record your intent now and it will be honoured later.
+
+---
+
+## 7. Enumerations: one clause, two readings
 
 `gistp:oneOf` fixes a variable to a list of values:
 
@@ -254,7 +311,7 @@ every security — parameterised graph generation, with no extra vocabulary.
 
 ---
 
-## 7. Rewriting: taking facts away
+## 8. Rewriting: taking facts away
 
 `gistp:Rewrite` is the only mode that deletes. What survives is **I**, the interface, and
 **I is authored by repetition**: whatever you want preserved, you write into *both* graphs.
@@ -308,7 +365,7 @@ run anything.
 
 ---
 
-## 8. Provenance and undo
+## 9. Provenance and undo
 
 Every application writes into its **own named graph** and records a provenance entry.
 
@@ -318,7 +375,7 @@ firings()
 
 ```
 (graph = "urn:jayhawk:firing:7871b9af-…", rule = "…/RetireListing",
- at = "2026-08-15T21:58:03Z", count = 1, removed = 1, actor = "doug", iteration = 1,
+ at = "2026-08-15T21:58:03Z", count = 1, actor = "doug", iteration = 1, removed = 1,
  tombstone = "urn:jayhawk:tombstone:…")
 ```
 
@@ -334,7 +391,7 @@ nothing else; it is not a general graph delete.
 
 ---
 
-## 9. Driving it from an agent
+## 10. Driving it from an agent
 
 ```bash
 julia --project=bin -e 'using Pkg; Pkg.instantiate()'
@@ -350,7 +407,7 @@ proposition — every operation is one somebody wrote and reviewed.
 
 ---
 
-## 10. When a rule is refused
+## 11. When a rule is refused
 
 Jayhawk would rather refuse a rule than compile it into something that quietly misbehaves.
 Each message names the fix.
@@ -364,6 +421,9 @@ Each message names the fix.
 | *carries a template, which declares it minted, but the match pattern also binds it* | A variable is either constructed or matched. |
 | *gistp:Rewrite needs exactly one source graph* | "Delete from the union of these three" is neither expressible nor reviewable. |
 | *still changing the graph after N iterations* | A fixpoint did not converge. Usually IRI minting from a value the rule itself derives. |
+| *running to a fixpoint needs an explicit `source`* | Each round has to see the previous round's output, and SPARQL's `USING` cannot name the store's default graph. Load the data into a named graph, or apply the rule `Once`. |
+| *a gistp:Rewrite run to a fixpoint with no gistp:hasNegativeCondition must state a bound* | A deleting rule has nothing to say when it is done. Add a guard or a `gistp:maxIterations`. |
+| *no rule found at `<…>`* | The IRI is wrong, or the rule's three declarations are not in the **default** graph. A rule that lives inside a named graph is invisible to `load_rule`. |
 
 ---
 

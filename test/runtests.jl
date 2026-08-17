@@ -733,7 +733,10 @@ end
         # a separate, pre-existing trait of ldict and applies to named subjects
         # identically -- see the characterization testset below.
         RDFTYPE = Resource("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
-        for f in ("jayhawk.ttl", "gistAcct3.0.0.ttl")
+        # `resource/jayhawk.ttl` was in this list until it was deleted; the read threw a
+        # SystemError and took the whole hermetic run with it. Anything added back here
+        # must exist -- a missing fixture is an error, not a skipped assertion.
+        for f in ("gistAcct3.0.0.ttl",)
             ttl = read(joinpath(@__DIR__, "..", "resource", f), String)
             m = analyze(Jayhawk.expand_uris(Serd.read_rdf_string(ttl)...))
             install!(generate(m))
@@ -1686,7 +1689,7 @@ end
 # Without JAYHAWK_TEST_SPARQL set they are not even loaded, so a developer with no
 # server running never sees a failure from them.
 #
-#     ./resource/fuseki-test.sh start
+#     ./bin/fuseki-test.sh start
 #     JAYHAWK_TEST_SPARQL=1 julia --project=. test/runtests.jl
 if haskey(ENV, "JAYHAWK_TEST_SPARQL")
     include("sparql_integration.jl")

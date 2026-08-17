@@ -3,7 +3,7 @@
 # NOT part of the default suite. `test/runtests.jl` stays hermetic and ~6 seconds; a
 # developer with no server running must never see a failure from this file.
 #
-#     ./resource/fuseki-test.sh start
+#     ./bin/fuseki-test.sh start
 #     JAYHAWK_TEST_SPARQL=1 julia --project=. test/sparql_integration.jl
 #
 # Or, to run it together with everything else:
@@ -12,7 +12,7 @@
 # The endpoint is baked into `Jayhawk.spqservice` as a `const` at module load, so
 # JAYHAWK_SPARQL_SERVICE must be exported *before* julia starts if the rig is not on
 # the default port. The default (http://localhost:3040/jayhawk) already matches
-# resource/fuseki-test.sh.
+# bin/fuseki-test.sh.
 #
 # These tests build and drop their own named graph and never touch <urn:ontology>, so
 # they neither depend on `fuseki-test.sh load` having run nor disturb it.
@@ -37,7 +37,7 @@ server_reachable() =
         error("""
               No SPARQL server answering at $(Jayhawk.spqservice).
 
-              Start one with:  ./resource/fuseki-test.sh start
+              Start one with:  ./bin/fuseki-test.sh start
 
               (This file is opt-in precisely so that the default suite never depends
               on a live server -- if you did not mean to run it, unset

@@ -19,7 +19,7 @@ obvious which terms are borrowed and which are invented here.
 ## Running them
 
 ```bash
-./resource/fuseki-test.sh start
+./bin/fuseki-test.sh start
 
 julia --project=. -e '
 using Jayhawk

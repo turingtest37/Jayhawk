@@ -14,7 +14,7 @@ For *using* it, read [`docs/user-guide.md`](https://claude.ai/code/artifact/387c
 |---|---|---|
 | **Store** | Fuseki / Jena | — |
 | **Engine** | Jayhawk | `term.jl`, `sparqlclient.jl`, `compile.jl`, `harness.jl`, `mcp.jl` |
-| **Extension** | Jayhawk | `analyze.jl`, `generate.jl`, `execute.jl`, `rdf*.jl`, `tracelog.jl` |
+| **Extension** | Jayhawk | `analyze.jl`, `generate.jl`, `build.jl`, `execute.jl`, `rdf*.jl`, `tracelog.jl` |
 
 **SPARQL matches, Julia computes, RDF holds identity.**
 
@@ -48,8 +48,8 @@ engine inherits a mutable process-global that two concurrent MCP sessions can co
       │  Graph Store Protocol POST          Jena parses. Julia never parses RDF.
       ▼
   triplestore
-      │  load_rule            SELECT × 7    metadata, L, R, NACs, variables, mints, enums
-      ▼
+      │  load_rule           SELECT × 11    metadata, NAC graphs, L, R, variables, mints,
+      ▼                     (+1 per NAC)    enums × 2, strategy, priority, maxIterations
   RuleSpec                                  pure data
       │  compile_rule / insert_query / rewrite_query    PURE — no I/O, snapshot-testable
       ▼
@@ -61,7 +61,8 @@ engine inherits a mutable process-global that two concurrent MCP sessions can co
 
 `load_rule` does the I/O and nothing else; everything downstream of `RuleSpec` is pure. That
 split is what makes the interesting half testable against golden files with no server
-running — 164 of the suite's tests need no Fuseki.
+running: the hermetic suite is 315 assertions, and the 164 in its `compiler (pure)` testset
+cover the whole of compilation without a Fuseki anywhere.
 
 ### Why the compiler reads from the store
 
@@ -141,6 +142,10 @@ This is cheap *because* variables are persistent typed individuals rather than S
 name-strings: two pattern triples denote the same thing exactly when they are the same RDF
 triple. No unification, no alpha-equivalence. It is the clearest payoff of the whole design.
 
+The key is each term's SPARQL text, which is injective for IRIs and for literals — so an
+IRI-position variable matches by RDF identity and a literal-position one by lexical form,
+which is precisely the two-mechanism split of §3 showing through.
+
 ### Minting
 
 RFC 6570 Level 1 expansion is exactly `ENCODE_FOR_URI`, so there is no template engine:
@@ -204,14 +209,14 @@ Four suites, each with a different job.
 
 | Suite | Needs a server | What it is for |
 |---|---|---|
-| `test/runtests.jl` | no | ~6s, hermetic. Pure compiler behaviour, golden SPARQL, every refusal. |
-| `test/sparql_integration.jl` | yes | Live behaviour: what the store actually does. Opt-in via `JAYHAWK_TEST_SPARQL=1`. |
+| `test/runtests.jl` | no | ~16s warm, hermetic, 315 assertions. Pure compiler behaviour, golden SPARQL, every refusal. |
+| `test/sparql_integration.jl` | yes | 213 + 16 assertions. Live behaviour: what the store actually does. Opt-in via `JAYHAWK_TEST_SPARQL=1`. Includes the `moneygraph` testset that every figure in the user guide is measured from. |
 | `test/review_fixes.jl`, `review_round4.jl` | yes | Independent verification of specific fixes, written from the *claims* rather than the implementation. |
-| `test/adversarial.jl` | yes | Deliberately hostile. Untracked; a running to-do list. |
+| `test/adversarial.jl` | yes | Deliberately hostile, and not part of `runtests.jl` — run it on its own. It found the Rewrite data-loss bug. |
 
 ```bash
 julia --project=. test/runtests.jl                          # fast loop
-./resource/fuseki-test.sh start
+./bin/fuseki-test.sh start
 JAYHAWK_TEST_SPARQL=1 julia --project=. test/runtests.jl    # everything
 cd ~/dev/gistPatterns && python3 verify.py                  # the ontology
 ```
@@ -282,9 +287,10 @@ hashing each node's surroundings, which is graph isomorphism.
 
 In the order I would take them.
 
-**Rule sets and conflict analysis.** `gistp:priority` is loaded and unused, and `run_rule`
-takes one rule. A process engine needs `run_rules(set)` — and, to be trustworthy, an answer
-to "does order matter here?" There is a cheap conservative one: over predicates,
+**Rule sets and conflict analysis.** `gistp:priority` is loaded and *displayed* by
+`explain_rule`, but nothing orders anything by it, because `run_rule` takes one rule at a
+time. A process engine needs `run_rules(set)` — and, to be trustworthy, an answer to "does
+order matter here?" There is a cheap conservative one: over predicates,
 
 ```
 delta(A) = predicates in (L_A ∖ I_A) ∪ (R_A ∖ I_A)
@@ -292,7 +298,7 @@ A and B commute if  delta(A) ∩ predicates(L_B) = ∅  and  delta(B) ∩ predic
 ```
 
 Sound but incomplete — it never claims independence falsely, which is the direction that
-matters — and it is the same set arithmetic that made `interface` a six-line function.
+matters — and it is the same set arithmetic that made `interface` a two-line function.
 
 **Declarations for literal-position variables** (§3), which is what currently blocks `oneOf`
 on a literal.

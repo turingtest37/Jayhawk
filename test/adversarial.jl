@@ -38,7 +38,7 @@ const TC     = "http://example.org/tc/"
 const TCRULE = "http://example.org/tcrules/PartOfTransitive"
 const DATA   = "urn:jayhawk:adv-data"
 
-"Wipe the dataset. The store-backed tests own the dataset outright -- run them against\nresource/fuseki-test.sh, never against anything you care about."
+"Wipe the dataset. The store-backed tests own the dataset outright -- run them against\nbin/fuseki-test.sh, never against anything you care about."
 reset_store!() = Jayhawk.update!("DROP ALL")
 
 load_chain!(g, n) = Jayhawk.update!("INSERT DATA { GRAPH <$g> {" *

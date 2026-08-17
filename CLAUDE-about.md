@@ -19,8 +19,8 @@ Jayhawk is two things that share a repository and very little code.
 ## Commands
 
 ```bash
-julia --project=. test/runtests.jl                       # hermetic, ~6s, no server
-./resource/fuseki-test.sh start                          # local Fuseki on :3040/jayhawk
+julia --project=. test/runtests.jl                       # hermetic, ~16s, 315 assertions
+./bin/fuseki-test.sh start                               # local Fuseki on :3040/jayhawk
 JAYHAWK_TEST_SPARQL=1 julia --project=. test/runtests.jl # + integration tests
 
 julia --project=bin -e 'using Pkg; Pkg.instantiate()'    # once
@@ -52,10 +52,23 @@ membership vocabulary and no predicate blacklist. Instances are therefore TriG, 
 cannot express them.
 
 Three modes. `Construct` (`f(G)`, pure) and `Assert` (`G ∪ f(G)`, to a fixpoint) compile to
-**identical SPARQL**; only the driver differs. `Rewrite` (`DELETE`/`INSERT`) is not compiled
-yet — it needs the triple-level interface `I = L ∩ R`.
+**identical SPARQL**; only the driver differs. `Rewrite` emits `DELETE { L∖I } INSERT { R∖I }`
+off the triple-level interface `I = L ∩ R` (`interface` / `match_only` / `construct_only`), as
+five staged operations in one transaction — see the developer guide.
 
 **I is authored by repetition**: whatever is preserved is written into both L and R.
+
+### The control layer
+
+`gistp:hasNegativeCondition` (0..n) compiles each guard graph to its own `FILTER NOT EXISTS`,
+emitted *after* the `BIND`s so a guard may name a minted variable. `gistp:strategy`
+(`Once` / `ToFixpoint`, defaulting to `ToFixpoint` for `Assert`), `gistp:maxIterations` and
+`gistp:priority` are loaded and validated; priority is displayed but not yet acted on.
+`gistp:oneOf` compiles to `VALUES`, which constrains when L also binds the variable and
+generates when it does not.
+
+All seven WHERE-clause builders route through `where_body`, so a guard cannot be honoured by
+only some of them.
 
 ### Two variable mechanisms
 
@@ -67,9 +80,10 @@ thing standing between a typo and a rule that silently constructs nothing.
 ### Firings
 
 Every application writes into a fresh `urn:jayhawk:firing:<uuid>` graph, pruned of facts the
-working set already held, and recorded in `urn:jayhawk:provenance`. Undo is `DROP GRAPH` —
-complete while every mode is additive. `max_iterations` is a hard stop because
-`gistp:iriTemplate` minting turns fixpoint evaluation into the chase.
+working set already held, and recorded in `urn:jayhawk:provenance`. Undo drops that graph and,
+for a `Rewrite`, replays the `urn:jayhawk:tombstone:<uuid>` graph written in the same atomic
+update — so it is an exact inverse. `max_iterations` is a hard stop because `gistp:iriTemplate`
+minting turns fixpoint evaluation into the chase.
 
 ### Hard constraint
 
@@ -123,7 +137,7 @@ Process-global state in the materialiser, one piece deliberately corrupt:
 | `Jayhawk.jl` | module, exports, `resource_dict`, `initialize`, `set_def_prefixes` |
 | `term.jl` | `RDFTerm` / `IRIRef` / `BNode` / `RDFLiteral`; SPARQL Results JSON |
 | `sparqlclient.jl` | `runsparql` plus the typed `select`/`ask`/`update!` and GSP loaders |
-| `compile.jl` | `load_rule`, `compile_rule`, `insert_query`, `rule_catalogue` |
+| `compile.jl` | `load_rule`, `compile_rule`, `insert_query`, `rewrite_query`, `where_body`, `interface`, `rule_catalogue` |
 | `harness.jl` | `apply_rule`, `run_rule`, `dry_run`, `undo_firing!`, `firings` |
 | `mcp.jl` | the five agent-facing tools |
 | `analyze.jl` `generate.jl` `execute.jl` `build.jl` | the materialiser pipeline |

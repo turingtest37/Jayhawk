@@ -130,7 +130,7 @@ end # hermetic
 if haskey(ENV, "JAYHAWK_TEST_SPARQL")
 
 reachable() = try (Jayhawk.runsparql("ASK {}"); true) catch; false end
-reachable() || error("no Fuseki; ./resource/fuseki-test.sh start")
+reachable() || error("no Fuseki; ./bin/fuseki-test.sh start")
 
 const RG = "urn:rev4:data"
 scrub() = begin

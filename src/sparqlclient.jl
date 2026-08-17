@@ -13,7 +13,7 @@ import EzXML: XMLDocument, parsexml, findall, namespaces, namespace
 #   GraphDB   query  http://host:7200/repositories/<id>  update  <base>/statements
 #
 # Fuseki's query service really is the bare dataset path -- `<base>/sparql` returns 404
-# under FusekiMainCmd, which is what resource/fuseki-test.sh launches.
+# under FusekiMainCmd, which is what bin/fuseki-test.sh launches.
 #
 # These two remain `const` because `test/sparql_integration.jl` asserts their shape, and
 # because they are the *default* only. Anything that needs a different server at runtime
