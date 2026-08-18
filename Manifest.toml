@@ -94,10 +94,10 @@ version = "1.4.0"
     ArrowTypes = "31f734f8-188a-4ce0-8406-c8a06bd891cd"
 
 [[deps.Jayhawk]]
-deps = ["AutoHashEquals", "Dates", "EzXML", "HTTP", "JSON", "Logging", "URIs", "UUIDs"]
+deps = ["AutoHashEquals", "Dates", "EzXML", "HTTP", "JSON", "Logging", "Serd", "URIs", "UUIDs"]
 path = "."
 uuid = "12faa926-1a3f-5f5e-81b2-8d3f7f967ea3"
-version = "0.2.1"
+version = "0.3.0"
 
 [[deps.JuliaSyntaxHighlighting]]
 deps = ["StyledStrings"]
@@ -230,9 +230,7 @@ version = "0.7.0"
 
 [[deps.Serd]]
 deps = ["AutoHashEquals", "Dates", "Serd_jll", "Test", "URIs"]
-git-tree-sha1 = "9510c06f4eb942d01164f1f459aad9c336d1e021"
-repo-rev = "jayhawk-1"
-repo-url = "../Serd.jl"
+path = "/Users/doug/dev/Serd.jl"
 uuid = "42699a24-3520-5f41-a549-6a478ed667c2"
 version = "0.3.2"
 
