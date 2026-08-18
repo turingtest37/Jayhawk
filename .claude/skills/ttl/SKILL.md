@@ -103,35 +103,35 @@ files with no blank nodes. It is not a comparison tool for ontologies.
 
 ## Does it validate, or does it actually load?
 
-**`riot` accepting a file does not mean Jayhawk can load it, and vice versa.** Jayhawk
-parses through Serd, which disagrees with Jena in both directions. Verified:
+**Since v0.4.0, `riot` is authoritative.** Jayhawk has no RDF parser: files reach the store
+over the Graph Store Protocol and **Jena parses every byte**. So if `riot --validate` accepts
+a file, Fuseki will load it, and the two can no longer disagree.
 
-| case | `riot --validate` | Serd / Jayhawk |
-|---|---|---|
-| `"122.1"^^mine:myDecimal` with `mine:` declared locally | exit 0, accepted | **throws `KeyError`** |
-| `resource/jayhawk.ttl` (the `urn:data` warning) | **exit 1** | parsed fine, 457 statements |
-| genuinely malformed Turtle | exit 1, `[line: 2, col: 12]` | throws `SerdException` |
-
-The first row is the dangerous one. Serd resolves a datatype CURIE against a
-**process-global** prefix registry, not against the document's own `@prefix` lines — so a
-perfectly legal file fails to load because the prefix was never registered in the Julia
-session. Register prefixes first (`Jayhawk.set_def_prefixes()`, or `add_prefix!` from the
-`pfxs` that `read_rdf_string` returns) before parsing anything with custom datatypes.
-
-So when the question is "will Jayhawk load this", check with Jayhawk — see the
-`jl-probe` skill:
-
-```julia
-stmts, pfxs, base = Serd.read_rdf_string(read("file.ttl", String))
+```sh
+$JENA/bin/riot --validate file.ttl && echo "Jayhawk will load this"
 ```
 
-Serd has three distinct failure channels: `SerdException` (syntax), `ArgumentError` (bad
-lexical form for a datatype), and `KeyError` (unregistered prefix). Catch all three.
+This used to be a real trap and is worth knowing if you meet older notes. Jayhawk parsed
+through Serd, which resolves a datatype CURIE against a **process-global** prefix registry
+rather than the document's own `@prefix` lines — so `"122.1"^^mine:myDecimal` in a file that
+declares `mine:` locally would pass `riot --validate` and then throw `KeyError` in Julia. That
+whole class of failure went away with the parser; it now lives in `RdfMaterializer`, which
+still parses through Serd and still has it.
 
-Note also that `SerdException` carries **only a status enum** — no line, no column. The
-underlying C library does print `(string):2:12: expected digit` to stderr, so you can
-*see* the position when running interactively, but you cannot get it from the caught
-exception. For diagnosing a bad file, run `riot` — that is what it is good at.
+To confirm a file loads, load it — the store is the only opinion that counts:
+
+```julia
+using Jayhawk
+load_file!("file.ttl")            # Turtle, TriG, N-Triples; syntax from the extension
+```
+
+A parse failure surfaces as an HTTP 400 from Fuseki with Jena's own message — line, column
+and all — which is strictly better diagnostics than the old `SerdException`, which carried
+only a status enum with no position.
+
+**TriG, not Turtle, for rules.** A pattern *is* its named graph, so a rule instance cannot be
+expressed in Turtle at all. `riot --validate` infers syntax from the extension; give rule
+files a `.trig` extension or it will reject legal content.
 
 ## Other tools in the box
 

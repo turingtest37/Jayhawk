@@ -1,16 +1,21 @@
 ---
 name: jl-probe
-description: Evaluate a throwaway Julia expression against the loaded Jayhawk package to check a hypothesis about RDF parsing, the analyze/generate/install pipeline, generated code, or TraceLog contents. Use when you need to answer "what does this actually return / what type is this / did this triple execute" rather than reading source and guessing.
+description: Evaluate a throwaway Julia expression against the loaded Jayhawk package to check a hypothesis about rule loading, SPARQL compilation, the execution harness, or firing/provenance state. Use when you need to answer "what SPARQL does this compile to / what type is this term / did this rule actually fire" rather than reading source and guessing.
 ---
 
 # Probing Jayhawk from a scratch Julia process
 
-For answering a factual question about runtime behavior — what a function returns, what
-concrete type a term has, whether a triple executed — without adding a test or editing `src/`.
+For answering a factual question about runtime behaviour — what a rule compiles to, what
+concrete type a term has, whether a rule fired — without adding a test or editing `src/`.
+
+Jayhawk is **one** thing: the engine. It compiles `gistp:` patterns to SPARQL and runs them.
+It has no RDF parser, no `Core.eval`, and no global prefix registry. If a probe you are
+writing needs `analyze`/`generate`/`install!`, `TraceLog`, `makeqname` or `expand_uris`, you
+want the `RdfMaterializer` package (`~/dev/RdfMaterializer`), not this one.
 
 ## Write a file, don't fight the shell
 
-Multi-line probes inside `julia -e '...'` become unreadable fast, because Turtle snippets are
+Multi-line probes inside `julia -e '...'` become unreadable fast, because TriG snippets are
 full of `"` and `#` that collide with shell quoting. Write the probe to the scratchpad and run
 it:
 
@@ -26,114 +31,120 @@ statement as a **docstring** and fails with `cannot document the following expre
 
 ## The preamble
 
-Every probe needs this. Both lines matter:
+There is no required initialisation. This is the whole of it:
 
 ```julia
-using Jayhawk, Serd, Serd.RDF, Serd.RDF.Prefixes, Logging, URIs
+using Jayhawk, Logging
 
 global_logger(ConsoleLogger(stderr, Logging.Warn))  # silence the @debug firehose
-Jayhawk.set_def_prefixes()                          # or makeqname throws KeyError
 ```
 
-Skipping `set_def_prefixes()` gives a confusing `KeyError` from deep inside `makeqname` —
-it is the single most common way a probe fails for reasons unrelated to what you're testing.
+The endpoint defaults to `http://localhost:3040/jayhawk`. It is **settable at runtime** —
+`set_endpoint!("http://host:port/ds")` — so you do not have to relaunch Julia to point
+somewhere else.
 
-`Prefix already defined. Overwriting with new value.` warnings come from Serd and are
-harmless; ignore them or raise the logger to `Logging.Error`.
+## Probing without a server
 
-## Loading RDF
+The compiler is pure, so the most useful probes need no Fuseki at all. Build a `RuleSpec` by
+hand and compile it:
 
 ```julia
-tl = initialize()              # a TraceLog with active=true
-make_from_rdf(ttl_string, tl)  # analyze -> generate -> install! -> register! -> run_data!
+G    = "http://ex.org/"
+TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"   # not exported; define it yourself
+iri(s) = IRIRef(s)                                          # term constructors
+var(s) = RDFLiteral(s, Jayhawk.GISTP_VAR)                   # a literal-position variable
+
+spec = RuleSpec(
+    "$(G)R", MODE_ASSERT, "$(G)R_L", "$(G)R_R",             # IRIs here are plain Strings
+    [PatternTriple(iri("$(G)_S"), iri(TYPE), iri("$(G)Thing"))],    # L
+    [PatternTriple(iri("$(G)_S"), iri(TYPE), iri("$(G)Widget"))],   # R
+    Dict("$(G)_S" => "?_S"),                                # variable IRI => variableText
+    Dict{String,MintSpec}())                                # no mints
+
+println(compile_rule(spec))
 ```
 
-To inspect the phases separately (this is the point of the three-phase split):
+Two traps in that constructor, both of which cost a probe:
+
+- **`RuleSpec`'s IRI fields are `String`, not `IRIRef`.** Only the terms *inside* a
+  `PatternTriple` are `RDFTerm`s. Passing `IRIRef` where a `String` belongs gives a
+  `MethodError` listing all five inner constructors, which reads as though the struct changed.
+- **`mints` is a `Dict{String,MintSpec}`, not a vector**, keyed by the same variable IRI as
+  `variables`.
+
+`test/runtests.jl` is the reference for the current `RuleSpec` field order — copy a
+constructor call from there rather than reconstructing it from memory, because the struct has
+grown a field per round.
+
+Useful pure entry points: `compile_rule`, `insert_query`, `rewrite_query`, `where_body`,
+`bgp_text`, `values_text`, `nacs_text`, `dataset_lines`, `interface`, `match_only`,
+`construct_only`, `dangling_risks`, and the `check_*` validators.
+
+## Probing against a store
+
+```bash
+./bin/fuseki-test.sh start        # in-memory, port 3040, dies with the process
+```
 
 ```julia
-stmts = Jayhawk.expand_uris(Serd.read_rdf_string(ttl)...)
-m     = analyze(stmts)          # pure: SchemaModel, no eval
-e     = generate(m)             # pure: Expr, nothing installed
-install!(e)                     # the ONLY eval in the pipeline
-tl    = initialize()
-register!(m, tl)                # populate TraceLog dictionaries
-run_data!(m, tl)                # execute the A-Box
+D = "urn:jayhawk:probe"
+update!("DROP SILENT GRAPH <$D>")
+load_file!("examples/moneygraph/data.trig")          # Jena parses it, not Julia
+load_file!("examples/moneygraph/01-classify-bond.trig")
+
+spec = load_rule("https://w3id.org/moneygraph/ns/rules/ClassifyBond")   # I/O, returns pure data
+println(compile_rule(spec))                                            # pure, from here down
+
+dry_run(spec; source = [D])                          # what it would add, writes nothing
+run_rule(spec.iri; source = [D], actor = "probe")    # actually apply it
+firings()                                            # provenance
 ```
 
-`compile(ttl)` does analyze + generate + install! without executing data.
-`generate(m; skip_existing=false)` re-emits definitions that already exist — needed when
-inspecting generated code for a schema loaded earlier in the same process.
+`tool_explain_rule(iri; source=[D])` prints metadata, compiled SPARQL and a dry run in one
+block, and is usually faster than assembling the same picture by hand.
 
-## Reaching generated code
+## Reading terms
 
-Use the package's own two helpers rather than `isdefined`/`getglobal`. Julia 1.12 tightened
-world-age rules for *global bindings*, not just method tables; these wrap the lookup in
-`invokelatest`, which is correct in every context:
+`select` is the datatype-faithful path and what the engine itself uses:
 
 ```julia
-Jayhawk._defined(Jayhawk, :gist_Category)     # NOT isdefined(...)
-f = Jayhawk._lookup(Jayhawk, :gist_Category)  # NOT getglobal(...)
+rows = select("SELECT ?s ?o WHERE { GRAPH <$D> { ?s ?p ?o } }")
+typeof(rows[1]["s"])          # IRIRef | BNode | RDFLiteral
+rows[1]["o"].datatype         # nothing for a plain literal
 ```
 
-**Whether you need `Base.invokelatest` to *call* `f` depends on where you are** — this is
-easy to get backwards:
-
-- **Top level of a probe script: not needed.** Each top-level statement runs in a new world
-  age, so `install!(e)` on one line and `f(s, o, tl)` on the next just works.
-- **Inside a single function body: required.** Code installed and called within one dynamic
-  extent hits the world-age barrier, and the direct call fails with a `MethodError` that
-  reads as though the method doesn't exist.
-
-The second case is why `run_data!` in `src/execute.jl` calls `Base.invokelatest`, and why the
-old `futures` queue existed. When in doubt inside a helper function, use `invokelatest` — it
-is never wrong, only marginally slower.
-
-To see what was generated: `println(string(generate(m; skip_existing=false)))`, or
-`methods(f)` for the installed methods of one property.
+`runsparql` returns **raw JSON** rather than `RDFTerm`s. Use it only when the question is
+about the wire format; prefer `select` / `ask` / `update!` otherwise.
 
 ## Gotchas that have already cost real time
 
-**`Resource` has two concrete subtypes that never compare equal.**
+**A datatype is how a variable is marked.** `RDFLiteral("?x", GISTP_VAR)` and
+`RDFLiteral("?x")` are different terms, and any path that normalises datatypes away collapses
+them. That is the entire reason `src/term.jl` exists. If a probe says a variable "isn't being
+recognised", check `.datatype` before anything else.
 
-```julia
-Resource("owl", "Restriction")                           # ResourceCURIE
-Resource("http://www.w3.org/2002/07/owl#Restriction")    # ResourceURI
-# these are NOT ==, despite denoting the same IRI
-```
+**Literal-position variables are matched by string equality of the lexical form**, across L
+and R, with no declaration anywhere. `?idtext` and `?idText` are different variables and
+nothing will tell you but `check_bound`.
 
-`@auto_hash_equals` equality does not cross the subtype boundary, so a dictionary keyed by one
-form never hits with the other. This is a live bug: `resource_dict` is populated with the
-CURIE form while everything out of `expand_uris` is the URI form. See the characterization
-testset `blank-node rdf:type for bootstrap owl types silently degrades to Unknown`. When a
-lookup mysteriously misses, check which form you have with `typeof`.
+**A rule's declarations must be in the default graph.** `hasMatchPattern`,
+`hasConstructPattern` and `rewriteMode` inside a named graph are invisible to `load_rule`,
+which then reports *no rule found* for an IRI that is plainly in the store.
 
-**A TraceLog only records when `active` is true.** `initialize()` sets it; `TraceLog()` does
-not. `store_local!`/`store_res!`/`add_entry!` are all silent no-ops on an inactive log, so an
-empty `tl.ldict` may mean "inactive", not "nothing executed".
+**`run_rule` returns `Firing[]` when nothing matched**, which looks identical to a rule that
+is broken. Use `dry_run` or `tool_explain_rule` to tell "matched nothing" from "compiled
+wrong" — and check that `source` names the graph the data actually landed in.
 
-**`run_data!` swallows per-triple failures.** It counts them and emits one `@info` at the end
-rather than throwing. To see which triples failed and why, loop yourself:
-
-```julia
-for t in m.data
-    nm = Jayhawk._qname(t.predicate)
-    (nm === nothing || !Jayhawk._defined(Jayhawk, nm)) && (println("undefined: ", t); continue)
-    try
-        Base.invokelatest(Jayhawk._lookup(Jayhawk, nm), t.subject, t.object, tl)
-    catch e
-        println("threw: ", t, " => ", e)
-    end
-end
-```
-
-**`_qname` returns `nothing` for an unregistered prefix**, where `makeqname` throws. `analyze`
-uses `_qname` so one unnameable IRI doesn't abort the file; those terms land in `m.unnamed`.
+**Fixpoint runs need an explicit `source`.** SPARQL's `USING` cannot name the store's default
+graph, so `strategy = :ToFixpoint` with no `source` is refused rather than silently running
+once.
 
 ## Real fixtures
 
-`resource/gistAcct3.0.0.ttl` (1235 lines) is the realistic load — bare IRIs, blank nodes, an
-unprefixed ontology IRI. `resource/jayhawk.ttl` is the project's own ontology. Use these
-rather than inventing Turtle when the question is about real-world shape.
+`examples/moneygraph/` holds four runnable rules — one per feature (classify, mint, enumerate,
+rewrite) — plus `data.trig`, and the integration suite asserts against them, so they cannot
+drift from the engine. `test/fixtures/` holds the deliberately-invalid rules used to check
+that refusals fire. Use these rather than inventing TriG when the question is about real shape.
 
 ## Clean up
 

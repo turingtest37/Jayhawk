@@ -13,10 +13,11 @@ Run from the repo root:
 julia --project=. test/runtests.jl
 ```
 
-~6 seconds. **Prefer this over `Pkg.test()`** — `julia --project=. -e 'using Pkg; Pkg.test()'`
-does the same work but re-resolves the environment and spawns a second process, roughly
-doubling the wall time for identical results. There is no `test/Project.toml`; test
-dependencies (`Test`, `Serd`, `URIs`, `Logging`) resolve from the main `Project.toml`.
+~6 seconds, 221 assertions, no server required. **Prefer this over `Pkg.test()`** —
+`julia --project=. -e 'using Pkg; Pkg.test()'` does the same work but re-resolves the
+environment and spawns a second process, roughly doubling the wall time for identical
+results. There is no `test/Project.toml`; test dependencies (`Test`, `URIs`, `Logging`)
+resolve from the main `Project.toml`.
 
 **The exit code is the signal.** 0 = all pass, 1 = something failed. Julia prints per-testset
 summaries either way, so never judge by eyeballing the tail alone.
@@ -30,11 +31,32 @@ julia --project=. test/runtests.jl > <scratchpad>/test.log 2>&1; echo "exit: $?"
 grep -v -E '^[┌│└]' <scratchpad>/test.log
 ```
 
+## The four suites
+
+`runtests.jl` is **not** the whole suite. Three more files run standalone and are *not*
+included by it, so they are the ones that rot unnoticed — run them before calling a change
+done:
+
+```bash
+julia --project=. test/runtests.jl                          # 221, hermetic
+julia --project=. test/adversarial.jl                       #  36, hermetic part
+julia --project=. test/review_fixes.jl                      #  39
+julia --project=. test/review_round4.jl                     #  17
+```
+
+Each of the last three grows a store-backed part under `JAYHAWK_TEST_SPARQL=1`, and
+`runtests.jl` grows `sparql_integration.jl` (223 + 13):
+
+```bash
+./bin/fuseki-test.sh start
+JAYHAWK_TEST_SPARQL=1 julia --project=. test/runtests.jl
+```
+
 ## Filtering the output
 
-Output is ~450 lines, of which ~110 are harmless `Prefix already defined. Overwriting with
-new value.` warnings emitted by Serd itself (not by Jayhawk) every time a test snippet
-redeclares a prefix. They are noise. Strip the multi-line log blocks:
+The bulk of the noise is `┌ Warning:` blocks — the dangling-reference warning a `Rewrite`
+test deliberately triggers, and a Mustache "binding matches nothing" check. Both are
+expected. Strip the multi-line log blocks:
 
 ```bash
 julia --project=. test/runtests.jl 2>&1 | grep -v -E '^[┌│└]'
@@ -56,15 +78,16 @@ by `Expression:` and `Evaluated:`. The `Evaluated:` line is the useful one — i
 actual values, which is usually enough to tell a genuine regression from a test that encoded
 the wrong expectation.
 
-Two testsets in this suite are **characterization tests**: they assert current, known-wrong
-behavior on purpose, and say so in their comments.
+The `golden snapshot` testset asserts compiled SPARQL **byte for byte**. When it fails,
+compare the `Evaluated:` block against the expected string literally — a one-character
+whitespace or ordering change is a real behavioural change in the compiler's output, not a
+cosmetic diff to paper over. Emission order is deliberate and asserted elsewhere too
+(`VALUES precedes the BIND that may consume it`, `the WHERE body orders match, then BIND,
+then filters`).
 
-- `blank-node rdf:type for bootstrap owl types silently degrades to Unknown`
-- `colliding sanitized names merge two distinct properties`
-
-If one of those starts failing, that most likely means somebody **fixed the underlying bug**.
-Read the comment block above the assertion before treating it as a regression — the comment
-states what the assertion should become once fixed.
+The characterization testsets that used to be listed here — `blank-node rdf:type for
+bootstrap owl types silently degrades to Unknown` and `colliding sanitized names merge two
+distinct properties` — moved to `RdfMaterializer` with the materialiser at v0.4.0.
 
 ## Turning on debug logging
 
@@ -75,8 +98,7 @@ buried the summary under ~63,000 lines. To enable it for one run:
 JULIA_DEBUG=Jayhawk julia --project=. test/runtests.jl
 ```
 
-Use `JULIA_DEBUG=all` only if you also need Serd's internals. Always redirect to a file when
-debug is on — it is far too large to read inline.
+Always redirect to a file when debug is on — it is far too large to read inline.
 
 ## Running a subset
 
@@ -86,13 +108,16 @@ scratch file instead of editing `test/runtests.jl`:
 
 ```julia
 # <scratchpad>/one.jl
-using Test, Jayhawk, URIs, Serd, Serd.RDF, Serd.RDF.Prefixes, Logging
-Jayhawk.set_def_prefixes()
+using Test, Jayhawk, URIs, Logging
 
 @testset "the one I care about" begin
     # ...paste the testset body...
 end
 ```
+
+Testsets in `compiler (pure)` lean on helper bindings defined once at the top of that
+outer testset — `G`, `HR`, `R`, `TYPE`, `iri`, `var`, `person_to_employee`. Copy those
+across with the body or the paste will not run.
 
 ```bash
 julia --project=. <scratchpad>/one.jl

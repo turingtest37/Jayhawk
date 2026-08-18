@@ -19,6 +19,7 @@ julia = "1.10"
 # Jayhawk is unregistered, so this env can only find it if the Project says where. It used
 # to be reachable solely through bin/Manifest.toml, which is gitignored as machine-specific
 # -- so a fresh clone could not instantiate this environment at all. Relative to the repo,
-# because bin/ travels with it. Serd arrives transitively via Jayhawk's own [sources].
+# because bin/ travels with it. Since v0.4.0 Jayhawk itself needs no [sources] of its own:
+# every one of its dependencies resolves from the General registry.
 [sources]
 Jayhawk = {path = ".."}

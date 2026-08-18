@@ -14,7 +14,7 @@ For *using* it, read [`docs/user-guide.md`](https://claude.ai/code/artifact/387c
 |---|---|---|
 | **Store** | Fuseki / Jena | — |
 | **Engine** | Jayhawk | `term.jl`, `sparqlclient.jl`, `compile.jl`, `harness.jl`, `mcp.jl` |
-| **Extension** | Jayhawk | `analyze.jl`, `generate.jl`, `build.jl`, `execute.jl`, `rdf*.jl`, `tracelog.jl` |
+| **Extension** | `RdfMaterializer` (separate package) | — |
 
 **SPARQL matches, Julia computes, RDF holds identity.**
 
@@ -23,13 +23,19 @@ joining, and provides the transaction boundary. Nothing in the engine reimplemen
 that, and the single most consequential decision in the project is that it compiles to
 SPARQL rather than building a matching engine.
 
-The **engine** is the Function-Graph compiler and driver. The **extension layer** is the
-older ontology materialiser: it turns OWL declarations into Julia structs and per-predicate
-functions. Nothing in the engine uses it. It is kept because it is the intended home for
-operators SPARQL cannot express — arithmetic beyond trivia, statistics, optimisation, calls
-into the Julia numerical stack — which is the one place Julia is uniquely justified here
-rather than arbitrarily chosen. It is not yet wired to the engine, and the guide says so
-rather than implying otherwise.
+The **engine** is the Function-Graph compiler and driver, and it is now the whole of this
+package. The **extension layer** — the older ontology materialiser, which turns OWL
+declarations into Julia structs and per-predicate functions — was split out into
+[`RdfMaterializer`](../../RdfMaterializer) at v0.4.0. The two halves shared no code, only a
+module, and keeping them together forced every consumer of the engine to inherit the
+materialiser's dependency on a private, unpublished fork of Serd. **Jayhawk no longer depends
+on Serd**, and neither package depends on the other.
+
+The materialiser is still the intended home for operators SPARQL cannot express — arithmetic
+beyond trivia, statistics, optimisation, calls into the Julia numerical stack — which is the
+one place Julia is uniquely justified here rather than arbitrarily chosen. It is not yet
+wired to the engine, and the guide says so rather than implying otherwise. Wiring it back up
+is now an explicit dependency decision rather than an accident of packaging.
 
 ### The invariant that keeps them apart
 
@@ -62,17 +68,18 @@ engine inherits a mutable process-global that two concurrent MCP sessions can co
 
 `load_rule` does the I/O and nothing else; everything downstream of `RuleSpec` is pure. That
 split is what makes the interesting half testable against golden files with no server
-running: the hermetic suite is 337 assertions, and the 186 in its `compiler (pure)` testset
+running: the hermetic suite is 221 assertions, and the 186 in its `compiler (pure)` testset
 cover the whole of compilation without a Fuseki anywhere.
 
 ### Why the compiler reads from the store
 
 A rule's metadata lives in the default graph and its patterns live in named graphs, so the
 compiler's input is inherently a **dataset query**. A flat `Vector{Statement}` cannot express
-that. Serd also discards literal datatypes — `"?x"^^gistp:var` comes back indistinguishable
-from `"?x"` — which is fatal when the variable marker *is* a datatype. SPARQL Results JSON
-carries datatypes faithfully, so the engine reads that instead. `src/term.jl` exists for
-exactly this reason.
+that. The obvious alternative — parse the Turtle in Julia with Serd — also discards literal
+datatypes: `"?x"^^gistp:var` comes back indistinguishable from `"?x"`, which is fatal when the
+variable marker *is* a datatype. SPARQL Results JSON carries datatypes faithfully, so the
+engine reads that instead. `src/term.jl` exists for exactly this reason, and it is why the
+engine has no RDF parser dependency at all.
 
 ---
 
@@ -238,15 +245,23 @@ Four suites, each with a different job.
 
 | Suite | Needs a server | What it is for |
 |---|---|---|
-| `test/runtests.jl` | no | ~16s warm, hermetic, 337 assertions. Pure compiler behaviour, golden SPARQL, every refusal. |
-| `test/sparql_integration.jl` | yes | 223 + 16 assertions. Live behaviour: what the store actually does. Opt-in via `JAYHAWK_TEST_SPARQL=1`. Includes the `moneygraph` testset that every figure in the user guide is measured from. |
-| `test/review_fixes.jl`, `review_round4.jl` | yes | Independent verification of specific fixes, written from the *claims* rather than the implementation. |
-| `test/adversarial.jl` | yes | Deliberately hostile, and not part of `runtests.jl` — run it on its own. It found the Rewrite data-loss bug. |
+| `test/runtests.jl` | no | ~6s warm, hermetic, 221 assertions. Pure compiler behaviour, golden SPARQL, every refusal. |
+| `test/sparql_integration.jl` | yes | 223 + 13 assertions. Live behaviour: what the store actually does. Opt-in via `JAYHAWK_TEST_SPARQL=1`. Includes the `moneygraph` testset that every figure in the user guide is measured from. |
+| `test/review_fixes.jl` (39), `review_round4.jl` (17) | optional | Independent verification of specific fixes, written from the *claims* rather than the implementation. |
+| `test/adversarial.jl` (36) | optional | Deliberately hostile, and not part of `runtests.jl` — run it on its own. It found the Rewrite data-loss bug. |
+
+The last three are **standalone**: `julia --project=. test/<file>.jl` runs their hermetic
+part with no server, and `JAYHAWK_TEST_SPARQL=1` adds the store-backed part. Because
+`runtests.jl` does not include them, they are the ones most likely to rot unnoticed — run all
+three before calling a change done.
 
 ```bash
 julia --project=. test/runtests.jl                          # fast loop
 ./bin/fuseki-test.sh start
 JAYHAWK_TEST_SPARQL=1 julia --project=. test/runtests.jl    # everything
+for f in adversarial review_fixes review_round4; do         # the standalone suites
+  julia --project=. test/$f.jl
+done
 cd ~/dev/gistPatterns && python3 verify.py                  # the ontology
 ```
 
@@ -263,19 +278,26 @@ Three habits worth keeping, because they have each caught something real:
 
 ## 7. Known hazards
 
-All of these are in the **extension layer**, and the engine's absolute-IRI rule avoids every
-one. Do not try to repair them as a side quest.
+The process-global prefix-registry hazards — Serd's unsynchronised `_prefixes_by_name` /
+`_prefixes_by_uri`, the ever-growing `julia_datatype` map, generated code colliding in one
+module — **went with the materialiser** at v0.4.0. They are `RdfMaterializer`'s problem now,
+and the engine's absolute-IRI rule means it never meets them. Do not import them back.
 
-- Serd's `_prefixes_by_name` / `_prefixes_by_uri` are unsynchronised `const` globals with no
-  removal — and `src/Jayhawk.jl` **relies on them being out of sync** to resolve both `gist:`
-  namespace spellings.
-- `julia_datatype` does `get!` on a `const` map, inserting on every unknown datatype, growing
-  process-wide forever.
-- Generated code lands in the single `Jayhawk` module; colliding sanitised names share a
-  struct. There is a testset acknowledging this.
-- **Serd discards literal datatypes**, which is why `src/term.jl` exists.
-- Serd is a private fork at `../Serd.jl`, so the project is not clonable without that sibling
-  checkout.
+What remains here:
+
+- **Literal datatypes are load-bearing.** A `^^gistp:var` datatype is how a variable is
+  marked, which is why terms are read from SPARQL Results JSON via `src/term.jl` rather than
+  through any parser that normalises datatypes away (§2). Anything that reintroduces such a
+  parser on the read path reintroduces the bug.
+- **SPARQL Update is single-pushout.** It performs no dangling check, so a `Rewrite` that
+  strips a node of every triple the pattern knows about leaves outside references pointing at
+  nothing. `dangling_risks` reports it; it does not refuse.
+- **`USING` / `USING NAMED` replace the dataset.** A graph absent from the clause is invisible
+  even to a `GRAPH <constant>` in the WHERE — which is why `rewrite_query`'s pruning and
+  promotion operations deliberately carry no dataset clause.
+
+The project is now clonable on its own: every dependency resolves from the General registry,
+there is no `[sources]` stanza, and no sibling checkout is required.
 
 ---
 

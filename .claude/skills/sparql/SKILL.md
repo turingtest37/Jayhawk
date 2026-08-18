@@ -87,36 +87,75 @@ server.
 
 ### Julia — when the point is to exercise the library
 
+Prefer the **typed layer**. It returns `RDFTerm`s with literal datatypes intact, which is
+what the engine itself uses and what `^^gistp:var` detection depends on:
+
 ```julia
-Jayhawk.runsparql(query)                      # SELECT -> Vector of JSON bindings
-Jayhawk.runsparql(query)                      # ASK    -> Bool
-Jayhawk.qsparql(construct)                    # CONSTRUCT -> (statements, prefixes, base)
+select(q)                       # SELECT -> Vector{Dict{String,RDFTerm}}
+ask(q)                          # ASK    -> Bool
+update!(u)                      # UPDATE -> nothing
+load_file!(path)                # Turtle/TriG -> the store, over the Graph Store Protocol
+load_dataset!(text; syntax)     # same, from a string
+```
+
+The raw layer underneath, for when the question is about the wire format:
+
+```julia
+Jayhawk.runsparql(query)                      # SELECT -> Vector of JSON binding Dicts
+Jayhawk.runsparql(askquery)                   # ASK    -> Bool
 Jayhawk.usparql(update; dict = Dict())        # UPDATE, Mustache bindings via `dict`
 ```
 
 Queries are Mustache templates: `runsparql(q; m = Dict("val" => "x"))` fills `{{val}}`.
 
-## Configuration is frozen at module load
+There is **no `qsparql`**. It ran a CONSTRUCT and parsed the result with Serd, which discards
+literal datatypes — fatal for this engine — and it was the one line that made Jayhawk depend
+on a private fork of Serd. It moved to `RdfMaterializer` at v0.4.0 with the rest of the
+materialiser. For a CONSTRUCT, ask for N-Triples and get the text back unparsed:
 
-`spqservice` and `spqupdservice` in `src/sparqlclient.jl` are `const`, initialised from
-`ENV` when the module loads. **The environment must be set before `using Jayhawk`** —
-setting it afterwards has no effect and there is no runtime setter.
+```julia
+Jayhawk.runsparql(construct; qheaders = Jayhawk.QHEADERSCONS)   # -> String of N-Triples
+```
+
+That keeps `"0.0330"^^xsd:decimal` intact, which is the whole point.
+
+## Configuration
+
+`spqservice` and `spqupdservice` in `src/sparqlclient.jl` are `const`, read from `ENV` at
+module load, so the environment route must be set **before** `using Jayhawk`:
 
 ```sh
 JAYHAWK_SPARQL_SERVICE=http://localhost:3031/other julia --project=. script.jl
 ```
 
+But those consts only seed the default. **There is a runtime setter** — every call takes an
+`ep::SparqlEndpoint`, defaulting to a mutable process-wide `Ref`:
+
+```julia
+set_endpoint!("http://host:3030/production")     # change the default for this process
+endpoint()                                       # read it back
+select(q; ep = SparqlEndpoint("http://elsewhere:3030/ds"))   # or override one call
+```
+
 Defaults are `http://localhost:3040/jayhawk` and `<base>/update`, matching the rig.
 
-## The `urn:ontology` convention
+## Graph naming conventions
 
-Every query constant in `src/sparql.jl` hardcodes `GRAPH <urn:ontology>`, and
-`fuseki-test.sh load` puts the fixtures there. Keep new queries consistent with it.
+| Graph | Holds |
+|---|---|
+| `<urn:ontology>` | whatever `fuseki-test.sh load` put there — the gistAcct fixtures |
+| `<urn:jayhawk:example:moneygraph>` | the worked example in `examples/moneygraph/data.trig` |
+| `<urn:jayhawk:integration-test>` | built and dropped by `test/sparql_integration.jl` |
+| `<urn:jayhawk:firing:UUID>` | one graph per rule application |
+| `<urn:jayhawk:tombstone:UUID>` | what a `Rewrite` removed, so undo is an exact inverse |
+| `<urn:jayhawk:provenance>` | the firing log `firings()` reads |
 
-Those constants are **not usable as-is**: none are exported, and their only consumer,
-`src/test.jl`, is never `include`d by `src/Jayhawk.jl` — it is dead code. Read them for
-reference, then write the query inline rather than calling a name that will not resolve.
-(`load_instance_defns` is also defined twice there, at lines 19 and 53; the second wins.)
+The `src/sparql.jl` query constants that used to be described here went to
+`RdfMaterializer` at v0.4.0; there is no such file in this repo. Write queries inline.
+
+**Never hand-edit the firing, tombstone or provenance graphs.** `undo_firing!` refuses any
+graph without a provenance record, so a manual `DROP` of a firing graph leaves a record
+pointing at nothing.
 
 ## Integration tests
 
@@ -139,8 +178,10 @@ not depend on `load` having run and do not disturb `<urn:ontology>`.
   fixtures returns `{"type":"bnode","value":"b0"}` as its first result — **52 of the
   classes in `<urn:ontology>` are blank nodes**. Add `FILTER(!isBlank(?c))` when you want
   only named classes.
-- Three bugs in the Julia client were fixed only recently — `qsparql` sent the wrong
-  Accept header and fed JSON to a Turtle parser, `usparql` passed an argument
-  positionally and threw `MethodError` before ever reaching the server, and `runsparql`
-  assumed every JSON response had a `results` key so all `ASK` queries threw `KeyError`.
-  If something in that file misbehaves, suspect the client before the server.
+- **`runsparql` returns raw JSON, `select` returns `RDFTerm`s.** Reaching for `runsparql`
+  and then indexing `["value"]` by hand is the most common way a probe silently loses a
+  literal's datatype. Use `select` unless you specifically want the wire format.
+- Bugs fixed in the Julia client, worth knowing if it misbehaves: `usparql` passed an
+  argument positionally and threw `MethodError` before ever reaching the server, and
+  `runsparql` assumed every JSON response had a `results` key so all `ASK` queries threw
+  `KeyError`. Suspect the client before the server.
