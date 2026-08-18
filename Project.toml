@@ -1,8 +1,13 @@
 name = "Jayhawk"
 uuid = "12faa926-1a3f-5f5e-81b2-8d3f7f967ea3"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["dbeeson <doug.beeson@semanticarts.com>"]
 
+# No Serd, and that is the point of the 0.4 split. Everything that parsed RDF into live
+# Julia types -- analyze/generate/install!, TraceLog, expand_uris, makeqname, the global
+# prefix registry -- moved to RdfMaterializer, which is now the only package that needs the
+# private `jayhawk-1` fork of Serd. Consumers of Jayhawk resolve entirely from the General
+# registry: no [sources] stanza, no unsatisfiable Serd constraint, no fork to pin.
 [deps]
 AutoHashEquals = "15f4f7f2-30c1-5605-9d31-71845cf9641f"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
@@ -10,38 +15,14 @@ EzXML = "8f5d6c58-4d21-5cfd-889c-e3ad7ee6a615"
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
-Serd = "42699a24-3520-5f41-a549-6a478ed667c2"
 URIs = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
-
-# Serd is a LOCAL fork, deliberately unpublished. Jayhawk uses API that exists only on the
-# `jayhawk-1` branch of ~/dev/Serd.jl: `prefixforpfx`, `prefixforuri`, `prefixes()`, the
-# 1-arg `add_prefix!(::Prefix)`, `add_prefix!` warning rather than erroring on redefinition,
-# and `read_rdf_file`/`read_rdf_string` returning (statements, prefixes, baseuri) rather than
-# just statements. The General registry tops out at Serd 0.3.1 and has none of it -- which is
-# what [compat] Serd = "0.3.2" is for: a resolve that misses the fork fails loudly as
-# unsatisfiable, instead of silently taking 0.3.1 and dying at src/rdf.jl:179 with
-# `UndefVarError: prefixforpfx not defined in Jayhawk`.
-#
-# What this stanza does, and what it does NOT do. Pkg honours [sources] only for the ACTIVE
-# project. So this makes a fresh clone of Jayhawk self-sufficient: with no Manifest at all,
-# `Pkg.resolve()` succeeds with this stanza and fails unsatisfiable without it -- measured
-# both ways. It does NOT reach anyone who depends on us: an add-by-URL of Jayhawk fails
-# identically whether or not this stanza is present, also measured. Every consuming project
-# must therefore declare its OWN [sources] for both Jayhawk and Serd, and must name Serd in
-# its own [deps] to be allowed to source it. ~/dev/PatternTester is the worked example.
-#
-# url + rev rather than a bare path, so the dependency is pinned to COMMITTED state on
-# jayhawk-1; a `path` source silently tracks whatever sits in the Serd working tree.
-[sources]
-Serd = {url = "/Users/doug/dev/Serd.jl", rev = "jayhawk-1"}
 
 [compat]
 AutoHashEquals = "0.2"
 EzXML = "1"
 HTTP = "1"
 JSON = "0.21, 1"
-Serd = "0.3.2"
 URIs = "1"
 julia = "1.10"
 

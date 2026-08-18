@@ -19,7 +19,6 @@
 
 using Test
 using Jayhawk
-using Serd, Serd.RDF
 
 const TEST_GRAPH = "urn:jayhawk:integration-test"
 
@@ -92,18 +91,8 @@ server_reachable() =
         @test r[2]["s"]["value"] == "http://it.example.org/s2"
     end
 
-    @testset "qsparql CONSTRUCT parses into statements" begin
-        # Regression: qsparql sent Accept: application/sparql-results+json (QHEADERS)
-        # and then handed the JSON response to Serd as Turtle, throwing
-        # SerdException(SERD_ERR_BAD_SYNTAX). It must ask for N-Triples (QHEADERSCONS).
-        stmts, prefixes, base = Jayhawk.qsparql(
-            "CONSTRUCT { ?s ?p ?o } WHERE { GRAPH <$TEST_GRAPH> { ?s ?p ?o } }")
-
-        triples = filter(s -> s isa Triple, stmts)
-        @test length(triples) == 2
-        @test all(t -> t.predicate == Resource("http://it.example.org/p"), triples)
-        @test Set(t.object.value for t in triples) == Set(["one", "two"])
-    end
+    # The `qsparql CONSTRUCT parses into statements` testset moved to
+    # RdfMaterializer/test/sparql_integration.jl with the function it covers.
 
     @testset "Mustache bindings reach the query" begin
         # runsparql renders the query as a Mustache template against `m`; usparql

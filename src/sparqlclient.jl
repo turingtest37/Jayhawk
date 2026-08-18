@@ -67,6 +67,15 @@ QHEADERS = Dict(
     "Accept" => "application/sparql-results+json, */*;q=0.1"
 )
 
+# Headers for CONSTRUCT / DESCRIBE. No in-package caller since `qsparql` moved to
+# RdfMaterializer at v0.4.0 -- this is kept because it is now the *replacement* for it:
+#
+#     runsparql(construct_query; qheaders = QHEADERSCONS)   -> N-Triples as a String
+#
+# N-Triples rather than Turtle or JSON because it is the one CONSTRUCT serialisation this
+# package can hand back without parsing, and it carries `"0.0330"^^xsd:decimal` intact.
+# `qsparql` asked for the wrong thing and then fed the result to a parser that dropped the
+# datatype -- the exact loss this engine cannot afford.
 QHEADERSCONS = Dict(
     "Content-Type" =>  "application/sparql-query",
     "Accept" => "application/n-triples, */*;q=0.1"
@@ -337,21 +346,11 @@ function load_file!(path::AbstractString; ep::SparqlEndpoint = endpoint())
     load_dataset!(read(path, String); ep = ep, syntax = syntax)
 end
 
-"""
-    qsparql(query) -> (statements, prefixes, baseuri)
-
-Run a CONSTRUCT (or DESCRIBE) query and parse the resulting graph with Serd.
-
-Must ask for N-Triples: sending the default `Accept: application/sparql-results+json` made
-the server return a results document that Serd then failed to parse as Turtle.
-
-Beware that this path goes through Serd and therefore **loses literal datatypes**. Use
-[`select`](@ref) wherever the datatype matters -- which, for anything touching
-`^^gistp:var`, is everywhere.
-"""
-function qsparql(query::String; ep::SparqlEndpoint = endpoint())
-  read_rdf_string(runsparql(query; qheaders=QHEADERSCONS, ep = ep))
-end
+# `qsparql` used to live here: a CONSTRUCT whose result was parsed by Serd. It moved to
+# RdfMaterializer (src/sparql.jl) with the rest of the Serd-dependent half, because it was
+# the single line in this file that made the engine need a private fork of Serd -- and it
+# lost literal datatypes on every term it returned, which is exactly what this package
+# cannot afford. Use `select` instead: it returns `RDFTerm`s with datatypes intact.
 
 """
     usparql(update; dict=Dict())

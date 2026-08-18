@@ -5,21 +5,22 @@ where it is going, see `CLAUDE.md`; this file describes what is actually here.
 
 ## Project overview
 
-Jayhawk is two things that share a repository and very little code.
+Jayhawk is **one** thing: the engine. `term.jl`, `compile.jl`, `harness.jl` and `mcp.jl`
+compile `gistp:` graph-rewrite patterns into SPARQL, run them against a triplestore, record
+what they did, and expose the result as MCP tools. This is the Function-Graph programme.
 
-1. **The engine** (`term.jl`, `compile.jl`, `harness.jl`, `mcp.jl`) — compiles `gistp:`
-   graph-rewrite patterns into SPARQL, runs them against a triplestore, records what it did,
-   and exposes the result as MCP tools. This is the Function-Graph programme.
-2. **The materialiser** (`analyze.jl`, `generate.jl`, `execute.jl`, `rdf*.jl`) — turns an
-   OWL ontology into Julia structs and per-predicate functions. Useful as the extension
-   surface for computations SPARQL cannot express; not the engine.
+It used to be two. The materialiser — OWL ontology into Julia structs and per-predicate
+functions — was split out into `RdfMaterializer` (`~/dev/RdfMaterializer`), because the two
+halves shared no code and the materialiser's private Serd fork was being inherited by every
+consumer of the engine. It is still the extension surface for computations SPARQL cannot
+express; it is just a separate package now, and this one does not depend on it.
 
 **SPARQL matches, Julia computes, RDF holds identity.**
 
 ## Commands
 
 ```bash
-julia --project=. test/runtests.jl                       # hermetic, ~16s, 337 assertions
+julia --project=. test/runtests.jl                       # hermetic, ~6s, 221 assertions
 ./bin/fuseki-test.sh start                               # local Fuseki on :3040/jayhawk
 JAYHAWK_TEST_SPARQL=1 julia --project=. test/runtests.jl # + integration tests
 
@@ -31,6 +32,7 @@ Skills in `.claude/skills/` cover the details: `jl-test`, `jl-probe`, `sparql`, 
 
 ## Documentation
 
+- `README.md` — the front door: what Jayhawk is, quick start, where everything else lives
 - `docs/user-guide.md` — writing, running, reviewing and undoing rules ([web](https://claude.ai/code/artifact/387c189b-0e2a-4546-a6da-cc166369088d))
 - `docs/developer-guide.md` — architecture, invariants, how to extend ([web](https://claude.ai/code/artifact/2ccf34ca-2b5e-4b39-bcb2-c983678008c6))
 - `examples/moneygraph/` — four runnable rules, one per feature, exercised by the test suite
@@ -99,54 +101,61 @@ minting turns fixpoint evaluation into the chase.
 That is what keeps it clear of the global-state hazards below. Treat it as a rule, not a
 preference.
 
-## The materialiser
+## The materialiser — moved out
 
-`analyze` (pure) → `SchemaModel`; `generate` (pure) → `Expr`; `install!` evaluates — the only
-eval in the pipeline. Compile once, execute many: a second run of the same RDF skips
-generation entirely.
+`analyze` / `generate` / `install!`, `TraceLog`, `expand_uris`, `makeqname`, `resource_dict`,
+`set_def_prefixes`, `build_model` and `qsparql` now live in **`RdfMaterializer`**
+(`~/dev/RdfMaterializer`), together with `rdf.jl`, `rdfs.jl`, `rdf_type.jl`,
+`rdfs_subClassOf.jl`, `tracelog.jl`, `analyze.jl`, `generate.jl`, `execute.jl` and `build.jl`.
 
-`run_data!` separates three outcomes: **unmapped** (no generated function — ordinary),
-**unmatched** (dispatch found nothing — a local gap), **broken** (anything else — a defect,
-rethrown unless `strict=false`). It used to catch all three into one counter, which is how an
-`UndefVarError` masqueraded as "833 triples did not execute" for a release.
+The two engines shared no code, only a module — verified before the split: every Serd mention
+in `compile.jl` and `term.jl` was a *comment*, and the sole real coupling was one line inside
+`qsparql`. The materialiser referenced nothing from the engine at all.
 
-`makeqname` converts IRIs to identifiers (`owl:Class` → `owl_Class`) and needs
-`add_prefix!`; unregistered prefixes throw `KeyError`. `build_model()` is not implemented and
-raises saying so.
+Keeping them together forced every Jayhawk consumer to inherit the materialiser's dependency
+on a private, unpublished fork of Serd, so a project that only wanted to compile rules could
+not resolve without pinning a Serd it never called. **Jayhawk no longer depends on Serd**, and
+neither package depends on the other.
 
 ## Known hazards
 
-Process-global state in the materialiser, one piece deliberately corrupt:
+The process-global prefix-registry hazards went with the materialiser. What remains here:
 
-- Serd's `_prefixes_by_name` / `_prefixes_by_uri` are unsynchronised `const` globals with no
-  removal. `src/Jayhawk.jl` **relies on them being out of sync** to resolve both `gist:`
-  namespace spellings.
-- Serd's `julia_datatype` does `get!` on a `const` map, inserting on every unknown datatype.
-- Generated code lands in the single `Jayhawk` module; colliding sanitised names share a
-  struct (there is a testset acknowledging this).
-- **Serd discards literal datatypes.** `from_serd` maps the datatype IRI to a Julia type and
-  builds `Literal(value)` without it, so `"42"^^ex:custom` is indistinguishable from `"42"`.
-  This is why `src/term.jl` exists and why the engine reads SPARQL Results JSON instead.
+- **Literal datatypes are load-bearing.** A `^^gistp:var` datatype is how a variable is
+  marked, which is why terms are read from SPARQL Results JSON via `src/term.jl` rather than
+  through any parser that normalises datatypes away.
+- **SPARQL Update is single-pushout.** It performs no dangling check, so a `Rewrite` that
+  strips a node of every triple the pattern knows about leaves outside references pointing at
+  nothing. `dangling_risks` reports it; it does not refuse.
+- **`USING` / `USING NAMED` replace the dataset.** A graph absent from the clause is invisible
+  even to a `GRAPH <constant>` in the WHERE — which is why `rewrite_query`'s pruning and
+  promotion operations deliberately carry no dataset clause.
 
 ## External dependencies
 
-- **Serd** — Turtle parsing for the materialiser only. A local fork at `../Serd.jl`
-  (`jayhawk-1`), so the project is not clonable without that sibling checkout.
 - **Fuseki** — default `http://localhost:3040/jayhawk`, overridable via
   `JAYHAWK_SPARQL_SERVICE` / `JAYHAWK_UPDATE_SERVICE` before Julia starts, or at runtime with
   `set_endpoint!`.
 - **ModelContextProtocol.jl** — `bin/Project.toml` only, never a Jayhawk dependency: it is
   heavy and it exports `register!`, which collides.
+- Everything else resolves from the General registry. There is no `[sources]` stanza and no
+  sibling checkout required to clone and instantiate this project.
 
 ## Source layout
 
 | File | Role |
 |---|---|
-| `Jayhawk.jl` | module, exports, `resource_dict`, `initialize`, `set_def_prefixes` |
+| `Jayhawk.jl` | module and includes; no state of its own |
 | `term.jl` | `RDFTerm` / `IRIRef` / `BNode` / `RDFLiteral`; SPARQL Results JSON |
 | `sparqlclient.jl` | `runsparql` plus the typed `select`/`ask`/`update!` and GSP loaders |
 | `compile.jl` | `load_rule`, `compile_rule`, `insert_query`, `rewrite_query`, `where_body`, `dataset_lines`, `interface`, `rule_catalogue` |
 | `harness.jl` | `apply_rule`, `run_rule`, `dry_run`, `undo_firing!`, `firings` |
 | `mcp.jl` | the five agent-facing tools |
-| `analyze.jl` `generate.jl` `execute.jl` `build.jl` | the materialiser pipeline |
-| `rdf.jl` `rdf_type.jl` `rdfs*.jl` `tracelog.jl` | bootstrap types, naming, TraceLog |
+
+## Tests
+
+| File | Scope |
+|---|---|
+| `test/runtests.jl` | hermetic: `term.jl` + the pure compiler (221 tests) |
+| `test/adversarial.jl` `test/review_fixes.jl` `test/review_round4.jl` | standalone review suites (92 tests) |
+| `test/sparql_integration.jl` | opt-in, needs Fuseki; `JAYHAWK_TEST_SPARQL=1` (236 tests) |
