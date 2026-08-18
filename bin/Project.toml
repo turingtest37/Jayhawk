@@ -15,3 +15,10 @@ ModelContextProtocol = "c58f755f-f2a7-4f48-bf29-4e9659b78499"
 [compat]
 ModelContextProtocol = "0.4"
 julia = "1.10"
+
+# Jayhawk is unregistered, so this env can only find it if the Project says where. It used
+# to be reachable solely through bin/Manifest.toml, which is gitignored as machine-specific
+# -- so a fresh clone could not instantiate this environment at all. Relative to the repo,
+# because bin/ travels with it. Serd arrives transitively via Jayhawk's own [sources].
+[sources]
+Jayhawk = {path = ".."}

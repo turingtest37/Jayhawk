@@ -14,23 +14,6 @@ Serd = "42699a24-3520-5f41-a549-6a478ed667c2"
 URIs = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
-# Serd is a LOCAL fork, deliberately unpublished. Jayhawk uses API that exists only on the
-# `jayhawk-1` branch of ~/dev/Serd.jl -- `prefixforpfx`, `prefixforuri`, `prefixes()`, the
-# 1-arg `add_prefix!(::Prefix)`, `add_prefix!` warning instead of erroring on redefinition,
-# and `read_rdf_file`/`read_rdf_string` returning (statements, prefixes, baseuri) rather than
-# just statements. Registry Serd 0.3.x has none of it, so without this stanza any project
-# that depends on Jayhawk resolves the registry copy and dies at precompile with
-# `UndefVarError: prefixforpfx not defined in Jayhawk` (src/rdf.jl:179).
-#
-# The path is ABSOLUTE on purpose. A relative "../Serd.jl" resolves against wherever Jayhawk
-# itself sits, which is right in ~/dev/Jayhawk and wrong in ~/.julia/packages/Jayhawk/XXXX --
-# i.e. it breaks in exactly the case this stanza exists to fix.
-#
-# Pkg honours a dependency's [sources] transitively: a downstream project that adds or devs
-# Jayhawk picks this up without repeating it. Verified, not assumed.
-[sources]
-Serd = {path = "/Users/doug/dev/Serd.jl"}
-
 [compat]
 AutoHashEquals = "0.2"
 EzXML = "1"
