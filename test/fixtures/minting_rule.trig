@@ -56,14 +56,24 @@
     gistp:variableText "?_ID_1" ;
     skos:definition "The person's identifier node. Bound by L only." .
 
+# A literal-position variable, declared. Inside the patterns it is still written
+# "?idText"^^gistp:var; the declaration exists so the mint slot can name it by IRI.
+:_idText
+    rdf:type gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?idText" ;
+    gistp:requiresDatatype xsd:string ;
+    skos:definition "The identifier's text. Bound by L, and the value the employee IRI is minted from." .
+
 # --- the minted variable ---------------------------------------------------
 # Carrying an iriTemplate is what declares this constructed rather than matched, so it must
 # NOT appear in L. The template expands to an absolute IRI: the minting namespace is
 # explicit and auditable, and is deliberately ex: (data) rather than : (rules).
 #
-# The slot binds by RDF identity, not by matching "id" against some variable's name. Its
-# value is the literal-position variable ?idText -- we mint from the identifier's *text*.
-# Binding :_ID_1 instead would concatenate that node's IRI, which is a different rule.
+# The slot binds by RDF identity on both halves: gistp:slotName names the {id} it fills, and
+# gistp:slotValue names a declared variable. Its value is :_idText, so we mint from the
+# identifier's *text*. Naming :_ID_1 instead would concatenate that node's IRI, which is a
+# different rule -- a choice made by naming a different variable, not by spelling the
+# reference differently.
 
 :_Employee_1
     rdf:type ex:Employee , gistp:SparqlVariable ;
@@ -71,7 +81,7 @@
     gistp:iriTemplate  "http://example.org/hr/employee/{id}" ;
     gistp:hasSlot [ rdf:type gistp:TemplateSlot ;
                     gistp:slotName  "id" ;
-                    gistp:slotValue "?idText"^^gistp:var ] ;
+                    gistp:slotValue :_idText ] ;
     skos:definition "The employee record. Minted from the identifier text; appears only in R." .
 
 #################################################################

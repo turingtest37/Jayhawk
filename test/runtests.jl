@@ -446,9 +446,10 @@ end
         @test isempty(collision_queries(person_to_employee()))
     end
 
-    @testset "slot values may be IRI-position variables too" begin
-        # gistp:slotValue accepts either mechanism. Binding :_ID_1 mints from that node's
-        # IRI rather than from its text -- a different rule, but a legal one.
+    @testset "a slot value may name an IRI-position variable" begin
+        # A slot value always names a variable; what it mints FROM is chosen by naming a
+        # different one. Naming :_ID_1 mints from that node's IRI rather than from an
+        # identifier's text -- a different rule, but a legal one.
         q = compile_rule(minting_rule(
             slots = Dict{String,RDFTerm}("id" => iri("$(R)_ID_1"))))
         @test occursin("ENCODE_FOR_URI(STR(?_ID_1))", q)
@@ -802,7 +803,7 @@ end
                                [PatternTriple(iri("$(R)_Person_1"), iri("$(HR)heldIn"), iri(BOOK))]),
                           vars, base.mints, base.enums, [nac],
                           nothing, 0, nothing, BOOK, nothing)
-        q = compile_rule(scoped)
+        q = compile_rule(scoped; from = ["urn:a"])
 
         # L's triples are inside the group; the guard is NOT.
         @test occursin("GRAPH ?_Book {", q)
@@ -820,7 +821,7 @@ end
         konst = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
                          base.match, base.construct, base.variables, base.mints, base.enums,
                          NacSpec[], nothing, 0, nothing, "urn:book:a", nothing)
-        @test occursin("GRAPH <urn:book:a> {", compile_rule(konst))
+        @test occursin("GRAPH <urn:book:a> {", compile_rule(konst; from = ["urn:a"]))
     end
 
     @testset "an unscoped rule emits exactly what it always did" begin
@@ -844,7 +845,10 @@ end
         @test is_scoped(scoped)
         d = dataset_lines(scoped, ["urn:a"])
         @test occursin("USING <urn:a>", d) && occursin("USING NAMED <urn:a>", d)
-        @test dataset_lines(scoped, String[]) == ""      # nothing to name, nothing emitted
+        # This used to assert `== ""` -- "nothing to name, nothing emitted" -- which is
+        # exactly backwards: a scoped rule with no dataset clause does not read nothing, it
+        # reads the whole store. The assertion was pinning the defect in place.
+        @test_throws ErrorException dataset_lines(scoped, String[])
         f = dataset_lines(scoped, ["urn:a"]; keyword = "FROM")
         @test occursin("FROM <urn:a>", f) && occursin("FROM NAMED <urn:a>", f)
     end
@@ -875,12 +879,13 @@ end
                      nacs, nothing, 0, nothing, scope, cscope)
 
         # writing into a named graph, before undo can reverse it
-        @test_throws ErrorException compile_rule(respec(scope = "urn:b", cscope = "urn:b"))
+        @test_throws ErrorException compile_rule(respec(scope = "urn:b", cscope = "urn:b");
+                                                 from = ["urn:a"])
         # a rewrite whose match binds several graphs, against a single-target tombstone
         @test_throws ErrorException compile_rule(
             respec(scope = "urn:b", mode = Jayhawk.MODE_REWRITE))
         # a scope that is not a legal IRI must not reach the store
-        @test_throws ArgumentError compile_rule(respec(scope = "urn:b ad"))
+        @test_throws ArgumentError compile_rule(respec(scope = "urn:b ad"); from = ["urn:a"])
         # and the unscoped rule still compiles, which is what makes the above meaningful
         @test compile_rule(respec()) isa String
     end
@@ -894,14 +899,193 @@ end
                            merge(base.variables, Dict(BOOK => "?_Book")),
                            base.mints, base.enums, NacSpec[], nothing, 0, nothing, BOOK, nothing)
         @test scope_vars(BOOK, withvar) == Set(["?_Book"])
-        @test occursin("GRAPH ?_Book {", compile_rule(withvar))
+        @test occursin("GRAPH ?_Book {", compile_rule(withvar; from = ["urn:a"]))
         # ...and a variableText that could close the group and open another is refused, the
         # same injection guard that covers every other position.
         evil = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
                         base.match, base.construct,
                         merge(base.variables, Dict(BOOK => "?b } } ; DROP ALL ; #")),
                         base.mints, base.enums, NacSpec[], nothing, 0, nothing, BOOK, nothing)
-        @test_throws ErrorException compile_rule(evil)
+        @test_throws ErrorException compile_rule(evil; from = ["urn:a"])
+    end
+
+    # ---------------------------------------------------------------------------------
+    # Round 5a review findings. Each of these was a *silent* wrong answer on the branch as
+    # merged -- the rule compiled, validated, ran, and reported success. See
+    # docs/review-named-graphs.md for the measured reproductions.
+    # ---------------------------------------------------------------------------------
+
+    @testset "F1: a scoped rule with no dataset clause is refused at the builder" begin
+        # `run_rule` guarded this; nothing else did. `apply_rule`, `dry_run`,
+        # `check_collisions` and `mint_fanin` are all public and all reach a builder direct,
+        # so the guard belongs where the query is assembled. Measured before the fix:
+        # dry_run on the scoped fixture returned 4 triples, the extra one asserting the
+        # rule's own pattern graph as data, and apply_rule persisted it.
+        base = person_to_employee()
+        scoped = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+                          base.match, base.construct, base.variables, base.mints, base.enums,
+                          NacSpec[], nothing, 0, nothing, "urn:book:a", nothing)
+        @test_throws ErrorException insert_query(scoped; into = "urn:f")
+        @test_throws ErrorException project_query(scoped; triples = scoped.construct,
+                                                  into = "urn:f")
+        @test_throws ErrorException compile_rule(scoped; from = String[])
+        # naming the graphs is all it takes
+        @test occursin("USING NAMED <urn:a>",
+                       insert_query(scoped; into = "urn:f", from = ["urn:a"]))
+        # and an unscoped rule is untouched: empty `from` still means the default graph
+        @test insert_query(base; into = "urn:f") isa String
+    end
+
+    @testset "F2: the mint-safety queries scope L exactly as the rule does" begin
+        # collision_queries and mint_fanin used to build L with a bare bgp_text, so for a
+        # scoped rule the query they asked the store was a different rule from the one that
+        # runs: `?_Book` was never bound, CONCAT yielded unbound, and HAVING(... > 1) could
+        # never fire. The fan-in report was empty by construction for precisely the rules
+        # whose R mentions the graph they matched in.
+        base = minting_rule()
+        BOOK = "$(R)_Book"
+        scoped = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+                          base.match, base.construct,
+                          merge(base.variables, Dict(BOOK => "?_Book")),
+                          base.mints, base.enums, NacSpec[], nothing, 0, nothing, BOOK, nothing)
+        for (_, q) in collision_queries(scoped; from = ["urn:a"])
+            @test occursin("GRAPH ?_Book {", q)
+        end
+        # one decision, one place: match_text is what where_body uses too
+        @test occursin("GRAPH ?_Book {", where_body(scoped))
+        # unscoped stays byte-identical, which is what keeps the golden snapshot honest
+        @test match_text(base) == bgp_text(base.match, base)
+    end
+
+    @testset "F3: a guard may not be scoped to a variable L does not bind" begin
+        # A condition's TRIPLES may introduce fresh existential variables -- that is what a
+        # guard is. Its GRAPH may not: an unbound graph variable re-quantifies the whole
+        # condition into "no such thing in ANY graph". Measured on the fixture, that silently
+        # drops the ex:s2/bookB row -- the row the headline integration test exists to
+        # protect -- with no error anywhere.
+        base = person_to_employee()
+        BOOK, OTHER = "$(R)_Book", "$(R)_Other"
+        vars = merge(base.variables, Dict(BOOK => "?_Book", OTHER => "?_Other"))
+        nac_t = [PatternTriple(iri("$(R)_Person_1"), iri(TYPE), iri("$(HR)Retired"))]
+
+        loose = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+                         base.match, base.construct, vars, base.mints, base.enums,
+                         [NacSpec("$(R)N", nac_t, OTHER)], nothing, 0, nothing, BOOK, nothing)
+        @test_throws ErrorException compile_rule(loose; from = ["urn:a"])
+
+        # scoped to the variable L *does* bind: fine
+        tight = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+                         base.match, base.construct, vars, base.mints, base.enums,
+                         [NacSpec("$(R)N", nac_t, BOOK)], nothing, 0, nothing, BOOK, nothing)
+        @test occursin("FILTER NOT EXISTS {\n    GRAPH ?_Book {",
+                       compile_rule(tight; from = ["urn:a"]))
+
+        # a constant graph is always fine -- it binds nothing, so it re-quantifies nothing
+        konst = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+                         base.match, base.construct, vars, base.mints, base.enums,
+                         [NacSpec("$(R)N", nac_t, "urn:book:a")], nothing, 0, nothing,
+                         BOOK, nothing)
+        @test occursin("GRAPH <urn:book:a> {", compile_rule(konst; from = ["urn:a"]))
+    end
+
+    @testset "F4: the reviewed text is the executed text" begin
+        # compile_rule emitted no dataset clause, so a reviewer approved an unbounded
+        # `GRAPH ?g` while an INSERT ... USING ... USING NAMED ... is what ran.
+        base = person_to_employee()
+        scoped = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+                          base.match, base.construct, base.variables, base.mints, base.enums,
+                          NacSpec[], nothing, 0, nothing, "urn:book:a", nothing)
+        q = compile_rule(scoped; from = ["urn:a", "urn:b"])
+        # a CONSTRUCT takes FROM; only a SPARQL Update takes USING
+        @test occursin("FROM <urn:a>", q) && occursin("FROM NAMED <urn:a>", q)
+        @test !occursin("USING", q)
+        # omitting `from` on an UNSCOPED rule keeps the historical bytes exactly
+        @test compile_rule(base) == compile_rule(base; from = String[])
+        @test !occursin("FROM", compile_rule(base))
+    end
+
+    @testset "F5: a template may mint from the graph L matched in" begin
+        # "one node per book" is the obvious thing to want from gistp:inGraph. check_mints
+        # computed `bound` without scope_vars, so it was refused -- and refused with a
+        # message about minting from another minted variable, which ?_Book is not.
+        BOOK = "$(R)_Book"
+        base = minting_rule(slots = Dict{String,RDFTerm}("id" => iri(BOOK)))
+        scoped = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+                          base.match, base.construct,
+                          merge(base.variables, Dict(BOOK => "?_Book")),
+                          base.mints, base.enums, NacSpec[],
+                          nothing, 0, nothing, BOOK, nothing)
+        q = compile_rule(scoped; from = ["urn:a"])
+        @test occursin("ENCODE_FOR_URI(STR(?_Book))", q)
+        # and the same variable is still refused when L is NOT scoped to it -- the check is
+        # "does L bind it", not "is it spelled like a graph"
+        unscoped = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+                            base.match, base.construct,
+                            merge(base.variables, Dict(BOOK => "?_Book")),
+                            base.mints, base.enums, NacSpec[],
+                            nothing, 0, nothing, nothing, nothing)
+        @test_throws ErrorException compile_rule(unscoped)
+    end
+
+    # ---------------------------------------------------------------------
+    # gistp:inGraph, third reading: a data source rather than a graph
+    # ---------------------------------------------------------------------
+
+    # A rule whose L is scoped to a gistp:TabularDataSource. Built here rather than loaded,
+    # so this stays hermetic: `services` is exactly what load_services would have returned.
+    function source_scoped()
+        base = person_to_employee()
+        SRC  = "$(R)_People"
+        FX   = "http://sparql.xyz/facade-x/ns/"
+        RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+                 base.match, base.construct, base.variables, base.mints,
+                 base.enums, base.nacs, base.strategy, base.priority, base.max_iterations,
+                 SRC, nothing,
+                 Dict(SRC => ["$(FX)csv.headers" => "true",
+                              "$(FX)location"    => "/tmp/people.csv"]))
+    end
+
+    @testset "a source-scoped pattern compiles to SERVICE, not GRAPH" begin
+        q = compile_rule(source_scoped())
+        @test occursin("SERVICE <x-sparql-anything:> {", q)
+        @test !occursin("GRAPH", q)
+        # fx:properties is the subject; the options are its predicates, absolute like
+        # everything else this engine emits
+        @test occursin("<http://sparql.xyz/facade-x/ns/properties>", q)
+        @test occursin("<http://sparql.xyz/facade-x/ns/location> \"/tmp/people.csv\"", q)
+        # sorted by predicate, so the text is byte-stable across stores and runs
+        @test findfirst("csv.headers", q).start < findfirst("ns/location", q).start
+    end
+
+    @testset "a data source is not part of the dataset" begin
+        spec = source_scoped()
+        # It compiles to a SERVICE, which is evaluated outside the query's dataset. Naming
+        # it in USING NAMED would be meaningless, and -- the part that matters -- demanding
+        # a non-empty `source` for it would refuse a rule that has no graph to name.
+        @test is_scoped(spec) == false
+        @test all_scopes(spec) == ["$(R)_People"]
+        @test isempty(graph_scopes(spec))
+        @test dataset_lines(spec, String[]) == ""
+        q = compile_rule(spec)
+        @test !occursin("USING", q)
+        # ... whereas a plain graph scope still produces USING NAMED, unchanged
+        b = person_to_employee()
+        gscoped = RuleSpec(b.iri, b.mode, b.match_graph, b.construct_graph, b.match,
+                           b.construct, b.variables, b.mints, b.enums, b.nacs, b.strategy,
+                           b.priority, b.max_iterations, "urn:book:A", nothing)
+        @test is_scoped(gscoped)
+        @test occursin("USING NAMED <urn:a>", dataset_lines(gscoped, ["urn:a"]))
+    end
+
+    @testset "a data source on the construct pattern is refused" begin
+        base = source_scoped()
+        onR = RuleSpec(base.iri, base.mode, base.match_graph, base.construct_graph,
+                       base.match, base.construct, base.variables, base.mints,
+                       base.enums, base.nacs, base.strategy, base.priority,
+                       base.max_iterations, nothing, "$(R)_People", base.services)
+        err = try compile_rule(onR); "" catch e; sprint(showerror, e) end
+        @test occursin("gistp:TabularDataSource", err)
+        @test occursin("cannot be written to", err)
     end
 
     @testset "illegal IRIs are refused, not emitted" begin

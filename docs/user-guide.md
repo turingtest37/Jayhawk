@@ -846,19 +846,26 @@ Four features cover most of what real rules need beyond match-and-assert.
 Classification describes things already present. To *create* one, give a variable a template:
 
 ```turtle
+:_ticker rdf:type gistp:LiteralVariable , gistp:SparqlVariable ;
+         gistp:variableText "?ticker" ;
+         gistp:requiresDatatype xsd:string .
+
 :_Event rdf:type mg:CouponPaymentEvent , gistp:SparqlVariable ;
         gistp:variableText "?_Event" ;
         gistp:iriTemplate  "https://w3id.org/moneygraph/ns/data/coupon/{bond}" ;
         gistp:hasSlot [ rdf:type gistp:TemplateSlot ;
                         gistp:slotName  "bond" ;
-                        gistp:slotValue "?ticker"^^gistp:var ] .
+                        gistp:slotValue :_ticker ] .
 ```
 
 **Carrying a template is what makes a variable minted rather than matched**, so it must not
 appear in L. It appears in R, which is what constructing it means.
 
-Slots bind by RDF identity, never by the slot name happening to match a variable's name.
-`{bond}` is bound to `?ticker` because `gistp:slotValue` says so. Templates are RFC 6570
+Slots bind by RDF identity on both halves, never by a name happening to match. `{bond}` is
+filled by `:_ticker` because `gistp:slotName` and `gistp:slotValue` say so. Note that the
+variable is *declared* once and *named* thereafter: inside the patterns it is still the
+literal `"?ticker"^^gistp:var`, but a slot names the declaration, so a mistyped reference is
+an IRI pointing at nothing rather than a string matching nothing. Templates are RFC 6570
 Level 1, which is exactly SPARQL's `ENCODE_FOR_URI`, so it compiles to:
 
 ```sparql
@@ -1058,7 +1065,7 @@ Each message names the fix.
 | *a gistp:Rewrite run to a fixpoint with no gistp:hasNegativeCondition must state a bound* | A deleting rule has nothing to say when it is done. Add a guard or a `maxIterations`. |
 | *no rule found at `<…>`* | The IRI is wrong, or the rule's three declarations are not in the **default** graph. |
 | *target graph `<…>` already holds N triple(s)* | `apply_rule`'s `into` must start empty: its size is reported as this rule's contribution, and `undo_firing!` drops the whole graph. |
-| *gistp:inGraph must name a graph by IRI* | A graph name is an IRI. There is no `"?g"^^gistp:var` reading as there is for `slotValue`. |
+| *gistp:inGraph must name a graph by IRI* | A graph name is an IRI, and so is a slot value. Here there is not even a withdrawn spelling to point at: no literal can name a graph, and none ever could. |
 | *a rule with gistp:inGraph must name its graphs in `source`* | A graph variable with no dataset clause ranges over every named graph in the store, provenance included. |
 
 ---

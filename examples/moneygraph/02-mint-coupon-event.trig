@@ -22,6 +22,7 @@
 @prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
 @prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
 @prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
 @prefix mg:    <https://w3id.org/moneygraph/ns/ontology/> .
 @prefix mgx:   <https://w3id.org/moneygraph/ns/example/> .
 @prefix :      <https://w3id.org/moneygraph/ns/rules/> .
@@ -45,13 +46,21 @@
 :_Bond rdf:type mg:Bond , gistp:SparqlVariable ;
        gistp:variableText "?_Bond" .
 
+#  A literal-position variable, declared. Inside the patterns it is still the literal
+#  "?ticker"^^gistp:var; the declaration is what the mint slot names.
+:_ticker
+    rdf:type gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?ticker" ;
+    gistp:requiresDatatype xsd:string ;
+    skos:definition "The bond's ticker. Bound by L, and the controlled identifier the event IRI is minted from." .
+
 #  Minted. Absent from L; present in R and in the guard.
 :_Event rdf:type mg:CouponPaymentEvent , gistp:SparqlVariable ;
         gistp:variableText "?_Event" ;
         gistp:iriTemplate  "https://w3id.org/moneygraph/ns/data/coupon/{bond}" ;
         gistp:hasSlot [ rdf:type gistp:TemplateSlot ;
                         gistp:slotName  "bond" ;
-                        gistp:slotValue "?ticker"^^gistp:var ] .
+                        gistp:slotValue :_ticker ] .
 
 :MintCouponEvent_L {
     :_Bond rdf:type mg:Bond ;

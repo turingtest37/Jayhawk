@@ -1,5 +1,11 @@
 # Adversarial review — `named-graphs` branch (`gistp:inGraph`, round 5a)
 
+> **STATUS: all findings closed.** F1–F5 were fixed on 2026-08-20 as the first commit of
+> round 5b, and each fix is pinned by a regression test named for its finding
+> (`test/runtests.jl`, testsets `F1:` … `F5:`). The measured reproductions below are kept as
+> written — they are the record of what the defect *was*, and the "after" measurement for
+> each is recorded at the end of this document.
+
 Second-pair review of the in-progress named-graph work.
 Date: 2026-08-17. Base commit `c7ddada`.
 Diff reviewed: `src/compile.jl`, `src/harness.jl`, `src/mcp.jl`, `test/runtests.jl`,
@@ -333,3 +339,48 @@ Everything above was reproduced against a live Fuseki (`localhost:3040/jayhawk`)
 branch's own `test/fixtures/scoped_rule.trig`, not reasoned from the source. Scratch scripts
 lived in the session scratchpad; the store was left as found (all firings undone, `bookA` /
 `bookB` dropped).
+
+
+---
+
+# Closure record — 2026-08-20
+
+Fixed as the opening commit of round 5b, on the reasoning that three of the five get worse
+under write-side scoping: F5 *blocks* minting per graph, F2 silently disables the fan-in
+report that write-side scoping leans on, and F1's unguarded path stops being a bad preview
+and becomes a bad write.
+
+| # | Fix | Pinned by |
+|---|---|---|
+| F1 | `dataset_lines` refuses a scoped rule with an empty graph set, so the guard sits at the choke point every builder goes through rather than in `run_rule` alone | `F1: a scoped rule with no dataset clause is refused at the builder` |
+| F2 | new `match_text` helper; `where_body`, `collision_queries` and `mint_fanin` all route through it, so L is scoped identically in all three | `F2: the mint-safety queries scope L exactly as the rule does` |
+| F3 | `check_bound` requires a NAC's graph variable to be one L binds | `F3: a guard may not be scoped to a variable L does not bind` |
+| F4 | `compile_rule(spec; from)` emits `FROM`/`FROM NAMED`; `explain_rule` and `compile_from_store` pass it through | `F4: the reviewed text is the executed text` |
+| F5 | `check_mints` counts L's graph variable as bound — safe only because F2 landed first | `F5: a template may mint from the graph L matched in` |
+
+The assertion at `test/runtests.jl:847` that read `dataset_lines(scoped, String[]) == ""`
+("nothing to name, nothing emitted") was the thing pinning F1 in place. It is now
+`@test_throws`.
+
+## After-measurements, same fixture, same commands as above
+
+```
+F1  dry_run(spec)                    → refused ("must name its graphs")   was: count = 4
+    apply_rule(spec)                 → refused                            was: persisted + recorded
+    dry_run(spec; source=[A,B])      → count = 3, s1→A s2→B s3→B          unchanged, correct
+
+F2  mint_fanin(m2; from=[A,B])       → hold/…s2 reachable from 2 contexts was: NOTHING
+
+F3  guard scoped to unbound ?_Other  → refused                            was: compiled, dropped s2/B
+```
+
+## Test counts
+
+`compiler (pure)` 186 → **203**; `Function-Graph engine (Fuseki)` 223 → **225**. Full sweep
+green: 203 + 35 hermetic, 92 across the three review suites, 238 integration.
+
+## Not addressed here
+
+F6 (a scope that fails to resolve degrades silently to a constant graph) and F7 (guard-ordering
+nit) remain open. F6 is a load-time check needing a server and is better done alongside the
+write-side work, where the same "did this resolve to what the author meant" question recurs.

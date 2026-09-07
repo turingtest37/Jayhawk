@@ -51,13 +51,14 @@
   ex:s3 rdf:type ex:Security .
 }
 
-#  Compiles to:
+#  Compiles to, given compile_rule(spec; from = [bookA, bookB]) -- a CONSTRUCT takes FROM,
+#  only a SPARQL Update takes USING:
 #
 #    CONSTRUCT { ?_Sec ex:heldIn ?_Book . }
-#    USING <urn:jayhawk:test:bookA>          # both forms, always: USING NAMED alone
-#    USING <urn:jayhawk:test:bookB>          # leaves the default graph EMPTY
-#    USING NAMED <urn:jayhawk:test:bookA>
-#    USING NAMED <urn:jayhawk:test:bookB>
+#    FROM <urn:jayhawk:test:bookA>           # both forms, always: FROM NAMED alone
+#    FROM <urn:jayhawk:test:bookB>           # leaves the default graph EMPTY
+#    FROM NAMED <urn:jayhawk:test:bookA>
+#    FROM NAMED <urn:jayhawk:test:bookB>
 #    WHERE {
 #      GRAPH ?_Book { ?_Sec a ex:Security . }
 #      FILTER NOT EXISTS { GRAPH ?_Book { ?_Sec a ex:Tagged . } }

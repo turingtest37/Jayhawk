@@ -370,10 +370,22 @@ end
             m = spec.mints["$(RULES)_Employee_1"]
             @test m.template == "http://example.org/hr/employee/{id}"
             @test collect(keys(m.slots)) == ["id"]
-            # the slot value is a literal-position variable, so its ^^gistp:var datatype had
-            # to survive the round trip through the store
-            @test is_var_literal(m.slots["id"])
+            # The slot value is an IRI naming a declared gistp:LiteralVariable, and it
+            # resolves through that variable's gistp:variableText. The literal form
+            # "?idText"^^gistp:var was withdrawn once such declarations existed.
+            @test m.slots["id"] isa IRIRef
             @test var_of(m.slots["id"], spec) == "?idText"
+
+            # And the declaration has to be FOUND. It occupies no position inside either
+            # pattern graph -- inside a pattern the variable is still a literal -- so it is
+            # reachable only as the object of a gistp:slotValue in the default graph. Without
+            # the fifth alternative in _occurs_in it is never loaded, var_of returns nothing,
+            # and check_mints refuses a slot that is correctly bound.
+            @test haskey(spec.variables, "$(RULES)_idText")
+
+            # The ^^gistp:var datatype still has to survive the round trip through the store:
+            # it is how a literal in an ordinary object position is marked as a variable.
+            @test any(is_var_literal(t.object) for t in spec.match)
             # a minted variable appears in R only
             @test !("?_Employee_1" in vars_in(spec.match, spec))
             @test "?_Employee_1" in vars_in(spec.construct, spec)
@@ -832,6 +844,75 @@ end
         Jayhawk.update!("DROP SILENT GRAPH <$SK>")
     end
 
+    @testset "gistp:inGraph reads a data source, not only a graph" begin
+        # Round 5b: the third reading of gistp:inGraph. The scope names a
+        # gistp:TabularDataSource instead of a graph, and the pattern compiles to
+        # SERVICE <x-sparql-anything:> rather than GRAPH.
+        #
+        # The location has to be absolute and is therefore environment-specific, so the
+        # rule is generated here from the committed CSV rather than committed itself.
+        CR  = "http://example.org/csvrules/"
+        csv = fixture("people.csv")
+        FXN = "http://sparql.xyz/facade-x/ns/"
+
+        function csv_rule(; location = csv, extra = "")
+            """
+            @prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+            @prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+            @prefix gist:  <$(GIST)> .
+            @prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+            @prefix fx:    <$(FXN)> .
+            @prefix xyz:   <http://sparql.xyz/facade-x/data/> .
+            @prefix :      <$(CR)> .
+            :CsvToPerson a gistp:Rule ;
+                gistp:hasMatchPattern :CsvToPerson_L ;
+                gistp:hasConstructPattern :CsvToPerson_R ;
+                gistp:rewriteMode gistp:Construct ; gistp:strategy gistp:Once .
+            :CsvToPerson_L a gistp:SparqlPattern ; gistp:inGraph :_People .
+            :CsvToPerson_R a gistp:SparqlPattern .
+            :_People a gistp:TabularDataSource ; fx:csv.headers "true" ; $(extra)
+                     fx:location $(location) .
+            :_Row a gistp:SparqlVariable ; gistp:variableText "?_Row" .
+            :_id a gistp:LiteralVariable , gistp:SparqlVariable ;
+                 gistp:variableText "?id" ; gistp:requiresDatatype xsd:string .
+            :_Person a gist:Person , gistp:SparqlVariable ;
+                gistp:variableText "?_Person" ;
+                gistp:iriTemplate "http://example.org/hr/person/{id}" ;
+                gistp:hasSlot [ a gistp:TemplateSlot ;
+                                gistp:slotName "id" ; gistp:slotValue :_id ] .
+            :CsvToPerson_L { :_Row xyz:id "?id"^^gistp:var ; xyz:given "?given"^^gistp:var . }
+            :CsvToPerson_R { :_Person rdf:type gist:Person ; gist:name "?given"^^gistp:var . }
+            """
+        end
+
+        engine_cleanup()
+        trig = joinpath(mktempdir(), "csv_rule.trig")
+        write(trig, csv_rule(location = "\"$(csv)\""))
+        Jayhawk.load_file!(trig)
+
+        @testset "the data source is discovered and its fx: options loaded" begin
+            spec = load_rule("$(CR)CsvToPerson")
+            @test spec.match_scope == "$(CR)_People"
+            # ... and it is NOT a graph scope, which is what keeps it out of the dataset
+            # clause and lets an extraction rule run with an empty `source`.
+            @test is_scoped(spec) == false
+            @test haskey(spec.services, "$(CR)_People")
+            props = spec.services["$(CR)_People"]
+            @test first.(props) == ["$(FXN)csv.headers", "$(FXN)location"]
+            @test last(props[2]) == csv
+
+            q = compile_rule(spec)
+            @test occursin("SERVICE <x-sparql-anything:> {", q)
+            @test !occursin("GRAPH", q)
+            @test !occursin("USING", q)
+            # the mint still BINDs outside the group, exactly as it does outside a GRAPH
+            @test occursin("ENCODE_FOR_URI(STR(?id))", q)
+        end
+
+
+        engine_cleanup()
+    end
+
     @testset "gistp:inGraph reads per named graph" begin
         # Round 5a: the read side. L and its guard are scoped to a graph variable; R uses
         # that variable as an ordinary term, so "which graph did this come from" becomes a
@@ -853,8 +934,15 @@ end
             @test spec.match_scope == "$(BKR)_Book"
             @test spec.nacs[1].scope == "$(BKR)_Book"
             @test get(spec.variables, spec.match_scope, nothing) == "?_Book"
-            @test occursin("GRAPH ?_Book {", compile_rule(spec))
-            @test !occursin("GRAPH <$(BKR)_Book>", compile_rule(spec))
+            # `from` is not decoration here: a scoped rule with no dataset clause is now
+            # refused outright, because a graph variable would otherwise range over every
+            # named graph in the store. It is also what makes the printed query the query
+            # that runs -- see compile_rule.
+            q = compile_rule(spec; from = [BKA, BKB])
+            @test occursin("GRAPH ?_Book {", q)
+            @test !occursin("GRAPH <$(BKR)_Book>", q)
+            @test occursin("FROM <$BKA>", q) && occursin("FROM NAMED <$BKA>", q)
+            @test_throws ErrorException compile_rule(spec)
         end
 
         @testset "the guard is scoped to its own book, not to all of them" begin

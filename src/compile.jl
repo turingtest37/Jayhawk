@@ -33,6 +33,14 @@ const P_STRATEGY     = GISTP_NS * "strategy"
 const P_PRIORITY     = GISTP_NS * "priority"
 const P_MAXITER      = GISTP_NS * "maxIterations"
 const C_SPARQLVAR    = GISTP_NS * "SparqlVariable"
+const C_TABULARSOURCE = GISTP_NS * "TabularDataSource"
+
+# SPARQL Anything's Facade-X vocabulary. `fx:` properties on a gistp:TabularDataSource are
+# emitted verbatim into the SERVICE body; `xyz:` predicates appear in the pattern itself and
+# reach the compiler as ordinary absolute IRIs, so nothing here has to know about them.
+const FX_NS          = "http://sparql.xyz/facade-x/ns/"
+const P_FX_LOCATION  = FX_NS * "location"
+const SA_SERVICE     = "x-sparql-anything:"
 const C_RULE         = GISTP_NS * "Rule"
 
 const MODE_CONSTRUCT = GISTP_NS * "Construct"
@@ -115,23 +123,36 @@ struct RuleSpec
     # so a per-triple graph term would have to be reified inside the pattern.
     match_scope::Union{String,Nothing}
     construct_scope::Union{String,Nothing}
+    # A scope IRI that names a gistp:TabularDataSource rather than a graph => the fx:
+    # properties to emit inside a SERVICE, sorted by predicate so the text is byte-stable.
+    # Empty for every rule that reads only the store, which is what keeps the golden
+    # snapshots of those rules unchanged.
+    services::Dict{String,Vector{Pair{String,String}}}
 end
 
 # Every call site written before the control layer stays valid: a rule with no negative
 # conditions and no stated policy behaves exactly as it did.
 RuleSpec(iri, mode, lg, cg, match, construct, variables, mints) =
     RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-             Dict{String,Vector{RDFTerm}}(), NacSpec[], nothing, 0, nothing, nothing, nothing)
+             Dict{String,Vector{RDFTerm}}(), NacSpec[], nothing, 0, nothing, nothing, nothing, Dict{String,Vector{Pair{String,String}}}())
 
 RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
          nacs, strategy, priority, maxit) =
     RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-             Dict{String,Vector{RDFTerm}}(), nacs, strategy, priority, maxit, nothing, nothing)
+             Dict{String,Vector{RDFTerm}}(), nacs, strategy, priority, maxit, nothing, nothing, Dict{String,Vector{Pair{String,String}}}())
 
 RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
          enums, nacs, strategy, priority, maxit) =
     RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-             enums, nacs, strategy, priority, maxit, nothing, nothing)
+             enums, nacs, strategy, priority, maxit, nothing, nothing, Dict{String,Vector{Pair{String,String}}}())
+
+# The arity before `services`: every rule that reads only the store builds one, and it is by
+# far the most-used constructor in the suite.
+RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
+         enums, nacs, strategy, priority, maxit, mscope, cscope) =
+    RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
+             enums, nacs, strategy, priority, maxit, mscope, cscope,
+             Dict{String,Vector{Pair{String,String}}}())
 
 mode_symbol(m::AbstractString) =
     m == MODE_CONSTRUCT ? :Construct :
@@ -192,7 +213,11 @@ function load_rule(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
              load_enums(graphs; ep = ep),
              nacs, load_strategy(r; ep = ep), load_priority(r; ep = ep),
              load_max_iterations(r; ep = ep),
-             load_in_graph(lg; ep = ep), load_in_graph(cg; ep = ep))
+             load_in_graph(lg; ep = ep), load_in_graph(cg; ep = ep),
+             load_services(String[s for s in (load_in_graph(lg; ep = ep),
+                                              load_in_graph(cg; ep = ep),
+                                              (n.scope for n in nacs)...)
+                                 if s !== nothing]; ep = ep))
 end
 
 """
@@ -316,7 +341,24 @@ pattern graph: it is named by `<pattern> gistp:inGraph <var>` in the **default**
 to the three alternatives above it would never be discovered, `var_of` would return nothing,
 and [`term_sparql`](@ref) would emit it as a bare IRI -- `GRAPH <…:_Book>`, a constant naming
 a graph nobody created. The rule would compile, validate, run, and match nothing, with no
-error anywhere. The last alternative below is what stops that.
+error anywhere. The fourth alternative below is what stops that.
+
+**And a fifth.** A `gistp:LiteralVariable` occupies no position either. Inside a pattern the
+variable is still the literal `"?idText"^^gistp:var` -- an IRI there would stop the pattern
+being valid domain data -- so the declaration is reachable only as the object of a
+`gistp:slotValue` in the default graph. Without the fifth alternative `load_variables` never
+sees it, `var_of` returns nothing, and [`check_mints`](@ref) refuses a slot that is in fact
+correctly bound. That failure is loud rather than silent, which is the better half of the
+bargain, but it refuses valid rules. The alternative is scoped through the *minted* variable
+that owns the slot, because that one does occupy a position -- constructing it is what
+putting it in R means.
+
+**What is still not reachable.** A `gistp:LiteralVariable` used only in an ordinary object
+position, and named by no slot, is bound to its use by lexical form alone. Finding it would
+mean joining `gistp:variableText` against the literals inside the pattern graphs -- a
+string match, and the one the language works to avoid elsewhere. Nothing needs it yet:
+`gistp:requiresDatatype` is compiler-side metadata the engine does not read, and
+`gistp:oneOf` on such a variable would need it. Add a sixth alternative then, not before.
 """
 _occurs_in(graphs) = string(
     join(("{ GRAPH <$(check_iri(g))> { { ?v ?p$i ?o$i } UNION { ?s$i ?v ?o$i } " *
@@ -325,7 +367,12 @@ _occurs_in(graphs) = string(
     isempty(graphs) ? "" :
     "\n          UNION { VALUES ?pat { " *
     join(("<$(check_iri(g))>" for g in graphs), " ") *
-    " } ?pat <$P_INGRAPH> ?v }")
+    " } ?pat <$P_INGRAPH> ?v }",
+    isempty(graphs) ? "" :
+    "\n          UNION { VALUES ?spat { " *
+    join(("<$(check_iri(g))>" for g in graphs), " ") *
+    " } GRAPH ?spat { { ?mv ?mp ?mo } UNION { ?ms ?mv ?mo } UNION { ?ms ?mp ?mv } } " *
+    "?mv <$P_HASSLOT> ?mslot . ?mslot <$P_SLOTVALUE> ?v }")
 
 """
     load_variables(graphs; ep = endpoint()) -> Dict{String,String}
@@ -554,7 +601,15 @@ Five ways a mint can be wrong, each with its own message:
 function check_mints(spec::RuleSpec)
     # Enumerated variables count as bound: VALUES precedes the BINDs, so a template may mint
     # from an enumerated value. That is generation of minted nodes -- one per value.
-    bound = union(vars_in(spec.match, spec), enum_vars(spec))
+    #
+    # L's *graph* variable counts too. It is bound by the GRAPH clause rather than by any
+    # triple, so `vars_in` cannot see it, and without `scope_vars` a template minting one
+    # node per graph -- the obvious thing to want from `gistp:inGraph` -- was refused with a
+    # message about minting from another minted variable, which it is not. This is only safe
+    # now that `match_text` scopes the collision and fan-in queries too: while those built an
+    # unscoped L, a mint keyed on the graph variable would have been checked against a query
+    # in which that variable was unbound.
+    bound = union(vars_in(spec.match, spec), enum_vars(spec), scope_vars(spec.match_scope, spec))
     for (iri, m) in spec.mints
         text = get(spec.variables, iri, nothing)
         text === nothing && error(
@@ -583,7 +638,9 @@ function check_mints(spec::RuleSpec)
             "so such a separator cannot be told apart from the same characters inside a " *
             "value: \"x_y\"+\"z\" and \"x\"+\"y_z\" both expand to x_y_z, silently merging " *
             "two different things into one node. Separate slots with a character the " *
-            "encoder escapes, such as '/'.")
+            "encoder escapes: ':' is the one that stays legal unescaped in a Turtle local " *
+            "name, so the minted IRI still abbreviates; '/' also works but forces every " *
+            "serialiser back to <angle brackets>.")
 
         wanted = Set(template_slots(m.template))
         given  = Set(keys(m.slots))
@@ -602,7 +659,10 @@ function check_mints(spec::RuleSpec)
             v === nothing && error(
                 "rule <$(spec.iri)>: slot {$name} of <$iri> is bound to " *
                 "$(sparql_text(m.slots[name])), which is not a variable. A gistp:slotValue " *
-                "must be a declared gistp:SparqlVariable or a literal typed gistp:var.")
+                "must be an IRI naming a declared gistp:SparqlVariable -- for a value read " *
+                "from a literal position, a gistp:LiteralVariable. The literal form " *
+                "\"?x\"^^gistp:var was withdrawn once literal-position variables could be " *
+                "declared.")
             v in bound || error(
                 "rule <$(spec.iri)>: slot {$name} of <$iri> is bound to $v, which the match " *
                 "pattern never binds. Minting from another minted variable is not supported.")
@@ -675,13 +735,82 @@ function nacs_text(spec::RuleSpec)
 end
 
 """
+    load_services(scopes; ep = endpoint()) -> Dict{String,Vector{Pair{String,String}}}
+
+Which of a rule's `gistp:inGraph` scopes name a **data source** rather than a graph, and the
+`fx:` properties each carries.
+
+`gistp:inGraph` already reads two ways, and which one you get is decided by what the value
+IS rather than by separate vocabulary: a declared `gistp:SparqlVariable` is a graph variable,
+any other IRI a constant graph. This is the third reading, decided the same way — an IRI
+typed `gistp:TabularDataSource` names a *file*, and a pattern scoped to it compiles to
+`SERVICE <x-sparql-anything:>` rather than `GRAPH`. The discriminator is a type assertion in
+the data, not a guess at the IRI's scheme, so it is answerable by the same SHACL that
+validates everything else and a typo cannot silently become a graph nobody created.
+
+A data source contributes **no dataset clause**. A SERVICE is evaluated outside the query's
+dataset, so `USING`/`USING NAMED` must not name it and [`is_scoped`](@ref) must not count it
+— which is also what lets an extraction rule run with an empty `source`, since there is no
+graph to name.
+
+The properties are emitted verbatim, sorted by predicate so the compiled text is byte-stable.
+Nothing here interprets them: `fx:csv.headers`, `fx:null-string` and the rest are SPARQL
+Anything's business, and a vocabulary of its options in `gistp:` would go stale the moment
+that project added one.
+"""
+function load_services(scopes::AbstractVector; ep::SparqlEndpoint = endpoint())
+    out = Dict{String,Vector{Pair{String,String}}}()
+    for s in unique(scopes)
+        rows = select("""
+            SELECT ?p ?o WHERE {
+              <$(check_iri(s))> a <$C_TABULARSOURCE> ; ?p ?o .
+              FILTER(STRSTARTS(STR(?p), "$FX_NS"))
+            }"""; ep = ep)
+        isempty(rows) && continue
+        props = Pair{String,String}[]
+        for r in rows
+            p, o = _iri(r["p"]), r["o"]
+            o isa RDFLiteral || error(
+                "data source <$s>: <$p> is $(sparql_text(o)), which is not a literal. " *
+                "SPARQL Anything's fx: options take literal values.")
+            is_var_literal(o) && error(
+                "data source <$s>: <$p> is the variable $(repr(o.lexical)), which nothing " *
+                "in a rule binds. A location is fixed when the rule is authored; supplying " *
+                "one at invocation is a parameter mechanism this engine does not have.")
+            push!(props, p => o.lexical)
+        end
+        sort!(props; by = first)
+        any(((p, _),) -> p == P_FX_LOCATION, props) || error(
+            "data source <$s> is a gistp:TabularDataSource with no fx:location, so there " *
+            "is no file for the SERVICE to read.")
+        out[s] = props
+    end
+    out
+end
+
+"""
+    all_scopes(spec) -> Vector{String}
+    graph_scopes(spec) -> Vector{String}
+
+Every `gistp:inGraph` a rule declares, and the subset of those that name a graph rather than
+a data source. The split matters because only the latter belong in a dataset clause.
+"""
+all_scopes(spec::RuleSpec) =
+    String[s for s in (spec.match_scope, spec.construct_scope,
+                       (n.scope for n in spec.nacs)...) if s !== nothing]
+
+graph_scopes(spec::RuleSpec) = String[s for s in all_scopes(spec) if !haskey(spec.services, s)]
+
+"""
     is_scoped(spec) -> Bool
 
-Whether any of a rule's patterns names a graph. Decides the shape of the dataset clause.
+Whether any of a rule's patterns names a **graph**. Decides the shape of the dataset clause.
+
+A scope naming a `gistp:TabularDataSource` does not count: it compiles to a SERVICE, which is
+evaluated outside the dataset entirely, so naming it in `USING NAMED` would be meaningless and
+demanding a non-empty `source` for it would be wrong.
 """
-is_scoped(spec::RuleSpec) =
-    spec.match_scope !== nothing || spec.construct_scope !== nothing ||
-    any(n.scope !== nothing for n in spec.nacs)
+is_scoped(spec::RuleSpec) = !isempty(graph_scopes(spec))
 
 """
     dataset_lines(spec, from; keyword = "USING") -> String
@@ -700,7 +829,22 @@ Fuseki. Emitting both lets the unscoped half read the union while the scoped hal
 graphs individually; verified to join correctly across the two.
 """
 function dataset_lines(spec::RuleSpec, from::AbstractVector; keyword::AbstractString = "USING")
-    isempty(from) && return ""
+    if isempty(from)
+        # `run_rule` refuses this too, and used to be the only thing that did -- but the
+        # hazard lives in the query, not in the driver. `apply_rule`, `dry_run`,
+        # `check_collisions` and `mint_fanin` are all public, all reach a builder directly,
+        # and all skipped that guard. With no dataset clause a graph variable ranges over
+        # every named graph in the store, so `dry_run` on the round-5a fixture returned four
+        # triples instead of three, the extra one asserting the rule's OWN pattern graph as
+        # data; `apply_rule` wrote it and recorded it as a legitimate firing. Measured.
+        is_scoped(spec) && error(
+            "rule <$(spec.iri)>: a rule with gistp:inGraph must name its graphs. With no " *
+            "dataset clause a graph variable ranges over every named graph in the store -- " *
+            "the provenance graph, every firing, every tombstone, and the rule catalogue's " *
+            "own pattern graphs. An empty graph set is not 'the default graph' here, it is " *
+            "everything. Pass `source`/`from` naming the graphs to read.")
+        return ""
+    end
     plain = join(("$keyword <$(check_iri(g))>" for g in from), "\n")
     is_scoped(spec) || return plain * "\n"
     plain * "\n" * join(("$keyword NAMED <$(check_iri(g))>" for g in from), "\n") * "\n"
@@ -732,25 +876,60 @@ So only `bgp_text` is wrapped. VALUES and BIND stay outside the group, where `?g
 and a template may mint from it; each condition wraps its own triples inside its own filter.
 """
 where_body(spec::RuleSpec) =
-    string(spec.match_scope === nothing ?
-               bgp_text(spec.match, spec) :
-               graph_wrap(bgp_text(spec.match, spec; indent = "    "),
-                          spec.match_scope, spec),
-           values_text(spec), binds_text(spec), nacs_text(spec))
+    string(match_text(spec), values_text(spec), binds_text(spec), nacs_text(spec))
+
+"""
+    match_text(spec; indent = "  ") -> String
+
+L's triples, wrapped in `GRAPH …` if the match pattern carries `gistp:inGraph`.
+
+**One decision, one place.** `where_body` is not the only function that embeds L: so do
+[`collision_queries`](@ref) and [`mint_fanin`](@ref), and both used to call `bgp_text`
+directly. For a scoped rule that made the query those two ask the store a *different rule*
+from the one that runs -- their `?g` was never bound, so `ENCODE_FOR_URI(STR(?g))` yielded
+unbound, `COUNT(DISTINCT ?__ctx)` was 0, and `HAVING (… > 1)` could never fire. The fan-in
+report was silently empty by construction for exactly the rules that most need it: the ones
+whose R mentions the graph they matched in. Measured against Fuseki before and after.
+
+An unscoped rule renders byte-identically to the old `bgp_text` call, which is what keeps
+the golden snapshot honest.
+"""
+match_text(spec::RuleSpec; indent::AbstractString = "  ") =
+    spec.match_scope === nothing ?
+        bgp_text(spec.match, spec; indent = indent) :
+        graph_wrap(bgp_text(spec.match, spec; indent = indent * "  "),
+                   spec.match_scope, spec; indent = indent)
 
 """
     graph_wrap(body, scope, spec; indent = "  ") -> String
 
 Wrap already-rendered triple text in `GRAPH <g> { … }` or `GRAPH ?g { … }`.
 
-`scope` is an IRI: a declared `gistp:SparqlVariable` renders as its variable, anything else
-as the constant graph it names. That either/or is decided here and nowhere else, and it is
-the same one [`term_sparql`](@ref) makes for a term -- so a graph variable goes through
-[`check_variables`](@ref)'s validation like every other, which is what keeps `variableText`
-from being splice-injected in graph position.
+`scope` is an IRI, and it reads three ways -- decided here and nowhere else:
+
+  a `gistp:TabularDataSource`    `SERVICE <x-sparql-anything:> { fx:properties … ; … }`
+  a declared `SparqlVariable`    `GRAPH ?v { … }`
+  anything else                  `GRAPH <iri> { … }`
+
+The second and third are the same either/or [`term_sparql`](@ref) makes for a term, so a
+graph variable goes through [`check_variables`](@ref)'s validation like every other, which is
+what keeps `variableText` from being splice-injected in graph position. The first is settled
+by [`load_services`](@ref) from a type assertion in the data.
+
+The service form emits absolute IRIs throughout, including for `fx:properties` itself. That
+is the engine's standing rule rather than an aesthetic choice: it never calls `makeqname`, so
+there is no prefix registry for a concurrent session to corrupt.
 """
 function graph_wrap(body::AbstractString, scope::AbstractString, spec::RuleSpec;
                     indent::AbstractString = "  ")
+    props = get(spec.services, scope, nothing)
+    if props !== nothing
+        opts = join(("$(indent)      <$k> \"$(escape_literal(v))\"" for (k, v) in props),
+                    " ;\n")
+        return "$(indent)SERVICE <$SA_SERVICE> {\n" *
+               "$(indent)  <$(FX_NS)properties>\n$opts .\n" *
+               "$body\n$indent}"
+    end
     v = get(spec.variables, scope, nothing)
     g = v === nothing ? "<$(check_iri(scope))>" : v
     "$(indent)GRAPH $g {\n$body\n$indent}"
@@ -1039,13 +1218,18 @@ which graph each triple went to before it can be reversed, and an unreversible w
 something to ship by omission.
 """
 function check_scopes(spec::RuleSpec)
-    scoped = String[]
-    spec.match_scope === nothing || push!(scoped, spec.match_scope)
-    spec.construct_scope === nothing || push!(scoped, spec.construct_scope)
-    for n in spec.nacs
-        n.scope === nothing || push!(scoped, n.scope)
-    end
+    scoped = all_scopes(spec)
     isempty(scoped) && return spec
+
+    # A data source is readable and nothing else. The generic refusal below would catch this
+    # too, but it would explain it in terms of undo records and named graphs, which is not
+    # why writing into a CSV is refused.
+    spec.construct_scope === nothing ||
+        !haskey(spec.services, spec.construct_scope) || error(
+        "rule <$(spec.iri)>: gistp:inGraph on the construct pattern <$(spec.construct_graph)> " *
+        "names <$(spec.construct_scope)>, a gistp:TabularDataSource. A data source is a place " *
+        "to read FROM: it compiles to a SERVICE, and a SERVICE cannot be written to. Scope " *
+        "the match pattern to the source and let the results land in a firing graph.")
 
     spec.construct_scope === nothing || error(
         "rule <$(spec.iri)>: gistp:inGraph on the construct pattern <$(spec.construct_graph)> " *
@@ -1096,6 +1280,29 @@ function check_bound(spec::RuleSpec)
     # which graph a fact came from, the whole point of scoping the match, is refused as
     # use-before-def on the one variable L most definitely binds.
     matched = union(vars_in(spec.match, spec), scope_vars(spec.match_scope, spec))
+
+    # A negative condition's *graph* may not be a variable L does not bind, and the asymmetry
+    # is worth stating because it is not obvious: a condition's TRIPLES may introduce fresh
+    # existential variables -- that is what a guard is for -- but its GRAPH may not. An
+    # unbound graph variable re-quantifies the whole condition, turning "no such thing in THIS
+    # graph" into "no such thing in ANY graph". That is the same silent re-quantification
+    # `where_body` avoids by keeping the filter out of L's GRAPH group; without this check it
+    # simply reappears one level up, and it drops solutions with no error. Measured: on the
+    # round-5a fixture, scoping the guard to an unbound variable silently loses the ex:s2/bookB
+    # row -- the exact row the feature's headline integration test exists to protect.
+    for n in spec.nacs
+        n.scope === nothing && continue
+        sv = scope_vars(n.scope, spec)
+        isempty(sv) && continue                      # a constant graph is always fine
+        issubset(sv, matched) || error(
+            "rule <$(spec.iri)>: negative condition <$(n.graph)> is scoped to " *
+            "$(first(sv)), which the match pattern does not bind. A condition's triples may " *
+            "introduce fresh variables -- that is what a guard is -- but its *graph* may " *
+            "not: an unbound graph variable re-quantifies the whole condition, turning 'no " *
+            "such thing in THIS graph' into 'no such thing in ANY graph', which drops " *
+            "solutions with no error. Scope it to the graph variable L binds, or name a " *
+            "constant graph.")
+    end
     # An enumerated variable is bound by its VALUES clause and a minted one by its BIND;
     # neither has to appear in a match triple to be available to R.
     bound   = union(matched, minted_vars(spec), enum_vars(spec))
@@ -1113,17 +1320,30 @@ function check_bound(spec::RuleSpec)
 end
 
 """
-    compile_rule(spec::RuleSpec) -> String
+    compile_rule(spec::RuleSpec; from = String[]) -> String
 
 Emit the SPARQL for a rule. Pure: same spec, same bytes, no server involved.
 
 `Construct` and `Assert` compile to **identical text**. The difference is entirely in the
 harness -- whether the result is taken as the answer or unioned back into the source and the
 rule applied again. One compiler, two drivers.
+
+`from` names the graphs to read, and becomes a `FROM` / `FROM NAMED` dataset clause -- the
+`CONSTRUCT` spelling of the `USING` clause [`insert_query`](@ref) emits. Omitting it keeps
+the historical bytes exactly, so the golden snapshot and every substring assertion still
+hold; it is required only for a scoped rule, where a query with no dataset clause would let
+the graph variable range over the whole store.
+
+**Pass it whenever you are showing the query to somebody.** This function is what
+`explain_rule` prints under "compiles to:", and without `from` a scoped rule was reviewed as
+an unbounded `GRAPH ?g` while what actually ran was an `INSERT … USING … USING NAMED …`. A
+reviewer approving the text was approving a different query from the one the engine would
+execute.
 """
-function compile_rule(spec::RuleSpec)
+function compile_rule(spec::RuleSpec; from::AbstractVector = String[])
     check_bound(spec)
     m = mode_symbol(spec)
+    froms = dataset_lines(spec, from; keyword = "FROM")
 
     isempty(spec.match) && error("rule <$(spec.iri)>: match pattern <$(spec.match_graph)> is empty.")
     isempty(spec.construct) && error("rule <$(spec.iri)>: construct pattern <$(spec.construct_graph)> is empty.")
@@ -1138,7 +1358,7 @@ function compile_rule(spec::RuleSpec)
     INSERT {
     $(bgp_text(construct_only(spec), spec))
     }
-    WHERE {
+    $(froms)WHERE {
     $(where_body(spec))
     }
     """
@@ -1148,7 +1368,7 @@ function compile_rule(spec::RuleSpec)
     CONSTRUCT {
     $(bgp_text(spec.construct, spec))
     }
-    WHERE {
+    $(froms)WHERE {
     $(where_body(spec))
     }
     """
@@ -1305,7 +1525,7 @@ function collision_queries(spec::RuleSpec; from::AbstractVector = String[])
         push!(out, (iri, """
         SELECT $v (COUNT(DISTINCT ?__key) AS ?n)
         $(froms)WHERE {
-        $(bgp_text(spec.match, spec))
+        $(match_text(spec))
         $(bind_text(m, spec))$(nacs_text(spec))
           BIND(CONCAT($key) AS ?__key)
         }
@@ -1398,7 +1618,7 @@ function mint_fanin(spec::RuleSpec; from::AbstractVector = String[],
         rows = select("""
             SELECT $v (COUNT(DISTINCT ?__ctx) AS ?n)
             $(froms)WHERE {
-            $(bgp_text(spec.match, spec))
+            $(match_text(spec))
             $(bind_text(spec.mints[iri], spec))$(nacs_text(spec))
               BIND(CONCAT($key) AS ?__ctx)
             }
@@ -1445,12 +1665,16 @@ function insert_query(spec::RuleSpec; into::AbstractString, from::AbstractVector
 end
 
 """
-    compile(rule_iri; ep = endpoint()) -> String
+    compile_from_store(rule_iri; from = String[], ep = endpoint()) -> String
 
 Fetch and compile in one step. See [`load_rule`](@ref) and [`compile_rule`](@ref).
+
+`from` is forwarded to `compile_rule` and becomes the dataset clause. A scoped rule requires
+it; an unscoped one is unaffected.
 """
-compile_from_store(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint()) =
-    compile_rule(load_rule(rule_iri; ep = ep))
+compile_from_store(rule_iri::AbstractString; from::AbstractVector = String[],
+                   ep::SparqlEndpoint = endpoint()) =
+    compile_rule(load_rule(rule_iri; ep = ep); from = from)
 
 """
     list_rules(; ep = endpoint()) -> Vector{String}
@@ -1505,4 +1729,4 @@ export STRATEGY_ONCE, STRATEGY_TOFIXPOINT
 export parse_template, template_slots, bind_text, minted_vars
 export ambiguous_separators, collision_queries, check_collisions, mint_fanin
 export GISTP_NS, MODE_CONSTRUCT, MODE_ASSERT, MODE_REWRITE
-export load_in_graph, is_scoped, dataset_lines, graph_wrap, check_scopes, scope_vars
+export load_in_graph, load_services, is_scoped, all_scopes, graph_scopes, dataset_lines, graph_wrap, check_scopes, scope_vars, match_text

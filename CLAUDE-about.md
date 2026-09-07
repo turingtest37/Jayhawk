@@ -70,7 +70,9 @@ emitted *after* the `BIND`s so a guard may name a minted variable. `gistp:strate
 generates when it does not.
 
 `gistp:inGraph` scopes a *pattern* to a named graph -- a declared variable binds whichever
-graph matched, any other IRI is a constant. A scoped rule emits **both** `USING` and
+graph matched, any other IRI is a constant -- or, third reading, to a
+`gistp:TabularDataSource`, which compiles to `SERVICE <x-sparql-anything:>` and contributes no
+dataset clause at all. A scoped rule emits **both** `USING` and
 `USING NAMED`, because default and named graphs are disjoint namespaces and either alone
 blinds half the rule. Only the triples are wrapped: inside `GRAPH ?g { ... }` the variable
 `?g` is not yet bound, so a guard nested there would silently mean "in *any* graph". Round

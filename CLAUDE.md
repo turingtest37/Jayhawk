@@ -81,6 +81,11 @@ The split between judgement and mechanism still holds, and is worth preserving:
   acts on it: `run_rule` takes one rule at a time. Ordering a rule *set* is the missing piece.
 - **`gistp:inGraph` is read-side only.** Scope on R, with `Rewrite`, with `ToFixpoint`, or
   with an empty `source` is refused rather than half-supported. Write-side scoping is open.
+  A scope naming a `gistp:TabularDataSource` now compiles to `SERVICE <x-sparql-anything:>`,
+  so a rule can read a CSV directly — but only the *binding source* half is built. The
+  `gistp:SourceMap` half (`mapFrom`/`mapFirst`/`mapEach` → a Facade-X BGP, plus the
+  `separator` / `stringBefore` / `valuePattern*` pipeline) is not, so the pattern still
+  names `xyz:` columns itself.
 - **Wiring the extension surface.** `RdfMaterializer` is the intended home for operators
   SPARQL cannot express — arithmetic beyond trivia, statistics, optimisation, the Julia
   numerical stack. It is a separate package and nothing here depends on it; connecting them

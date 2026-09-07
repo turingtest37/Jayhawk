@@ -106,15 +106,23 @@ concepts, which is why the engine does not use it.
 ### Two variable mechanisms, and why
 
 An **IRI-position** variable is a declared individual, resolved by RDF identity. A
-**literal-position** variable is a bare `"?x"^^gistp:var` with no declaration anywhere,
+**literal-position** variable is written inside a pattern as a bare `"?x"^^gistp:var` — an
+IRI in the object of `gist:name` would stop the pattern being valid domain data — and is
 matched across L and R by string equality of its lexical form.
 
 This mirrors the node-versus-attribute split in attributed graph transformation, so the
-theory is sound. But it has a real cost, and you should know it: a literal-position variable
-has nowhere to hang metadata, so **`gistp:oneOf` and `gistp:iriTemplate` cannot attach to
-one.** `check_bound`'s use-before-def check is a workaround for the typo risk, not a
-resolution of the asymmetry. Giving literal variables declarations is the obvious next
-change to the vocabulary.
+theory is sound. It used to carry a real cost: a literal-position variable had nowhere to
+hang metadata, so `gistp:oneOf` and a datatype could not attach to one. The vocabulary has
+since closed that with **`gistp:LiteralVariable`** — an optional declaration carrying
+`gistp:variableText`, bound to its uses by that lexical form. Declaration and use stay
+deliberately distinct: the declaration is an IRI that something can *name*, the use inside a
+pattern is still a literal.
+
+The engine reads the declaration for one thing so far — resolving a `gistp:slotValue`, which
+since the literal form was withdrawn always names a variable rather than repeating its
+spelling. `gistp:requiresDatatype` is authoring metadata the compiler does not act on. See
+`_occurs_in`, which had to grow a fifth alternative to find these declarations at all, and
+whose note says which case is still out of reach.
 
 ---
 
@@ -136,6 +144,32 @@ The order is load-bearing:
 There are **seven** places that assemble a WHERE clause. They all route through this one
 function, because a guard honoured by only some of them means the thing that executes is not
 the thing that was reviewed.
+
+### `gistp:inGraph` reads three ways
+
+The scope IRI is resolved in `graph_wrap`, and nowhere else:
+
+| the scope names | emits |
+|---|---|
+| a `gistp:TabularDataSource` | `SERVICE <x-sparql-anything:> { fx:properties … ; … }` |
+| a declared `gistp:SparqlVariable` | `GRAPH ?v { … }` |
+| anything else | `GRAPH <iri> { … }` |
+
+The third reading is settled by `load_services` from a **type assertion in the data**, not by
+guessing at the IRI's scheme — so a typo is a validation failure rather than a graph nobody
+created. A data source contributes **no dataset clause**: a `SERVICE` is evaluated outside the
+query's dataset, so `is_scoped` counts only *graph* scopes (`graph_scopes`), and an extraction
+rule can therefore run with an empty `source`, having no graph to name.
+
+The `fx:` options are emitted verbatim, sorted by predicate for byte-stability. Nothing in the
+engine interprets them: a `gistp:` vocabulary of SPARQL Anything's options would go stale the
+moment that project added one.
+
+> **The compiled query needs an engine that has the service.** Plain Fuseki does not, so a
+> source-scoped rule compiles and validates against the test store but must be *executed*
+> through SPARQL Anything (or a Fuseki with its jar loaded). The store-backed tests cover
+> loading and compilation; execution was verified by hand:
+> `sa.sh -q compiled.rq -f ttl`.
 
 ### `gistp:inGraph` scopes the triples, not the clause
 
@@ -351,8 +385,12 @@ A and B commute if  delta(A) ∩ predicates(L_B) = ∅  and  delta(B) ∩ predic
 Sound but incomplete — it never claims independence falsely, which is the direction that
 matters — and it is the same set arithmetic that made `interface` a two-line function.
 
-**Declarations for literal-position variables** (§3), which is what currently blocks `oneOf`
-on a literal.
+**`gistp:oneOf` on a literal-position variable.** The declarations this used to wait on have
+landed in the vocabulary as `gistp:LiteralVariable` (§3), and `gistp:slotValue` resolves them.
+What is left is discovery: a literal variable that no slot names is reachable only by matching
+`gistp:variableText` against the literals inside the pattern graphs, which `_occurs_in`
+deliberately does not do — that would be a second string-matching mechanism, and it should be
+added when something needs it rather than in advance.
 
 **Slugging**, as an opt-in with a stated algorithm. `ENCODE_FOR_URI` gives `E%209902%2FA`.
 The rule of thumb is already known: slug *controlled vocabulary terms*, never free-text data,

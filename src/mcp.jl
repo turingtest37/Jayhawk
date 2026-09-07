@@ -87,7 +87,9 @@ function tool_explain_rule(rule::AbstractString; source::AbstractVector = String
         end
     end
     println(io, "\ncompiles to:\n")
-    println(io, compile_rule(spec))
+    # `source` and not just `spec`: for a scoped rule the dataset clause is the difference
+    # between the query shown and the query run. See `compile_rule`.
+    println(io, compile_rule(spec; from = source))
 
     if mode_symbol(spec) === :Rewrite
         println(io, "  interface I = L n R : ", length(interface(spec)), " triple(s) preserved")

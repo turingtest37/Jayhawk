@@ -60,6 +60,12 @@
     gistp:variableText "?_Order" ;
     skos:definition "The order under review. Bound by L." .
 
+:_orderNo
+    rdf:type gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?orderNo" ;
+    gistp:requiresDatatype xsd:string ;
+    skos:definition "The order number. Bound by L, and the value the review task IRI is minted from." .
+
 # Minted, so it must not appear in L. It appears in R -- which is what constructing it means
 # -- and in the negative condition, which is legal because the condition is emitted after the
 # BIND that constructs it. That ordering is the whole point: the guard asks whether the thing
@@ -70,7 +76,7 @@
     gistp:iriTemplate  "http://example.org/ops/review/{order}" ;
     gistp:hasSlot [ rdf:type gistp:TemplateSlot ;
                     gistp:slotName  "order" ;
-                    gistp:slotValue "?orderNo"^^gistp:var ] ;
+                    gistp:slotValue :_orderNo ] ;
     skos:definition "The review task, minted from the order number." .
 
 #################################################################

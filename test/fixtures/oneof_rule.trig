@@ -62,6 +62,12 @@
     gistp:variableText "?_W" ;
     skos:definition "The widget. Bound by L." .
 
+:_wcode
+    rdf:type gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?wcode" ;
+    gistp:requiresDatatype xsd:string ;
+    skos:definition "The widget's code. Bound by L, and one of the two slots the check IRI is minted from." .
+
 # Enumerated, and absent from L. The VALUES clause is therefore the only thing binding it,
 # which is exactly what makes it a generator: each solution of L is multiplied by the three
 # values, and R is instantiated once for each.
@@ -79,7 +85,7 @@
         gistp:iriTemplate  "http://example.org/ops/check/{widget}/{reg}" ;
         gistp:hasSlot [ rdf:type gistp:TemplateSlot ;
                         gistp:slotName  "widget" ;
-                        gistp:slotValue "?wcode"^^gistp:var ] ,
+                        gistp:slotValue :_wcode ] ,
                       [ rdf:type gistp:TemplateSlot ;
                         gistp:slotName  "reg" ;
                         gistp:slotValue :_Reg ] ;
