@@ -618,6 +618,203 @@ end
         @test all(occursin("FILTER NOT EXISTS", q) for (_, q) in collision_queries(guarded))
     end
 
+    # ---------------------------------------------------------------------
+    # Filter conditions: the scalar tests a BGP cannot express
+    # ---------------------------------------------------------------------
+
+    with_filters(fs...; mode = Jayhawk.MODE_CONSTRUCT) =
+        (s = person_to_employee(mode = mode);
+         RuleSpec(s.iri, s.mode, s.match_graph, s.construct_graph, s.match, s.construct,
+                  s.variables, s.mints, Dict{String,Vector{RDFTerm}}(), NacSpec[],
+                  nothing, 0, nothing, nothing, nothing,
+                  Dict{String,Vector{Pair{String,String}}}(), collect(String, fs)))
+
+    refusal(spec) = sprint(showerror, try compile_rule(spec) catch e; e end)
+
+    @testset "a filter condition becomes FILTER(...)" begin
+        q = compile_rule(with_filters("?_Person_1 != ?_ID_1"))
+        @test occursin("FILTER(?_Person_1 != ?_ID_1)", q)
+        # and not the guard form -- a comparison is not an absence
+        @test !occursin("FILTER NOT EXISTS", q)
+    end
+
+    @testset "several filters are conjunctive, one FILTER each" begin
+        # Same reasoning as the negative conditions: separate filters is what "all of
+        # these must hold" means, and one failing expression stays readable in a log.
+        q = compile_rule(with_filters("?_Person_1 != ?_ID_1", "STRLEN(?idText) > 3"))
+        @test length(collect(eachmatch(r"FILTER\(", q))) == 2
+    end
+
+    @testset "filters are sorted, so compiled text is byte-stable" begin
+        # Conditions may be authored as blank nodes, which have no stable identity. Sorting
+        # on the text is what makes two loads of one file compile to the same bytes.
+        @test compile_rule(with_filters("?_ID_1 != ?_Person_1", "STRLEN(?idText) > 3")) ==
+              compile_rule(with_filters("STRLEN(?idText) > 3", "?_ID_1 != ?_Person_1"))
+    end
+
+    @testset "a filter may test a literal-position variable" begin
+        # ?idText is declared nowhere: it is a "?x"^^gistp:var literal inside L, matched
+        # across L and R by lexical form. A filter has to see it too.
+        @test occursin("FILTER(CONTAINS(?idText, \"42\"))",
+                       compile_rule(with_filters("CONTAINS(?idText, \"42\")")))
+    end
+
+    @testset "a filter over an unbound variable is refused" begin
+        # SPARQL does not error here -- the expression errors, the solution is dropped, and
+        # the rule quietly matches nothing. A typo must not be able to turn a rule off.
+        msg = refusal(with_filters("?_Persn_1 != ?_ID_1"))
+        @test occursin("?_Persn_1", msg)
+        @test occursin("never binds", msg)
+    end
+
+    @testset "a filter cannot smuggle syntax past the compiler" begin
+        # The one place author-supplied text is spliced into a query. Each of these would
+        # escape the FILTER the compiler wraps the expression in.
+        @test occursin("could open a group",
+                       refusal(with_filters("1=1) } INSERT { <urn:x> <urn:p> 1 } WHERE {")))
+        @test occursin("starts a comment",       refusal(with_filters("1=1 #")))
+        @test occursin("update request",         refusal(with_filters("1=1 ; DROP ALL")))
+        @test occursin("never opened",          refusal(with_filters("1=1)")))
+        @test occursin("parenthesis",            refusal(with_filters("CONTAINS(?idText")))
+        @test occursin("unterminated",           refusal(with_filters("CONTAINS(?idText, \"x)")))
+    end
+
+    @testset "a character inside a string literal is data, not syntax" begin
+        # The checks scan a skeleton with literals blanked out, so an honest expression
+        # mentioning a brace or a hash is not refused for it.
+        q = compile_rule(with_filters("CONTAINS(?idText, \"}#;\")"))
+        @test occursin("FILTER(CONTAINS(?idText, \"}#;\"))", q)
+    end
+
+    @testset "an empty filter is refused rather than emitted" begin
+        # FILTER() is a syntax error, and FILTER(true) would silently do nothing -- the
+        # same trap `an empty condition is skipped` avoids on the guard side.
+        @test occursin("empty gistp:filterText", refusal(with_filters("   ")))
+    end
+
+    @testset "filters follow the BINDs, and every builder carries them" begin
+        # A filter may test a MINTED variable, so it has to come after the BIND that
+        # constructs it -- and a filter honoured by only some query builders means the
+        # thing that executes is not the thing that was reviewed.
+        s = minting_rule()
+        filtered = RuleSpec(s.iri, s.mode, s.match_graph, s.construct_graph, s.match,
+                            s.construct, s.variables, s.mints,
+                            Dict{String,Vector{RDFTerm}}(), NacSpec[], nothing, 0, nothing,
+                            nothing, nothing,
+                            Dict{String,Vector{Pair{String,String}}}(),
+                            ["STRLEN(STR(?_Employee_1)) > 0"])
+        body = where_body(filtered)
+        @test findfirst("BIND(", body).start < findfirst("FILTER(", body).start
+        @test occursin("FILTER(", compile_rule(filtered))
+        @test occursin("FILTER(", insert_query(filtered; into = "urn:g"))
+        @test occursin("FILTER(",
+                       project_query(filtered; triples = filtered.construct, into = "urn:g"))
+    end
+
+    @testset "a rule with no filters compiles exactly as before" begin
+        # The whole control layer is additive: an existing rule's bytes must not move.
+        @test compile_rule(with_filters()) == compile_rule(person_to_employee())
+    end
+
+    # ---------------------------------------------------------------------
+    # Filter conditions, part two: does the emitted text conform to SPARQL 1.1?
+    #
+    # Every claim below was checked against Apache Jena ARQ before it was written down.
+    # Where a case is marked "ARQ parses/rejects this", that is an observation of a real
+    # SPARQL 1.1 engine, not an argument from the grammar.
+    # ---------------------------------------------------------------------
+
+    @testset "a full IRI is data, not syntax" begin
+        # The engine emits no PREFIX anywhere, so <...> is the ONLY way a filter can name a
+        # resource or a datatype -- and a hash namespace puts a '#' in nearly every one.
+        # Screening the raw text for '#' therefore refused the ordinary case. ARQ parses
+        # each of these.
+        for expr in ("?_Person_1 != <http://www.w3.org/2002/07/owl#Thing>",
+                     "?idText > \"2020\"^^<http://www.w3.org/2001/XMLSchema#gYear>",
+                     "?_Person_1 != <http://ex.org/a;b>",      # ';' inside an IRI is a path
+                     "?_Person_1 != <http://ex.org/a(b>")      # so is an unclosed paren
+            @test occursin("FILTER($expr)", compile_rule(with_filters(expr)))
+        end
+    end
+
+    @testset "an IRI cannot be a hiding place" begin
+        # Blanking <...> is only safe because IRIREF is a token whose charset already
+        # excludes every character the brace check is looking for. Content that breaks that
+        # charset is not an IRI, so it is not blanked -- it is left raw and refused.
+        @test occursin("could close the FILTER",
+                       refusal(with_filters("?_Person_1 != <http://ex.org/a}b>")))
+        @test occursin("could open a group",
+                       refusal(with_filters("?_Person_1 != <http://ex.org/a{b>")))
+    end
+
+    @testset "a lone < is a comparison, not an open IRI" begin
+        # The scanner must not swallow the rest of the expression at `?a < ?b`. If it did,
+        # the unbound ?nope here would vanish from the bound check -- the silent failure the
+        # check exists to prevent.
+        @test occursin("FILTER(?idText < ?_ID_1)",
+                       compile_rule(with_filters("?idText < ?_ID_1")))
+        @test occursin("?nope", refusal(with_filters("?idText < ?nope")))
+    end
+
+    @testset "a prefixed name is refused, not passed to the store" begin
+        # ARQ answers `"2020"^^xsd:gYear` with HTTP 400 "Unresolved prefixed name", because
+        # this compiler declares no prefixes -- it has no registry, on purpose. Catching it
+        # here is the same trade check_variables makes: a message now, not a 400 later.
+        msg = refusal(with_filters("?idText > \"2020\"^^xsd:gYear"))
+        @test occursin("prefixed name", msg)
+        @test occursin("angle brackets", msg)
+        # and the empty prefix, which is the easiest one to write by accident
+        @test occursin("prefixed name", refusal(with_filters("?_Person_1 != :Thing")))
+        # but a ':' inside a string or an IRI is data
+        @test occursin("FILTER(CONTAINS(?idText, \"a:b\"))",
+                       compile_rule(with_filters("CONTAINS(?idText, \"a:b\")")))
+    end
+
+    @testset "a filter that is itself a FILTER clause is refused" begin
+        # Compiles to FILTER(FILTER(...)), which ARQ rejects. The user guide has to say
+        # "write the expression, not the clause" in bold; the compiler can just say it.
+        msg = refusal(with_filters("FILTER(?_Person_1 != ?_ID_1)"))
+        @test occursin("whole FILTER clause", msg)
+        # SPARQL keywords are case-insensitive, so the check has to be too
+        @test occursin("whole FILTER clause", refusal(with_filters("filter (?_Person_1 != ?_ID_1)")))
+        # ... and a function whose name merely starts with those letters is untouched
+        @test occursin("FILTER(?idText != \"x\")",
+                       compile_rule(with_filters("?idText != \"x\"")))
+    end
+
+    @testset "the bound check reads every name SPARQL calls a variable" begin
+        # SPARQL's VARNAME admits a leading digit and the whole of PN_CHARS_BASE: ARQ
+        # parses `?1` and `?naïve` happily. A pattern of [a-zA-Z_][a-zA-Z0-9_]* missed `?1`
+        # altogether -- so the rule shipped, matched nothing, and said nothing -- and
+        # truncated `?naïve` to `?na`, refusing the rule while naming a variable the author
+        # never wrote.
+        m1 = refusal(with_filters("?1 = ?_ID_1"))
+        @test occursin("?1", m1) && occursin("never binds", m1)
+        m2 = refusal(with_filters("?naïve = ?_ID_1"))
+        @test occursin("?naïve", m2)
+        @test !occursin("?na,", m2) && !occursin("tests ?na ", m2)
+    end
+
+    @testset "\$x and ?x are the same variable" begin
+        # SPARQL says so, so the bound check compares bare names.
+        @test occursin("FILTER(\$_Person_1 != ?_ID_1)",
+                       compile_rule(with_filters("\$_Person_1 != ?_ID_1")))
+        @test occursin("?nope", refusal(with_filters("\$nope != ?_ID_1")))
+    end
+
+    @testset "containment holds through the added blanking" begin
+        # The one property the whole design rests on: no expression can leave the FILTER(...)
+        # the compiler wraps it in. Re-asserted after teaching the skeleton about IRIs,
+        # because that is new text the checks no longer see.
+        for attack in ("1=1) } INSERT { <urn:x> <urn:p> 1 } WHERE {",
+                       "1=1) FILTER(1=1",
+                       "1=1 ; DROP ALL",
+                       "1=1 # ",
+                       "1=1) UNION <http://ex.org/a> (1=1")
+            @test_throws ErrorException compile_rule(with_filters(attack))
+        end
+    end
+
     @testset "strategy resolves caller over rule over mode" begin
         @test effective_strategy(with_control()) === :Once                 # Construct
         @test effective_strategy(with_control(mode = Jayhawk.MODE_ASSERT)) === :ToFixpoint

@@ -86,6 +86,19 @@ function tool_explain_rule(rule::AbstractString; source::AbstractVector = String
                     scope_of(n.scope))
         end
     end
+    # Filters get their own line rather than being left for the reader to spot in the query
+    # text below. `gistp:filterText` is the one term whose value is spliced into what runs,
+    # so "read what the rule declares before you run it" has to be something this report
+    # actually makes possible -- and the guards are already itemised on exactly that ground.
+    if isempty(spec.filters)
+        println(io, "  filters           : none")
+    else
+        println(io, "  filters           : ", length(spec.filters),
+                " condition(s); all must hold to match")
+        for f in sort(spec.filters)
+            println(io, "      FILTER(", f, ")")
+        end
+    end
     println(io, "\ncompiles to:\n")
     # `source` and not just `spec`: for a scoped rule the dataset clause is the difference
     # between the query shown and the query run. See `compile_rule`.

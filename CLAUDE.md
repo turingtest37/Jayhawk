@@ -67,8 +67,28 @@ tested and documented**. Every term the vocabulary declares is supported except
 
 Implemented: the three modes; both variable mechanisms (declared `SparqlVariable` individuals
 and `"?x"^^gistp:var` literals); `iriTemplate` minting with RFC 6570 Level 1 slots;
-`hasNegativeCondition` guards; `strategy` / `maxIterations`; `oneOf` → `VALUES`; `inGraph`
-scoping; firing graphs, provenance and exact undo; five MCP tools.
+`hasNegativeCondition` guards; `hasFilterCondition` comparisons; `strategy` / `maxIterations`;
+`oneOf` → `VALUES`; `inGraph` scoping; firing graphs, provenance and exact undo; five MCP
+tools.
+
+`hasFilterCondition` is the one term whose value is spliced into the emitted query, so it is
+the one term with an argued threat model rather than an assumed one: `check_filters` bars
+braces (and therefore `EXISTS`, which `hasNegativeCondition` already covers as a reviewable
+pattern), comments and semicolons, requires balanced parentheses and closed string literals,
+and refuses any variable L does not bind — because an unbound variable in a `FILTER` drops
+solutions silently rather than erroring.
+
+The checks scan a **skeleton** with string literals *and IRI references* blanked out, so a
+`#` inside a quoted string or inside `<…owl#Thing>` stays data. Blanking `<…>` is a
+conformance requirement, not a relaxation: the compiler emits no `PREFIX` anywhere and has
+no prefix registry, so angle brackets are the only way a filter can name a resource or a
+datatype. That is also why a prefixed name is refused outright — `xsd:integer` in a filter
+would otherwise reach the store undeclared and return an opaque HTTP 400. Blanking is safe
+because SPARQL's `IRIREF` is a token whose character set already excludes every brace and
+quote the checks look for; a bracketed run that breaks that set is not an IRI, is not
+blanked, and is refused. The two remaining conformance gaps are deliberate: a filter is not
+parsed as an expression (`FILTER(!!!)` compiles and the store rejects it — contained, but
+diagnosed late), and `gistp:filterText` is never checked for being *semantically* sensible.
 
 The split between judgement and mechanism still holds, and is worth preserving:
 - **LLM** for authoring: vague intent → the right `SparqlVariable` individuals and

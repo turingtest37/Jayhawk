@@ -25,6 +25,8 @@ const P_SLOTNAME     = GISTP_NS * "slotName"
 const P_SLOTVALUE    = GISTP_NS * "slotValue"
 const P_ONEOF        = GISTP_NS * "oneOf"
 const P_NAC          = GISTP_NS * "hasNegativeCondition"
+const P_FILTER       = GISTP_NS * "hasFilterCondition"
+const P_FILTERTEXT   = GISTP_NS * "filterText"
 const P_INGRAPH      = GISTP_NS * "inGraph"
 
 const RDF_FIRST = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first"
@@ -33,6 +35,10 @@ const P_STRATEGY     = GISTP_NS * "strategy"
 const P_PRIORITY     = GISTP_NS * "priority"
 const P_MAXITER      = GISTP_NS * "maxIterations"
 const C_SPARQLVAR    = GISTP_NS * "SparqlVariable"
+# No C_FILTERCOND. `load_filters` reaches a condition through gistp:hasFilterCondition and
+# never through its type, on purpose: joining on `?f a gistp:FilterCondition` would drop an
+# untyped condition silently, and a dropped filter widens the rule. The property is the
+# edge that matters; the class is the shapes file's business.
 const C_TABULARSOURCE = GISTP_NS * "TabularDataSource"
 
 # SPARQL Anything's Facade-X vocabulary. `fx:` properties on a gistp:TabularDataSource are
@@ -128,23 +134,29 @@ struct RuleSpec
     # Empty for every rule that reads only the store, which is what keeps the golden
     # snapshots of those rules unchanged.
     services::Dict{String,Vector{Pair{String,String}}}
+    # Every gistp:filterText the rule declares, sorted, each compiled to its own FILTER(...).
+    # Text rather than structure: a SPARQL expression grammar in RDF would be a second
+    # language to learn and to keep in step with SPARQL's own. The bargain is that the text
+    # is spliced into the query, so `check_filters` has to earn that splice -- see it for
+    # what is rejected and why.
+    filters::Vector{String}
 end
 
 # Every call site written before the control layer stays valid: a rule with no negative
 # conditions and no stated policy behaves exactly as it did.
 RuleSpec(iri, mode, lg, cg, match, construct, variables, mints) =
     RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-             Dict{String,Vector{RDFTerm}}(), NacSpec[], nothing, 0, nothing, nothing, nothing, Dict{String,Vector{Pair{String,String}}}())
+             Dict{String,Vector{RDFTerm}}(), NacSpec[], nothing, 0, nothing, nothing, nothing, Dict{String,Vector{Pair{String,String}}}(), String[])
 
 RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
          nacs, strategy, priority, maxit) =
     RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-             Dict{String,Vector{RDFTerm}}(), nacs, strategy, priority, maxit, nothing, nothing, Dict{String,Vector{Pair{String,String}}}())
+             Dict{String,Vector{RDFTerm}}(), nacs, strategy, priority, maxit, nothing, nothing, Dict{String,Vector{Pair{String,String}}}(), String[])
 
 RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
          enums, nacs, strategy, priority, maxit) =
     RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-             enums, nacs, strategy, priority, maxit, nothing, nothing, Dict{String,Vector{Pair{String,String}}}())
+             enums, nacs, strategy, priority, maxit, nothing, nothing, Dict{String,Vector{Pair{String,String}}}(), String[])
 
 # The arity before `services`: every rule that reads only the store builds one, and it is by
 # far the most-used constructor in the suite.
@@ -152,7 +164,13 @@ RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
          enums, nacs, strategy, priority, maxit, mscope, cscope) =
     RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
              enums, nacs, strategy, priority, maxit, mscope, cscope,
-             Dict{String,Vector{Pair{String,String}}}())
+             Dict{String,Vector{Pair{String,String}}}(), String[])
+
+# The arity before `filters`: every rule authored before filter conditions existed builds one.
+RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
+         enums, nacs, strategy, priority, maxit, mscope, cscope, services) =
+    RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
+             enums, nacs, strategy, priority, maxit, mscope, cscope, services, String[])
 
 mode_symbol(m::AbstractString) =
     m == MODE_CONSTRUCT ? :Construct :
@@ -217,7 +235,8 @@ function load_rule(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
              load_services(String[s for s in (load_in_graph(lg; ep = ep),
                                               load_in_graph(cg; ep = ep),
                                               (n.scope for n in nacs)...)
-                                 if s !== nothing]; ep = ep))
+                                 if s !== nothing]; ep = ep),
+             load_filters(r; ep = ep))
 end
 
 """
@@ -262,6 +281,47 @@ function load_nac_graphs(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint
     rows = select("""
         SELECT ?n WHERE { <$(check_iri(rule_iri))> <$P_NAC> ?n } ORDER BY ?n"""; ep = ep)
     sort!([_iri(r["n"]) for r in rows])
+end
+
+"""
+    load_filters(rule_iri; ep = endpoint()) -> Vector{String}
+
+Every `gistp:filterText` the rule declares, deduplicated and sorted.
+
+Sorted by the **text**, not by the condition's node, so a filter authored as a blank node
+compiles to the same bytes on every run. A `gistp:FilterCondition` carries one expression;
+several conditions are conjunctive, which is what separate `FILTER`s already mean.
+
+The `gistp:filterText` is fetched through an `OPTIONAL` rather than joined, so that a
+condition carrying none is *refused* rather than dropped. An inner join would silently
+return one fewer row, and a missing filter does not narrow a rule -- it widens it. That is
+the loudest possible bug arriving as the quietest possible symptom, and it is the mirror of
+the empty guard, which is skipped precisely because an empty `FILTER NOT EXISTS` can never
+fail.
+"""
+function load_filters(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
+    rows = select("""
+        SELECT ?f ?t WHERE {
+          <$(check_iri(rule_iri))> <$P_FILTER> ?f .
+          OPTIONAL { ?f <$P_FILTERTEXT> ?t }
+        }"""; ep = ep)
+    out = String[]
+    for r in rows
+        haskey(r, "t") || error(
+            "rule <$rule_iri>: gistp:hasFilterCondition names $(sparql_text(r["f"])), which " *
+            "declares no gistp:filterText. A condition with no expression would compile to " *
+            "no FILTER at all, so the rule would silently match MORE than it says, not " *
+            "less. Give it a gistp:filterText or drop the gistp:hasFilterCondition.")
+        t = r["t"]
+        t isa RDFLiteral || error(
+            "rule <$rule_iri>: gistp:filterText is $(sparql_text(t)), which is not a " *
+            "literal. A filter condition is a SPARQL expression written as a string.")
+        is_var_literal(t) && error(
+            "rule <$rule_iri>: gistp:filterText is the variable $(repr(t.lexical)), which " *
+            "nothing in a rule binds. A condition is fixed when the rule is authored.")
+        push!(out, t.lexical)
+    end
+    sort!(unique!(out))
 end
 
 "A rule's declared application strategy, or `nothing` if it states none."
@@ -735,6 +795,25 @@ function nacs_text(spec::RuleSpec)
 end
 
 """
+    filters_text(spec) -> String
+
+Every filter condition, as its own `FILTER(...)`.
+
+Conjunctive, like the negative conditions above: separate filters is exactly what "all of
+these must hold" means, and it keeps one failing expression readable in a query log instead
+of buried in a chain of `&&`.
+
+Sorted **here** rather than only in [`load_filters`](@ref). Byte-stability is a property of
+compilation, not of one way of building a spec: conditions are typically authored as blank
+nodes, which have no stable identity, so nothing upstream can be relied on to fix an order.
+Filters are conjunctive, so sorting changes no result.
+"""
+function filters_text(spec::RuleSpec)
+    isempty(spec.filters) && return ""
+    "\n" * join(("  FILTER($f)" for f in sort(spec.filters)), "\n")
+end
+
+"""
     load_services(scopes; ep = endpoint()) -> Dict{String,Vector{Pair{String,String}}}
 
 Which of a rule's `gistp:inGraph` scopes name a **data source** rather than a graph, and the
@@ -854,14 +933,17 @@ end
     where_body(spec) -> String
 
 The whole of a rule's WHERE clause: match triples, then VALUES, then BINDs, then negative
-conditions.
+conditions, then filter conditions.
 
 The order is load-bearing and is the reason this is one function rather than five copies.
 `VALUES` comes first among the additions because a `BIND` may mint from an enumerated value.
 BIND sees only variables bound earlier in its group, so it must follow the triple patterns.
 `FILTER NOT EXISTS` must follow the BINDs in turn, because a condition is allowed to mention
 a *minted* variable -- "only create this if it does not already exist" -- and the filter can
-only test what is bound by the time it runs.
+only test what is bound by the time it runs. A plain `FILTER` is last for the same reason,
+and because a reader looking for why a rule declined wants the cheap scalar tests together.
+Filter and `FILTER NOT EXISTS` are both conjunctive constraints on the same group, so their
+relative order changes no result -- only which one a query log blames first.
 
 **`gistp:inGraph` scopes the triples, not the clause.** Wrapping the finished string in one
 `GRAPH ?g { … }` looks equivalent and is not. SPARQL translates `GRAPH ?g { P }` to
@@ -876,7 +958,8 @@ So only `bgp_text` is wrapped. VALUES and BIND stay outside the group, where `?g
 and a template may mint from it; each condition wraps its own triples inside its own filter.
 """
 where_body(spec::RuleSpec) =
-    string(match_text(spec), values_text(spec), binds_text(spec), nacs_text(spec))
+    string(match_text(spec), values_text(spec), binds_text(spec), nacs_text(spec),
+           filters_text(spec))
 
 """
     match_text(spec; indent = "  ") -> String
@@ -1256,6 +1339,207 @@ function check_scopes(spec::RuleSpec)
 end
 
 """
+    _filter_skeleton(expr) -> Union{String,Nothing}
+
+`expr` with every string literal and every IRI reference replaced by a single inert
+character, or `nothing` if a literal is left open.
+
+Every structural check below scans this rather than the raw text, because a `}` or a `#`
+*inside* a quoted string is ordinary data and rejecting it would refuse honest expressions
+like `CONTAINS(?label, "#1")`. Handles SPARQL's four literal forms -- short and long, single-
+and double-quoted -- and backslash escapes within them. An unterminated literal is the one
+case that cannot be scanned at all: everything after the opening quote is the compiler's
+guess about where the expression ends, so it is refused rather than interpreted.
+
+**`<...>` is blanked for the same reason, and this is not a concession.** The engine emits no
+`PREFIX` anywhere, so an angle-bracketed IRI is the *only* way a filter can name a resource
+or a datatype -- and hash namespaces being what they are, `?t != <...owl#Thing>` and
+`"5"^^<...XMLSchema#integer>` are the ordinary cases, not the exotic ones. Refusing them for
+the `#` would leave the term unable to express its own worked examples.
+
+Blanking is safe because [`IRIREF`](https://www.w3.org/TR/sparql11-query/#rIRIREF) is a
+*token*: its charset already excludes `<`, `>`, `"`, `{`, `}`, `|`, `^`, `` ` ``, `\\` and
+everything at or below U+0020. Nothing a brace-check would want to see can hide inside one.
+So the skeleton blanks `<...>` only when the content obeys that charset exactly -- which is
+precisely where a SPARQL tokenizer would also see one IRI -- and otherwise leaves the text
+raw for the checks below to reject. A lone `<` (as in `?a < ?b`) matches nothing and is
+copied through.
+"""
+function _filter_skeleton(expr::AbstractString)
+    cs = collect(expr)
+    n  = length(cs)
+    out = Char[]
+    i  = 1
+    # The IRIREF charset, by exclusion, as SPARQL 1.1 grammar rule [139] states it.
+    iri_char(c) = !(c in ('<', '>', '"', '{', '}', '|', '^', '`', '\\')) && c > ' '
+    while i <= n
+        c = cs[i]
+        if c == '<'
+            j = i + 1
+            while j <= n && iri_char(cs[j])
+                j += 1
+            end
+            if j <= n && cs[j] == '>'
+                push!(out, '0')             # one closed IRI reduces to one inert token
+                i = j + 1
+                continue
+            end
+            # Not an IRIREF -- a comparison operator, or an IRI with something illegal in
+            # it. Copy the `<` through and let the checks below see whatever follows.
+        end
+        if c != '"' && c != '\''
+            push!(out, c)
+            i += 1
+            continue
+        end
+        long  = i + 2 <= n && cs[i+1] == c && cs[i+2] == c
+        width = long ? 3 : 1
+        i += width
+        closed = false
+        while i <= n
+            if cs[i] == '\\'
+                i += 2
+                continue
+            elseif cs[i] == c && (!long || (i + 2 <= n && cs[i+1] == c && cs[i+2] == c))
+                i += width
+                closed = true
+                break
+            elseif !long && (cs[i] == '\n' || cs[i] == '\r')
+                break                       # a short literal may not span a line
+            end
+            i += 1
+        end
+        closed || return nothing
+        push!(out, '0')                     # a literal reduces to one inert token
+    end
+    String(out)
+end
+
+# A variable mention inside a filter expression. `$x` and `?x` name the same variable in
+# SPARQL, so the sigil is captured out and comparison is on the bare name.
+#
+# Deliberately wider than `VARIABLE_RE`, which governs the names this engine *emits*. This
+# one has to recognise every name SPARQL would accept, because its job is to notice a name
+# nothing binds -- and a name it fails to recognise is a name it fails to refuse. SPARQL's
+# VARNAME [166] admits a leading digit (`?1` is a legal variable, verified against ARQ) and
+# the whole of PN_CHARS_BASE, so `[a-zA-Z_][a-zA-Z0-9_]*` under-reads twice over: it misses
+# `?1` entirely, and it truncates `?naïve` to `?na`, refusing a rule while naming a variable
+# the author never wrote.
+#
+# Over-approximating is the safe direction. The skeleton has already removed strings and
+# IRIs, and in what remains -- a SPARQL expression -- `?` and `$` introduce a variable and
+# nothing else, so a wider charset can only catch more genuinely unbound names.
+const _FILTER_VAR_RE = r"[?$]([\p{L}\p{N}_][\p{L}\p{N}_·̀-ͯ‿-⁀]*)"
+
+_bare_var(v::AbstractString) = (startswith(v, '?') || startswith(v, '$')) ? v[2:end] : v
+
+"""
+    check_filters(spec)
+
+Reject a filter condition that is not an expression, or that tests a variable nothing binds.
+
+`gistp:filterText` is the one place this engine splices author-supplied text into a query, so
+it is the one place that has to be argued rather than assumed. The bargain the rest of the
+design makes -- "rules are the tools, not SPARQL", a catalogue of named rewrites instead of
+an open UPDATE endpoint -- is only worth anything if a rule cannot *become* an open endpoint
+by smuggling syntax through a filter. Hence:
+
+  * **No `{` or `}`.** Braces are what a filter would need to close the compiler's own
+    `FILTER(` and open something else -- a `SERVICE`, a subquery, a second `WHERE` group.
+    Barring them also bars `EXISTS`, which is deliberate: `gistp:hasNegativeCondition` is the
+    sanctioned way to say "no such thing", and it is a *pattern*, so it is reviewable as RDF
+    rather than as text.
+  * **No `#`.** A comment swallows the rest of the line, including the `)` this compiler
+    emits, which turns a malformed filter into whatever happens to follow it.
+  * **No `;`.** A semicolon separates operations in an update request.
+  * **Balanced parentheses, never dipping below zero.** A leading `)` closes the emitted
+    `FILTER(` early; a missing one swallows what comes after.
+  * **No prefixed name.** Not a safety rule but a conformance one: this compiler emits no
+    `PREFIX` line anywhere, by design -- there is no prefix registry, so every IRI it writes
+    is absolute. `xsd:integer` in a filter therefore reaches the store undeclared and comes
+    back as an opaque HTTP 400 at run time, which is the exact failure [`check_variables`](@ref)
+    exists to turn into a message. Write `<http://www.w3.org/2001/XMLSchema#integer>`.
+  * **Not itself a `FILTER` clause.** The engine supplies the keyword and the parentheses, so
+    a text of `FILTER(?a != ?b)` compiles to `FILTER(FILTER(?a != ?b))`, which no store will
+    parse. A near-universal first mistake, and cheap to name precisely.
+  * **Every variable bound.** An unbound variable in a FILTER is not an error in SPARQL --
+    the expression errors, the solution is dropped, and the rule quietly matches nothing. A
+    typo therefore turns the rule off in silence. That is the failure [`check_bound`](@ref)
+    exists to prevent on the construct side, and it earns the same refusal here.
+
+None of this makes an arbitrary expression *safe to author carelessly*; it makes the class of
+things a filter can do closed and small. Read what a rule declares before you run it.
+"""
+function check_filters(spec::RuleSpec)
+    isempty(spec.filters) && return spec
+    bound = Set(_bare_var(v) for v in
+                union(vars_in(spec.match, spec), scope_vars(spec.match_scope, spec),
+                      minted_vars(spec), enum_vars(spec)))
+    for f in spec.filters
+        isempty(strip(f)) && error(
+            "rule <$(spec.iri)>: a gistp:FilterCondition has empty gistp:filterText. An " *
+            "expression that says nothing cannot constrain anything; drop the condition.")
+
+        skel = _filter_skeleton(f)
+        skel === nothing && error(
+            "rule <$(spec.iri)>: filter $(repr(f)) leaves a string literal unterminated, " *
+            "so where the expression ends is a guess. Close the quote.")
+
+        for (ch, why) in ('{' => "could open a group -- a SERVICE, a subquery, or a second " *
+                                 "WHERE. For \"no such thing exists\" use " *
+                                 "gistp:hasNegativeCondition, which is a reviewable " *
+                                 "pattern rather than text",
+                          '}' => "could close the FILTER this compiler wraps the " *
+                                 "expression in, leaving whatever follows outside it",
+                          '#' => "starts a comment, which would swallow the closing " *
+                                 "parenthesis this compiler emits",
+                          ';' => "separates operations in an update request")
+            occursin(ch, skel) && error(
+                "rule <$(spec.iri)>: filter $(repr(f)) contains $(repr(ch)), which $why. " *
+                "A gistp:filterText is one SPARQL expression and nothing else. Inside a " *
+                "quoted string the character is fine -- this one is not in one.")
+        end
+
+        # After the skeleton, the only thing a `:` can be is a prefixed name: strings and
+        # IRIs are gone, and a blank node label cannot appear in an expression.
+        occursin(':', skel) && error(
+            "rule <$(spec.iri)>: filter $(repr(f)) uses a prefixed name, but this compiler " *
+            "emits no PREFIX line -- it has no prefix registry, and every IRI it writes is " *
+            "absolute. The store would reject the query with an opaque \"Unresolved " *
+            "prefixed name\". Write the full IRI in angle brackets instead, as in " *
+            "\"?d > \\\"2020\\\"^^<http://www.w3.org/2001/XMLSchema#gYear>\".")
+
+        occursin(r"^\s*FILTER\s*\("i, skel) && error(
+            "rule <$(spec.iri)>: filter $(repr(f)) is a whole FILTER clause. The engine " *
+            "supplies the keyword and the parentheses, so this would compile to " *
+            "FILTER(FILTER(...)), which no store will parse. Declare the expression alone.")
+
+        depth = 0
+        for c in skel
+            c == '(' && (depth += 1)
+            c == ')' && (depth -= 1)
+            depth < 0 && error(
+                "rule <$(spec.iri)>: filter $(repr(f)) closes a parenthesis it never " *
+                "opened, which would close the FILTER this compiler wraps it in.")
+        end
+        depth == 0 || error(
+            "rule <$(spec.iri)>: filter $(repr(f)) leaves $depth parenthesis/es open, so " *
+            "it would swallow whatever the compiler emits after it.")
+
+        used = Set(m.captures[1] for m in eachmatch(_FILTER_VAR_RE, skel))
+        free = sort([string("?", v) for v in setdiff(used, bound)])
+        isempty(free) || error(
+            "rule <$(spec.iri)>: filter $(repr(f)) tests $(join(free, ", ")), which the " *
+            "match pattern never binds and nothing mints. Bound by L: " *
+            (isempty(bound) ? "(none)" :
+             join(sort([string("?", v) for v in bound]), ", ")) * ". SPARQL does not error " *
+            "on an unbound variable in a FILTER -- the expression errors, the solution is " *
+            "dropped, and the rule quietly matches nothing.")
+    end
+    spec
+end
+
+"""
     check_bound(spec)
 
 Reject a rule whose construct pattern uses a variable the match pattern never binds.
@@ -1275,6 +1559,7 @@ function check_bound(spec::RuleSpec)
     check_enums(spec)
     check_mints(spec)
     check_scopes(spec)
+    check_filters(spec)
     # L's graph variable is bound by the GRAPH clause, not by any triple, so `vars_in` -- which
     # walks subject, predicate and object -- cannot see it. Without this a rule that records
     # which graph a fact came from, the whole point of scoping the match, is refused as
@@ -1723,6 +2008,7 @@ export list_rules, mode_symbol
 export interface, match_only, construct_only, dangling_risks
 export var_of, term_sparql, bgp_text, vars_in, check_bound, check_mints, check_variables
 export NacSpec, nacs_text, where_body, strategy_symbol, check_no_blanks, check_positions
+export load_filters, filters_text, check_filters
 export load_enums, values_text, enum_vars, check_enums
 export load_nac_graphs, load_strategy, load_priority, load_max_iterations
 export STRATEGY_ONCE, STRATEGY_TOFIXPOINT

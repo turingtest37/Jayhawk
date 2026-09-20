@@ -124,5 +124,6 @@
 # condition would instead be existentially quantified there.
 #
 # What a NAC cannot say: a Basic Graph Pattern has no FILTER, so "no OTHER order refers to
-# this" -- which needs an inequality -- is not expressible. A test that distinguishes by
-# type assertion rather than by comparison is.
+# this" -- which needs an inequality -- is not expressible here. A test that distinguishes
+# by type assertion rather than by comparison is. The comparison belongs to
+# gistp:hasFilterCondition instead; see filter_rule.trig.

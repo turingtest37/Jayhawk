@@ -1,0 +1,115 @@
+#  A rule whose match is impossible without a FILTER, serialised as TriG.
+#
+#  A negative condition says "no such thing exists", and absence is structural -- a Basic
+#  Graph Pattern expresses it. Comparison is not. "These two are different orders", "this
+#  number sorts before that one", "this literal is a string" are all tests on values L has
+#  already BOUND, and no arrangement of triples says any of them.
+#
+#  So this rule pairs orders. Without the filters L matches every ordered pair including
+#  the self-pairs -- nine, for three orders. With them it matches the three genuine
+#  precedences. The count is what makes the filter load-bearing rather than decorative.
+#
+#  The second filter is here for a narrower reason: it names a full IRI with a '#' in it.
+#  That is the ordinary shape of an RDF datatype, the compiler emits no PREFIX so angle
+#  brackets are the only way to write one, and a screen for '#' in the raw filter text used
+#  to refuse it. This fixture makes a real store parse what the compiler emits.
+#
+#      default graph   the Rule, its filter conditions, and its variables
+#      named graph L   what must be true
+#      named graph R   what becomes true
+
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix ex:    <http://example.org/ops/> .
+@prefix :      <http://example.org/rules/> .
+
+#################################################################
+#    Default graph: the rule, its conditions, its variables
+#################################################################
+
+:OrderPrecedence
+    rdf:type gistp:Rule ;
+    skos:prefLabel "Order precedence" ;
+    skos:definition """An order precedes another when its order number sorts first. Needs a
+                       comparison between two bound values, which is exactly what a Basic
+                       Graph Pattern cannot say.""" ;
+    gistp:hasMatchPattern     :OrderPrecedence_L ;
+    gistp:hasConstructPattern :OrderPrecedence_R ;
+    gistp:rewriteMode         gistp:Construct ;
+    gistp:hasFilterCondition  :EarlierNumber , :NumberIsAString .
+
+:OrderPrecedence_L rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "match: any two orders carrying order numbers" .
+
+:OrderPrecedence_R rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "construct: the precedence between them" .
+
+# --- filter conditions -----------------------------------------------------
+
+# Asymmetric on purpose: `<` rather than `!=` rules out both the self-pairs and the
+# mirror-image duplicates in one expression.
+:EarlierNumber
+    rdf:type gistp:FilterCondition ;
+    skos:prefLabel "the first order number sorts before the second" ;
+    gistp:filterText "STR(?numA) < STR(?numB)" .
+
+# A full IRI, with the '#' an RDF datatype almost always carries. Written in angle
+# brackets because this compiler emits no PREFIX line and never will.
+:NumberIsAString
+    rdf:type gistp:FilterCondition ;
+    skos:prefLabel "the order number is a plain string" ;
+    gistp:filterText "DATATYPE(?numA) = <http://www.w3.org/2001/XMLSchema#string>" .
+
+# --- variables -------------------------------------------------------------
+
+:_OrderA
+    rdf:type gistp:SparqlVariable ;
+    gistp:variableText "?_OrderA" ;
+    skos:definition "The earlier order. Bound by L." .
+
+:_OrderB
+    rdf:type gistp:SparqlVariable ;
+    gistp:variableText "?_OrderB" ;
+    skos:definition "The later order. Bound by L." .
+
+#################################################################
+#    L -- what must be true
+#################################################################
+
+:OrderPrecedence_L {
+    :_OrderA rdf:type ex:Order ;
+             ex:orderNumber "?numA"^^gistp:var .
+    :_OrderB rdf:type ex:Order ;
+             ex:orderNumber "?numB"^^gistp:var .
+}
+
+#################################################################
+#    R -- what becomes true
+#################################################################
+
+:OrderPrecedence_R {
+    :_OrderA ex:precedes :_OrderB .
+}
+
+#################################################################
+#    A second rule: a condition that declares no expression
+#################################################################
+#
+#  gistp:hasFilterCondition points at something with no gistp:filterText. Fetched through a
+#  join this row simply would not come back, the rule would compile to no FILTER, and it
+#  would then match MORE than it says -- the loudest possible bug arriving as the quietest
+#  possible symptom. load_filters uses an OPTIONAL so it can refuse instead.
+
+:OrderPrecedenceBroken
+    rdf:type gistp:Rule ;
+    skos:prefLabel "Order precedence, with a condition that says nothing" ;
+    gistp:hasMatchPattern     :OrderPrecedence_L ;
+    gistp:hasConstructPattern :OrderPrecedence_R ;
+    gistp:rewriteMode         gistp:Construct ;
+    gistp:hasFilterCondition  :SaysNothing .
+
+:SaysNothing
+    rdf:type gistp:FilterCondition ;
+    skos:prefLabel "a condition someone forgot to finish" .

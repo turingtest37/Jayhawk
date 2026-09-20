@@ -913,6 +913,81 @@ end
         engine_cleanup()
     end
 
+    @testset "gistp:hasFilterCondition: the comparison a BGP cannot make" begin
+        # `check_filters` argues at length about what the emitted text may contain. Only a
+        # real SPARQL engine can settle whether what it lets through actually parses and
+        # actually narrows the match, so that is what this does.
+        Jayhawk.load_file!(fixture("filter_rule.trig"))
+        rule = "$(RULES)OrderPrecedence"
+        OPS  = "http://example.org/ops/"
+        FG   = "urn:jayhawk:filter-test"
+        Jayhawk.update!("DROP SILENT GRAPH <$FG>")
+        Jayhawk.update!("""
+            INSERT DATA { GRAPH <$FG> {
+              <urn:f1> a <$(OPS)Order> ; <$(OPS)orderNumber> "SO-1001" .
+              <urn:f2> a <$(OPS)Order> ; <$(OPS)orderNumber> "SO-1002" .
+              <urn:f3> a <$(OPS)Order> ; <$(OPS)orderNumber> "SO-1003" .
+            } }""")
+
+        @testset "the conditions load off the rule" begin
+            spec = load_rule(rule)
+            @test spec.filters == ["DATATYPE(?numA) = <http://www.w3.org/2001/XMLSchema#string>",
+                                   "STR(?numA) < STR(?numB)"]     # sorted by text
+        end
+
+        @testset "each becomes its own FILTER, after the match" begin
+            q = compile_from_store(rule)
+            @test occursin("FILTER(STR(?numA) < STR(?numB))", q)
+            # the IRI reaches the store intact: no escaping, no prefix, '#' and all
+            @test occursin("FILTER(DATATYPE(?numA) = <http://www.w3.org/2001/XMLSchema#string>)", q)
+            @test length(collect(eachmatch(r"FILTER\(", q))) == 2
+            @test findfirst("?_OrderA <", q).start < findfirst("FILTER(", q).start
+            @test q == compile_from_store(rule)        # still byte-stable
+        end
+
+        @testset "the store parses it and the filter does the narrowing" begin
+            # Nine ordered pairs exist. Three survive. If the FILTER were dropped -- or
+            # silently errored, which is what an unbound variable in one would do -- the
+            # count would be 9 or 0, never 3.
+            fs = run_rule(rule; source = [FG], actor = "integration")
+            @test length(fs) == 1
+            @test fs[1].count == 3
+            got = Set((sparql_text(r["s"]), sparql_text(r["o"]))
+                      for r in select("""
+                          SELECT ?s ?o WHERE {
+                            GRAPH <$(fs[1].graph)> { ?s <$(OPS)precedes> ?o } }"""))
+            @test got == Set([("<urn:f1>", "<urn:f2>"), ("<urn:f1>", "<urn:f3>"),
+                              ("<urn:f2>", "<urn:f3>")])
+            undo_firing!(fs[1].graph)
+        end
+
+        @testset "explain_rule itemises the filters before anything runs" begin
+            # The argument for letting a filter be text at all is "read what the rule
+            # declares before you run it". That has to be something this report makes
+            # possible, the way it already itemises the guards.
+            out = tool_explain_rule(rule; source = [FG])
+            @test occursin("filters           : 2 condition(s)", out)
+            @test occursin("FILTER(STR(?numA) < STR(?numB))", out)
+        end
+
+        @testset "a condition that declares no expression is refused" begin
+            # It would compile to no FILTER at all, so the rule would quietly match MORE
+            # than it says. An inner join on gistp:filterText could not tell the difference.
+            e = try load_rule("$(RULES)OrderPrecedenceBroken") catch err; err end
+            @test e isa ErrorException
+            @test occursin("declares no gistp:filterText", sprint(showerror, e))
+        end
+
+        Jayhawk.update!("DROP SILENT GRAPH <$FG>")
+        Jayhawk.update!("DELETE WHERE { ?s <$(Jayhawk.P_FILTER)> ?o } ;
+                         DELETE WHERE { ?s <$(Jayhawk.P_FILTERTEXT)> ?o } ;
+                         DELETE WHERE { ?s a <$(Jayhawk.GISTP_NS)FilterCondition> }")
+        for g in ("$(RULES)OrderPrecedence_L", "$(RULES)OrderPrecedence_R")
+            Jayhawk.update!("DROP SILENT GRAPH <$g>")
+        end
+        engine_cleanup()
+    end
+
     @testset "gistp:inGraph reads per named graph" begin
         # Round 5a: the read side. L and its guard are scoped to a graph variable; R uses
         # that variable as an ordinary term, so "which graph did this come from" becomes a

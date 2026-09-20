@@ -898,9 +898,80 @@ reads as "only create this if it is not already there," which is what makes a mi
 terminate.
 
 Zero or more guards are allowed and all must fail for the rule to fire. A guard is a Basic
-Graph Pattern like any other pattern — no `FILTER`, no `OPTIONAL`, no `UNION`. So *"no
-**other** security refers to this"*, which needs an inequality, is not expressible. *"No
-`mg:Exchange` refers to this"* is, because the distinguishing test is a type assertion.
+Graph Pattern like any other pattern — no `FILTER`, no `OPTIONAL`, no `UNION`. *"No
+`mg:Exchange` refers to this"* is expressible, because the distinguishing test is a type
+assertion. *"No **other** security refers to this"* is not, because it needs an inequality —
+a comparison between bound values, which is what `gistp:hasFilterCondition` below is for.
+
+### Filters: when a rule must compare
+
+A guard says *"no such thing exists"*, and absence is structural — a pattern expresses it.
+Comparison is not. *"These two are different nodes"*, *"this string contains that one"*,
+*"this date falls before that one"* are all tests on values L has already **bound**, and no
+arrangement of triples says any of them.
+
+`gistp:hasFilterCondition` names a condition carrying one SPARQL expression:
+
+```turtle
+:MergeBondDetails gistp:hasFilterCondition :IssuerNameMatches .
+
+:IssuerNameMatches
+    rdf:type gistp:FilterCondition ;
+    skos:prefLabel "issuer name appears in the activity description" ;
+    gistp:filterText "CONTAINS(STR(?_actDesc), STR(?_issuerName))" .
+```
+
+It compiles to exactly what it says:
+
+```sparql
+FILTER(CONTAINS(STR(?_actDesc), STR(?_issuerName)))
+```
+
+**Write the expression, not the clause.** The engine supplies `FILTER` and the parentheses:
+`CONTAINS(?a, ?b)`, never `FILTER(CONTAINS(?a, ?b))`.
+
+Zero or more, and conjunctive — each compiles to its own `FILTER`, so a query log blames one
+expression rather than a chain of `&&`. They are emitted after the `BIND`s, which means a
+filter may test a *minted* variable, and sorted by text, so a condition authored as a blank
+node still compiles to stable bytes.
+
+**Prefer a triple to a filter wherever a triple will do.** A BGP is matched by the store's
+indexes and is reviewable as RDF. A filter is text, is applied after matching, and is the
+one place this engine splices what you wrote into the query it runs. So it is checked before
+it is spliced, and refused if it:
+
+| | why |
+|---|---|
+| contains `{` or `}` | would open a group or close the compiler's own `FILTER`. This bars `EXISTS { … }` deliberately — `gistp:hasNegativeCondition` is the sanctioned way to say "no such thing", and it is a reviewable *pattern* |
+| contains `#` | a comment swallows the closing parenthesis the compiler emits |
+| contains `;` | separates operations in an update request |
+| has unbalanced parentheses | either closes the `FILTER` early or swallows what follows |
+| leaves a string literal open | where the expression ends becomes a guess |
+| uses a prefixed name | the compiler emits no `PREFIX` line and has no prefix registry, so `xsd:integer` would reach the store undeclared and come back as an opaque HTTP 400 |
+| is itself a `FILTER(…)` clause | the engine supplies the keyword, so this compiles to `FILTER(FILTER(…))`, which no store will parse |
+| names a variable nothing binds | see below |
+
+The characters are looked for in a *skeleton* with string literals **and IRI references**
+blanked out, so `CONTAINS(?label, "#1")` is fine — the `#` is data — and so is
+`?t != <http://www.w3.org/2002/07/owl#Thing>`. That second one matters more than it looks:
+since no `PREFIX` is ever emitted, angle brackets are the *only* way a filter can name a
+resource or a datatype, and hash namespaces put a `#` in nearly every one. Blanking `<…>` is
+safe rather than convenient — SPARQL's `IRIREF` is a token whose own character set already
+excludes `<`, `>`, `"`, `{`, `}`, `|`, `^`, `` ` `` and `\`, so nothing the brace check wants
+to see can hide inside one. An angle-bracketed run that breaks that character set is not an
+IRI, is not blanked, and is refused like any other text.
+
+Write full IRIs, then:
+
+```turtle
+gistp:filterText "DATATYPE(?amount) = <http://www.w3.org/2001/XMLSchema#decimal>" .
+```
+
+That last row is the one that costs real time. SPARQL does **not** raise an error on an
+unbound variable inside a `FILTER`: the expression errors, the solution is silently dropped,
+and the rule matches nothing. A single typo turns a rule off with no diagnostic anywhere —
+the same failure `check_bound` exists to prevent on the construct side, and it earns the same
+refusal here.
 
 ### How often a rule runs
 
