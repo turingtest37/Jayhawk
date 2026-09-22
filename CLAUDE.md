@@ -131,6 +131,34 @@ iteration 1, so the log had nothing left to order them by and reported them **in
 order** — stably, which reads as reliable. `MAX`, not `COUNT`: undo retracts a record, and a
 count-based ordinal would hand the next firing a number an existing record still holds.
 
+### History — answerable
+`retractions(; subject, predicate, object)` answers *what was once true*: every triple a
+`Rewrite` removed, joined to the rule that removed it, the transaction time, the actor and
+the graph it left. The facts were always kept — a rewrite writes `L∖I` to a tombstone — but
+finding one meant already knowing a UUID nobody holds. Provenance is now the index, so only
+graphs this engine wrote are searched. Exposed as the `retractions` MCP tool, which states
+the one thing the query cannot distinguish: never-asserted and still-true both come back
+empty.
+
+The record is PROV-O proper. A firing *graph* is a `prov:Entity` (it holds triples and was
+generated at a time); the application is a separate `prov:Activity` with `prov:endedAtTime`,
+`prov:used` for the rule and each source, and `prov:wasAssociatedWith` an agent minted from
+the actor. `prov:used` and `prov:wasAssociatedWith` carry their typing in their ranges, so
+the rule and the agent get no type assertions of their own — better PROV practice, and it
+keeps every triple rooted at the firing, the activity or the tombstone, which is what lets
+`undo_firing!` retract the record completely instead of orphaning an activity that still
+claims a rule ran.
+
+**Not `prov:wasInvalidatedBy`**, which an earlier note here promised. It relates an *entity*
+to the activity that ended it, and what ceased to hold are individual triples, which have no
+IRIs. Asserting it of the tombstone would say the tombstone ceased to exist — the opposite
+of true, since it was just created. Per-triple invalidation needs every retracted triple
+reified; the tombstone graph is that record already.
+
+Retention is deliberately coupled to the firing: undo restores the claim *and* forgets the
+retraction. A retraction outliving the firing that made it would assert a fact is no longer
+held while the fact sits in the graph.
+
 ### Known next tasks
 - **`gistp:inGraph` is read-side only.** Scope on R, with `Rewrite`, with `ToFixpoint`, or
   with an empty `source` is refused rather than half-supported. Write-side scoping is open,
@@ -145,11 +173,6 @@ count-based ordinal would hand the next firing a number an existing record still
   SPARQL cannot express — arithmetic beyond trivia, statistics, optimisation, the Julia
   numerical stack. It is a separate package and nothing here depends on it; connecting them
   is now an explicit dependency decision rather than an accident of packaging.
-- **Retaining history.** A rewrite's tombstone holds exactly `L∖I` — the facts that stopped
-  being true — and `undo_firing!` drops it. The archive exists until someone rewinds and
-  nothing indexes it meanwhile. Retention plus a PROV-O projection (firing = `prov:Activity`,
-  rule = `prov:Plan`, `prov:wasInvalidatedBy` for retracted triples) is cheap, since the
-  record is already `prov:Entity` with `prov:generatedAtTime`.
 - **Trimming the export surface.** ~110 exported names, including compiler internals and
   generic ones (`select`, `interface`, `ask`, `endpoint`) that collide on `using`. A breaking
   change, so it belongs to a deliberate 0.5.0.

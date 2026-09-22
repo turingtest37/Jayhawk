@@ -220,6 +220,43 @@ TOOLS = [
         handler=guarded(a -> tool_undo_firing(str(a, "graph"))),
     ),
     MCP.MCPTool(;
+        name="retractions",
+        description="""
+          What was once true: every fact a Rewrite rule has removed, with the transaction
+          time it stopped being asserted and the rule that removed it. The counterpart to
+          querying the data for what is true now. Filter by subject, predicate or object
+          IRI. Nothing is lost when a rule deletes -- the triples are kept in a tombstone
+          graph and this is the index over them -- so every result is still reversible with
+          undo_firing.""",
+        parameters=[
+            MCP.ToolParameter(;
+                name="subject",
+                type="string",
+                required=false,
+                description="Constrain to this subject IRI.",
+            ),
+            MCP.ToolParameter(;
+                name="predicate",
+                type="string",
+                required=false,
+                description="Constrain to this predicate IRI.",
+            ),
+            MCP.ToolParameter(;
+                name="object",
+                type="string",
+                required=false,
+                description="Constrain to this object IRI.",
+            ),
+        ],
+        handler=guarded(
+            a -> tool_retractions(;
+                subject=str(a, "subject"),
+                predicate=str(a, "predicate"),
+                object=str(a, "object"),
+            ),
+        ),
+    ),
+    MCP.MCPTool(;
         name="list_firings",
         description="""
           The provenance log: every rule application, newest first, with who ran it, when,

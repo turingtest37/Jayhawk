@@ -525,6 +525,67 @@ function tool_undo_firing(graph::AbstractString; ep::SparqlEndpoint=endpoint())
 end
 
 """
+    tool_retractions(; subject = nothing, predicate = nothing, object = nothing,
+                     ep = endpoint()) -> String
+
+What was once true: every fact a rewrite has removed, with when and by which rule.
+
+The counterpart to asking the data what is true now. A `gistp:Rewrite` keeps the triples it
+removes in a tombstone graph, so nothing is really lost -- but until this existed, finding
+them meant already knowing a tombstone's UUID. Provenance is the index.
+"""
+function tool_retractions(;
+    subject::Union{AbstractString,Nothing}=nothing,
+    predicate::Union{AbstractString,Nothing}=nothing,
+    object::Union{AbstractString,Nothing}=nothing,
+    ep::SparqlEndpoint=endpoint(),
+)
+    hs = retractions(; subject=subject, predicate=predicate, object=object, ep=ep)
+    if isempty(hs)
+        pat = join(
+            (
+                "$k <$v>" for (k, v) in
+                (("subject", subject), ("predicate", predicate), ("object", object)) if
+                v !== nothing
+            ),
+            ", ",
+        )
+        return if isempty(pat)
+            "Nothing has been retracted in this store."
+        else
+            "Nothing matching $pat has been retracted. Note this reports only what a " *
+            "gistp:Rewrite removed -- a fact that was never asserted, and a fact that " *
+            "is still true, both look like this."
+        end
+    end
+    io = IOBuffer()
+    println(io, length(hs), " retracted fact(s), newest first:\n")
+    for h in hs
+        println(io, "  ", h.subject, " ", h.predicate, " ", h.object)
+        println(io, "      no longer asserted in <", h.target, ">")
+        println(
+            io,
+            "      retracted by <",
+            h.rule,
+            "> at ",
+            h.at,
+            "  (ordinal ",
+            h.ordinal,
+            ", actor ",
+            h.actor,
+            ")",
+        )
+        println(io, "      kept in <", h.tombstone, ">")
+    end
+    println(
+        io,
+        "\nThese are still reversible: undo_firing on the firing that made each ",
+        "retraction restores it.",
+    )
+    return String(take!(io))
+end
+
+"""
     tool_firings(; rule = nothing, ep = endpoint()) -> String
 
 The provenance log, newest first.
@@ -545,4 +606,4 @@ function tool_firings(;
 end
 
 export tool_list_rules, tool_explain_rule, tool_run_rule, tool_undo_firing, tool_firings
-export tool_list_rule_sets, tool_run_rules
+export tool_list_rule_sets, tool_run_rules, tool_retractions
