@@ -2117,15 +2117,22 @@ end
     var(x) = RDFLiteral(x, Jayhawk.GISTP_VAR)
     XYZ = Jayhawk.XYZ_NS
 
-    @testset "fx_predicate encodes exactly what SPARQL's IRIREF forbids" begin
-        # MEASURED against SPARQL Anything 1.3.0, not read from its docs, which are wrong:
-        # both the upstream reference and the local skill notes claim dc.title[en] becomes
+    @testset "fx_predicate encodes what SPARQL Anything encodes, measured" begin
+        # MEASURED against SPARQL Anything, not read from its docs, which are wrong: both
+        # the upstream reference and the local skill notes claim dc.title[en] becomes
         # dc.title%5Ben%5D. It does not, and a query naming that form matches nothing.
+        #
+        # Re-measured against 1.3.0-SNAPSHOT by pushing one header per interesting character
+        # through the service and reading back the predicates. The hash and parenthesis rows
+        # are the correction: both are LEGAL in an IRIREF and are encoded anyway, so the
+        # old specification -- "exactly what check_iri rejects" -- was a tidy theory that
+        # silently broke every column with a '#' in its name.
         @test fx_predicate("id") == "$(XYZ)id"
         @test fx_predicate("given name") == "$(XYZ)given%20name"       # space IS encoded
         @test fx_predicate("dc.title[en]") == "$(XYZ)dc.title[en]"     # brackets are NOT
         @test fx_predicate("a%b") == "$(XYZ)a%b"                       # nor is percent
-        @test fx_predicate("a#b") == "$(XYZ)a#b"                       # nor hash
+        @test fx_predicate("Trade #") == "$(XYZ)Trade%20%23"           # hash IS, though legal
+        @test fx_predicate("x (y)") == "$(XYZ)x%20%28y%29"             # and so are parens
         for (raw, enc) in (
             "a|b" => "a%7Cb",
             "a{b}" => "a%7Bb%7D",
@@ -2134,13 +2141,18 @@ end
             "a\\b" => "a%5Cb",
             "a<b>c" => "a%3Cb%3Ec",
             "a\"b" => "a%22b",
+            # Left raw, all measured: the encoder is not simply "escape the punctuation".
+            "am&p" => "am&p",
+            "pl+us" => "pl+us",
+            "qu?ry" => "qu?ry",
+            "se;mi" => "se;mi",
         )
             @test fx_predicate(raw) == "$(XYZ)$enc"
         end
-        # The specification is "make it pass check_iri, changing nothing else" -- and the
-        # agreement between the two sets is no coincidence: both come from the same
-        # SPARQL production.
-        for h in ("id", "given name", "dc.title[en]", "a|b", "a{b}", "a^b", "a\"b", "a b c")
+        # Passing check_iri is still NECESSARY -- an IRIREF the store cannot parse is no use
+        # whatever the service emits -- but it is no longer SUFFICIENT, which is the whole of
+        # what the old specification got wrong.
+        for h in ("id", "given name", "dc.title[en]", "a|b", "a{b}", "Trade #", "x (y)")
             @test Jayhawk.check_iri(fx_predicate(h)) == fx_predicate(h)
         end
     end

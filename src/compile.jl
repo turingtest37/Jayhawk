@@ -2674,23 +2674,39 @@ The Facade-X predicate IRI for a source column name.
 sanitized form", so turning that into an IRI is the compiler's job, and getting it wrong
 produces a rule that matches nothing rather than an error.
 
-**The rule was measured against SPARQL Anything 1.3.0, not read from its docs, which are
-wrong on this.** Both the upstream reference and the local skill notes claim `dc.title[en]`
-becomes `dc.title%5Ben%5D`; it does not. That version percent-encodes exactly the characters
-SPARQL's `IRIREF` production forbids -- `<>"{}|^\\` and backtick, plus anything at or below
-U+0020 -- and leaves every other character raw, brackets and `%` and `#` included. Verified
-both directions: a query naming `dc.title%5Ben%5D` matches nothing, and one naming a raw
-space is a syntax error.
+**The rule was measured against SPARQL Anything, not read from its docs, which are wrong on
+this.** Both the upstream reference and the local skill notes claim `dc.title[en]` becomes
+`dc.title%5Ben%5D`; it does not, and a query naming that form matches nothing.
 
-That set is exactly what [`check_iri`](@ref) rejects, and the agreement is not a coincidence
--- both are governed by the same SPARQL production. So the encoder's specification is simply
-"make it pass `check_iri`, changing nothing else".
+The encoded set was re-measured against 1.3.0-SNAPSHOT by putting one header of each
+interesting character through the service and reading back the predicates it produced:
+
+| raw | emitted | | raw | emitted |
+|---|---|---|---|---|
+| `a b` | `a%20b` | | `dc.title[en]` | unchanged |
+| `Trade #` | `Trade%20%23` | | `pc%nt` | unchanged |
+| `x (y)` | `x%20%28y%29` | | `am&p`, `pl+us`, `qu?ry`, `se;mi` | unchanged |
+
+So the encoded set is `<>"{}|^\\` and backtick and everything at or below U+0020 -- the
+characters SPARQL's `IRIREF` production forbids -- **plus `#`, `(` and `)`, which it permits**.
+Brackets, `%`, `&`, `+`, `?` and `;` are left raw.
+
+An earlier version of this function stated its specification as "make it pass
+[`check_iri`](@ref), changing nothing else", on the reasoning that both sets come from the
+same SPARQL production. That was a tidy theory and it was false: `#`, `(` and `)` are legal
+in an `IRIREF` and are encoded anyway. The theory cost real time, because a column the
+encoder and the service disagree about produces a rule that **matches nothing rather than
+erroring** -- so the specification is now the measurement, and the table above is what the
+test asserts. Passing `check_iri` remains necessary and is no longer sufficient.
 """
 function fx_predicate(column::AbstractString)
     io = IOBuffer()
     print(io, XYZ_NS)
     for c in column
-        if c in ('<', '>', '"', '{', '}', '|', '^', '`', '\\') || c <= ' '
+        # '#', '(' and ')' are legal in an IRIREF and encoded anyway -- measured, not
+        # derived. See the table above; dropping them silently breaks any column with a
+        # '#' in its name, which is every trade-identifier column anyone has ever shipped.
+        if c in ('<', '>', '"', '{', '}', '|', '^', '`', '\\', '#', '(', ')') || c <= ' '
             for b in codeunits(string(c))
                 print(io, '%', uppercase(string(b; base=16, pad=2)))
             end

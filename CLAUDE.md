@@ -213,13 +213,23 @@ longer names `xyz:` predicates, and for an extraction rule L is **empty** — th
 all of it.
 
 `mapFromString` carries "the source's own spelling", so `fx_predicate` owes the encoding, and
-**the rule was measured against SPARQL Anything 1.3.0 rather than read from its docs, which
-are wrong**: both upstream and the local skill notes claim `dc.title[en]` becomes
-`dc.title%5Ben%5D`. It does not. That version encodes exactly the characters SPARQL's
-`IRIREF` production forbids — `<>"{}|^\` and backtick, plus ≤U+0020 — and leaves brackets,
-`%` and `#` raw. A query naming the documented form matches nothing. That set is precisely
-what `check_iri` rejects, so the encoder's specification is "make it pass `check_iri`,
-changing nothing else" — the agreement is the same SPARQL production seen twice.
+**the rule was measured against SPARQL Anything rather than read from its docs, which are
+wrong**: both upstream and the local skill notes claim `dc.title[en]` becomes
+`dc.title%5Ben%5D`. It does not, and a query naming the documented form matches nothing.
+
+The encoded set is `<>"{}|^\` and backtick and everything ≤U+0020 — what SPARQL's `IRIREF`
+production forbids — **plus `#`, `(` and `)`, which it permits**. Brackets, `%`, `&`, `+`,
+`?` and `;` are left raw.
+
+That correction is worth keeping, because the first version of this got it wrong in an
+instructive way. The encoder's specification was stated as "make it pass `check_iri`,
+changing nothing else", on the reasoning that both sets come from the same SPARQL production
+— tidy, and false. `#` and the parentheses are legal in an `IRIREF` and are encoded anyway,
+so a column named `Trade #` compiled to a predicate the service never emits, and the rule
+**matched nothing rather than erroring** — the exact failure the whole feature exists to
+prevent, reintroduced one level down. The specification is now the measurement: one header
+per interesting character pushed through the service, predicates read back, asserted in the
+suite. Passing `check_iri` stays necessary and is no longer sufficient.
 
 The pipeline order is the vocabulary's, not a choice: `separator` splits (so must be first),
 `stringBefore` truncates each value, then `valuePatternMatch` / `valuePatternExclude` are
