@@ -349,6 +349,165 @@ function run_rule(spec::RuleSpec; source::AbstractVector = String[],
           fixpoint evaluation into the chase and need not terminate.""")
 end
 
+"""
+    run_rules(set; source = String[], actor = "jayhawk", strategy = nothing,
+              max_iterations = nothing, ep = endpoint()) -> Vector{Firing}
+
+Apply an ordered rule set. `set` may be a `RuleSetSpec`, the IRI of a `gistp:RuleSet`, or a
+bare vector of rule IRIs.
+
+Two levels of iteration, and they are independent. Each rule still honours its **own**
+`gistp:strategy`, so an `Assert` rule closes internally before the next rule is reached. The
+**set's** strategy governs how many times the whole ordered pass is made: `Once` by default,
+`ToFixpoint` to repeat until a complete pass neither adds nor removes anything. A cascade
+where a later rule feeds an earlier one needs the second, and cannot be expressed by rule
+strategies alone.
+
+Given a bare vector, order is `gistp:priority` descending then IRI -- the case that keeps
+`gistp:priority` useful now that `gist:sequence` carries set-relative order. Note the
+directions disagree: priority is higher-first, `gist:sequence` is lower-first.
+
+**Mixed modes are refused.** An additive rule's output is a new named graph that must join
+the working set for later rules to see it, but a `gistp:Rewrite` needs exactly one source
+graph, which is also its target. Those requirements are contradictory the moment an additive
+rule has fired, so a set is either all-`Rewrite` -- mutating one graph in place, the working
+set never growing -- or contains none at all. Refusing is the only honest option: the
+alternative is handing the rewrite the original graph alone and quietly denying it everything
+the set derived.
+
+A rule that contributes nothing yields no `Firing`. `apply_rule` drops such a graph without
+recording provenance, so returning it would hand back a firing that `undo_firing!` must
+refuse -- and a caller undoing a whole run should not have to know which of its members
+happened to be no-ops.
+"""
+function run_rules(
+    set::RuleSetSpec;
+    source::AbstractVector = String[],
+    actor::AbstractString = "jayhawk",
+    strategy::Union{Symbol,Nothing} = nothing,
+    max_iterations::Union{Integer,Nothing} = nothing,
+    ep::SparqlEndpoint = endpoint(),
+)
+    specs = [load_rule(r; ep = ep) for r in set.rules]
+    return _run_rule_sequence(
+        specs,
+        set.iri,
+        something(strategy, set.strategy, :Once),
+        something(max_iterations, set.max_iterations, DEFAULT_MAX_ITERATIONS);
+        source = source,
+        actor = actor,
+        ep = ep,
+    )
+end
+
+run_rules(set_iri::AbstractString; ep::SparqlEndpoint = endpoint(), kw...) =
+    run_rules(load_rule_set(set_iri; ep = ep); ep = ep, kw...)
+
+function run_rules(
+    rule_iris::AbstractVector;
+    source::AbstractVector = String[],
+    actor::AbstractString = "jayhawk",
+    strategy::Union{Symbol,Nothing} = nothing,
+    max_iterations::Union{Integer,Nothing} = nothing,
+    ep::SparqlEndpoint = endpoint(),
+)
+    isempty(rule_iris) && throw(
+        ArgumentError(
+            "run_rules was given no rules. An empty run is a caller bug, not a no-op.",
+        ),
+    )
+    specs = [load_rule(String(r); ep = ep) for r in rule_iris]
+    # Higher priority first; IRI breaks genuine ties so two runs of the same set agree.
+    order = sortperm(collect(zip((-s.priority for s in specs), (s.iri for s in specs))))
+    return _run_rule_sequence(
+        specs[order],
+        "(ad-hoc rule list)",
+        something(strategy, :Once),
+        something(max_iterations, DEFAULT_MAX_ITERATIONS);
+        source = source,
+        actor = actor,
+        ep = ep,
+    )
+end
+
+"The shared driver behind every `run_rules` method. `label` only ever appears in errors."
+function _run_rule_sequence(
+    specs::AbstractVector{RuleSpec},
+    label::AbstractString,
+    set_strategy::Symbol,
+    budget::Integer;
+    source::AbstractVector,
+    actor::AbstractString,
+    ep::SparqlEndpoint = endpoint(),
+)
+    set_strategy in (:Once, :ToFixpoint) || throw(
+        ArgumentError(
+            "rule set $label: unknown strategy :$set_strategy; expected :Once or :ToFixpoint.",
+        ),
+    )
+    budget >= 1 || throw(
+        ArgumentError("rule set $label: max_iterations must be at least 1, got $budget."),
+    )
+
+    modes = unique(mode_symbol(s) for s in specs)
+    rewrites = [s.iri for s in specs if mode_symbol(s) === :Rewrite]
+    destructive = !isempty(rewrites)
+    if destructive && length(modes) > 1
+        throw(
+            ArgumentError(
+                "rule set $label mixes gistp:Rewrite with additive modes. " *
+                "Rewrite rules: $(join(rewrites, ", ")). An additive rule writes its output " *
+                "into a new named graph which must join the working set for later rules to " *
+                "read it, but a Rewrite takes exactly one source graph and that graph is its " *
+                "target -- so after the first additive firing there is no source it can " *
+                "accept. Split the set in two and run them in sequence, so it is visible " *
+                "which graph the rewrite is editing.",
+            ),
+        )
+    end
+
+    set_strategy === :ToFixpoint &&
+        isempty(source) &&
+        throw(
+            ArgumentError(
+                "rule set $label: running a set to a fixpoint needs an explicit `source`. Each " *
+                "pass must see the previous pass's output, and SPARQL's USING cannot name the " *
+                "store's default graph -- so the working set has to be named graphs.",
+            ),
+        )
+
+    firings = Firing[]
+    working = String[String.(source)...]
+
+    for pass = 1:budget
+        changed = false
+        for spec in specs
+            for f in run_rule(spec; source = working, actor = actor, ep = ep)
+                # Nothing contributed: apply_rule already dropped the graph and wrote no
+                # provenance, so this firing is not undoable and must not be handed back.
+                (f.count == 0 && f.removed == 0) && continue
+                push!(firings, f)
+                changed = true
+                # A Rewrite edits the target in place, so the working set is already current
+                # and must stay a single graph. An additive firing has to be added for the
+                # next rule in the pass to see it -- which is what makes a set a cascade
+                # rather than a batch.
+                destructive || push!(working, f.graph)
+            end
+        end
+        set_strategy === :Once && return firings
+        changed || return firings
+    end
+
+    error(
+        """
+        rule set $label: still changing the graph after $budget passes. Either raise the \
+        bound, or find the rule pair that keeps re-deriving -- a set that will not settle \
+        usually has two rules whose outputs feed each other, which is a confluence \
+        question the derived interface I cannot answer.""",
+    )
+end
+
 run_rule(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint(), kw...) =
     run_rule(load_rule(rule_iri; ep = ep); ep = ep, kw...)
 
@@ -518,4 +677,5 @@ function firings(; rule::Union{AbstractString,Nothing} = nothing,
 end
 
 export Firing, apply_rule, apply_rewrite!, check_target_empty, run_rule, effective_strategy, dry_run, dry_run_rewrite, undo_firing!, is_firing, firings, graph_size
+export run_rules
 export PROVENANCE_GRAPH, new_firing_graph, new_tombstone_graph

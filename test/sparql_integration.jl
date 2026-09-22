@@ -174,7 +174,13 @@ function engine_cleanup()
         DELETE WHERE { ?s a <$(Jayhawk.GISTP_NS)TemplateSlot> } ;
         DELETE WHERE { ?s a <$(Jayhawk.C_RULE)> } ;
         DELETE WHERE { ?s a <$(Jayhawk.C_SPARQLVAR)> } ;
-        DELETE WHERE { ?s a <$(Jayhawk.GISTP_NS)SparqlPattern> }""")
+        DELETE WHERE { ?s a <$(Jayhawk.GISTP_NS)SparqlPattern> } ;
+        DELETE WHERE { ?s a <$(Jayhawk.C_RULESET)> } ;
+        DELETE WHERE { ?s a <$(Jayhawk.GIST_NS)OrderedMember> } ;
+        DELETE WHERE { ?s <$(Jayhawk.P_ISMEMBEROF)> ?o } ;
+        DELETE WHERE { ?s <$(Jayhawk.P_ISFIRSTMEMBEROF)> ?o } ;
+        DELETE WHERE { ?s <$(Jayhawk.P_PROVIDESORDERFOR)> ?o } ;
+        DELETE WHERE { ?s <$(Jayhawk.P_SEQUENCE)> ?o }""")
 end
 
 @testset "Function-Graph engine (Fuseki)" begin
@@ -997,6 +1003,147 @@ end
 
         engine_cleanup()
         Jayhawk.update!("DROP SILENT GRAPH <$BKA> ; DROP SILENT GRAPH <$BKB>")
+    @testset "a rule set loads and runs in order" begin
+            SETS = "http://example.org/sets/"
+            Jayhawk.load_file!(fixture("person_to_employee.trig"))
+            Jayhawk.load_file!(fixture("transitive_rule.trig"))
+            Jayhawk.load_file!(fixture("rule_set.trig"))
+            Jayhawk.update!("DROP SILENT GRAPH <$DATA_GRAPH>")
+            Jayhawk.update!("""
+                INSERT DATA { GRAPH <$DATA_GRAPH> {
+                  <urn:s:p1> a <$(GIST)Person> ; <$(GIST)isIdentifiedBy> <urn:s:i1> .
+                  <urn:s:i1> a <$(GIST)ID> ; <$(GIST)containedText> "E-1" .
+                  <urn:s:a> <$(TC)partOf> <urn:s:b> .
+                  <urn:s:b> <$(TC)partOf> <urn:s:c> .
+                  <urn:s:c> <$(TC)partOf> <urn:s:d> .
+                } }""")
+
+            @testset "order comes from gist:sequence, not document order" begin
+                # The fixture declares sequence 2 before sequence 1 on purpose: a fixture listed
+                # in order cannot tell whether the loader read the order or just got lucky.
+                set = load_rule_set("$(SETS)HrThenParts")
+                @test set.label == "People, then parts"
+                @test set.strategy === :Once
+                @test set.rules ==
+                      ["$(RULES)PersonToEmployee", "$(TC)rules/PartOfTransitive"] ||
+                      set.rules == [
+                    "$(RULES)PersonToEmployee",
+                    "http://example.org/tcrules/PartOfTransitive",
+                ]
+            end
+
+            @testset "each rule keeps its own strategy inside the set" begin
+                # PersonToEmployee is Construct and fires once. PartOfTransitive is Assert, so
+                # it closes to a fixpoint *within* the set's single pass -- three partOf links
+                # give three more by transitivity, over two productive rounds. If the set had
+                # flattened its members to one application each, this would be 1 + 1 = 2 firings.
+                fs = run_rules(
+                    "$(SETS)HrThenParts";
+                    source = [DATA_GRAPH],
+                    actor = "integration",
+                )
+                @test length(fs) > 2
+                @test fs[1].rule == "$(RULES)PersonToEmployee"
+                @test fs[1].mode === :Construct
+                @test all(f -> f.mode === :Assert, fs[2:end])
+                # every returned firing is undoable: none is a no-op with no provenance record
+                @test all(f -> is_firing(f.graph), fs)
+                for f in reverse(fs)
+                    undo_firing!(f.graph)
+                end
+            end
+
+            @testset "an ad-hoc list is ordered by priority, not by argument order" begin
+                # What gistp:priority is still for, now that gist:sequence carries set-relative
+                # order. AssignReview declares priority 100; PersonToEmployee declares none, so
+                # 0. Passing them lowest-first must still run the higher priority first.
+                Jayhawk.load_file!(fixture("nac_rule.trig"))
+                Jayhawk.update!(
+                    """
+        INSERT DATA { GRAPH <$DATA_GRAPH> {
+          <urn:s:o1> a <http://example.org/ops/Order> ;
+            <http://example.org/ops/status> <http://example.org/ops/Submitted> ;
+            <http://example.org/ops/orderNumber> "SO-9" .
+        } }""",
+                )
+                fs = run_rules(
+                    ["$(RULES)PersonToEmployee", "$(RULES)AssignReview"];
+                    source = [DATA_GRAPH],
+                    actor = "integration",
+                )
+                @test fs[1].rule == "$(RULES)AssignReview"     # priority 100 beats 0
+                for f in reverse(fs)
+                    undo_firing!(f.graph)
+                end
+            end
+
+            @testset "every way of writing a broken set is refused" begin
+                # Each of these would otherwise run a set that is not the one the author wrote,
+                # and a cascade that silently drops a rule returns a plausible answer.
+                for (name, fragment) in (
+                    ("NoMembers", "has no members"),
+                    ("MissingSequence", "has no gist:sequence"),
+                    ("MissingTarget", "has no gist:providesOrderFor"),
+                    ("OrdersANonRule", "is not typed gistp:Rule"),
+                    ("FirstDisagrees", "states its order twice"),
+                    ("Duplicated", "more than one position"),
+                )
+                    e = try
+                        load_rule_set("$(SETS)$name")
+                    catch err
+                        err
+                    end
+                    @test e isa ErrorException
+                    @test occursin(fragment, sprint(showerror, e))
+                end
+                # and a set that was never declared at all
+                e = try
+                    load_rule_set("$(SETS)NoSuchSet")
+                catch err
+                    err
+                end
+                @test occursin("no rule set found", sprint(showerror, e))
+            end
+
+            @testset "the MCP surface reports the order before it runs" begin
+                # A set's whole content is its order, so a reviewer who cannot see the resolved
+                # order has not reviewed anything. That is why it is printed rather than logged.
+                out = tool_run_rules(
+                    "$(SETS)HrThenParts";
+                    source = [DATA_GRAPH],
+                    actor = "mcp-test",
+                )
+                @test occursin("order resolved from gist:sequence", out)
+                @test findfirst("PersonToEmployee", out).start <
+                      findfirst("PartOfTransitive", out).start
+                @test occursin("[Construct]", out)
+                @test occursin("[Assert]", out)
+                @test occursin("Undo in reverse order", out)
+                for f in reverse(firings(; rule = nothing))
+                    is_firing(f.graph) && undo_firing!(f.graph)
+                end
+
+                # A broken set is answered as text, not raised: an agent can act on the reason.
+                bad = tool_run_rules("$(SETS)MissingSequence")
+                @test occursin("not a runnable rule set", bad)
+                @test occursin("has no gist:sequence", bad)
+
+                cat = tool_list_rule_sets()
+                @test occursin("People, then parts", cat)
+                @test occursin("cannot be run", cat)        # the empty set is flagged, not hidden
+            end
+
+            @testset "list_rule_sets catalogues them with their sizes" begin
+                cat = Dict(c.iri => c for c in list_rule_sets())
+                @test cat["$(SETS)HrThenParts"].members == 2
+                @test cat["$(SETS)HrThenParts"].label == "People, then parts"
+                @test cat["$(SETS)NoMembers"].members == 0   # listed, though it cannot be run
+            end
+
+            Jayhawk.update!("DROP SILENT GRAPH <$DATA_GRAPH>")
+            engine_cleanup()
+        end
+
         Jayhawk.load_file!(fixture("scoped_rule.trig"))
         spec = load_rule("$(BKR)PerBook")
 

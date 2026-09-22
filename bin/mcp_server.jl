@@ -99,6 +99,44 @@ TOOLS = [
                                              confirm = get(a, "confirm", false) === true))),
 
     MCP.MCPTool(
+        name = "list_rule_sets",
+        description = """
+            List every ordered rule set in the store, with its label and how many rules it
+            orders. A rule set is a gist:OrderedCollection: it names rules AND the sequence
+            they are applied in, which a bare list of rules cannot. Use this to find a
+            cascade rather than assembling one by hand.""",
+        parameters = MCP.ToolParameter[],
+        handler = guarded(_ -> tool_list_rule_sets())),
+
+    MCP.MCPTool(
+        name = "run_rules",
+        description = """
+            Apply an ordered rule set. Each rule keeps its own strategy, so an Assert member
+            still runs to a fixpoint before the next rule is reached; the set's own strategy
+            decides how many times the whole ordered pass is made. The resolved order is
+            reported before the run, because a set's content IS its order. Every rule's
+            output is a separate firing, each undoable on its own -- undo in reverse order,
+            since a later rule may have read what an earlier one derived. A set containing
+            any Rewrite rule refuses without confirm = true.""",
+        parameters = [
+            MCP.ToolParameter(name = "set", type = "string", required = true,
+                description = "IRI of the rule set, as returned by list_rule_sets."),
+            MCP.ToolParameter(name = "source", type = "array", required = false,
+                description = "Named graph IRIs to apply the set to. Required if the set runs to a fixpoint, since each pass must see the last one's output."),
+            MCP.ToolParameter(name = "actor", type = "string", required = false,
+                description = "Who to record as responsible, in the provenance graph."),
+            MCP.ToolParameter(name = "max_iterations", type = "integer", required = false,
+                description = "Hard stop on the number of whole-set passes (default 100)."),
+            MCP.ToolParameter(name = "confirm", type = "boolean", required = false,
+                description = "Required if any member is a Rewrite. Review each with explain_rule first -- a set hides a destructive rule among others."),
+        ],
+        handler = guarded(a -> tool_run_rules(str(a, "set");
+                                              source = graphs(a),
+                                              actor = str(a, "actor", "mcp"),
+                                              max_iterations = get(a, "max_iterations", 100),
+                                              confirm = get(a, "confirm", false) === true))),
+
+    MCP.MCPTool(
         name = "undo_firing",
         description = """
             Reverse one rule application: drop its graph and retract its provenance record.
@@ -123,7 +161,7 @@ TOOLS = [
 
 server = MCP.mcp_server(
     name = "jayhawk-function-graph",
-    version = "0.2.1",
+    version = "0.3.0",
     tools = TOOLS,
     description = """
         Graph-rewrite rules over an RDF triplestore. Rules are themselves RDF -- a match

@@ -1296,6 +1296,110 @@ end
     end
 end
 
+@testset "rule sets (pure)" begin
+    # run_rules validates its set before it touches the store, so everything that can be
+    # refused can be refused with no server running. Specs are built by hand; reading a set
+    # out of a store is exercised in test/sparql_integration.jl.
+    R = "http://example.org/rules/"
+    TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+    iri(x) = IRIRef(x)
+
+    trivial(name, mode; priority = 0) = RuleSpec(
+        "$(R)$name",
+        mode,
+        "$(R)$(name)_L",
+        "$(R)$(name)_R",
+        [PatternTriple(iri("$(R)_X"), iri(TYPE), iri("http://example.org/A"))],
+        [PatternTriple(iri("$(R)_X"), iri(TYPE), iri("http://example.org/B"))],
+        Dict("$(R)_X" => "?_X"),
+        Dict{String,MintSpec}(),
+        Dict{String,Vector{RDFTerm}}(),
+        NacSpec[],
+        nothing,
+        priority,
+        nothing,
+        nothing,
+        nothing,
+        Dict{String,Vector{Pair{String,String}}}(),
+        String[],
+    )
+
+    seq(specs, label, strat, budget; source = ["urn:g"]) = Jayhawk._run_rule_sequence(
+        specs,
+        label,
+        strat,
+        budget;
+        source = source,
+        actor = "test",
+    )
+
+    @testset "RuleSetSpec holds the order it was given" begin
+        set = RuleSetSpec("$(R)Set", "A set", ["$(R)First", "$(R)Second"], :Once, nothing)
+        @test set.rules == ["$(R)First", "$(R)Second"]
+        @test set.strategy === :Once
+        @test set.max_iterations === nothing
+    end
+
+    @testset "an empty ad-hoc run is refused" begin
+        # Not a no-op: a caller that computed an empty list of rules has a bug, and running
+        # nothing successfully would hide it.
+        @test_throws ArgumentError run_rules(String[])
+    end
+
+    @testset "mixing Rewrite with additive modes is refused" begin
+        # The requirements are contradictory, not merely awkward: an additive rule's output
+        # is a new named graph that must join the working set, and a Rewrite takes exactly
+        # one source graph which is its target. After the first additive firing there is no
+        # source the rewrite can accept.
+        mixed =
+            [trivial("Add", Jayhawk.MODE_CONSTRUCT), trivial("Del", Jayhawk.MODE_REWRITE)]
+        e = try
+            seq(mixed, "<mixed>", :Once, 1)
+        catch err
+            err
+        end
+        @test e isa ArgumentError
+        msg = sprint(showerror, e)
+        @test occursin("mixes gistp:Rewrite with additive modes", msg)
+        @test occursin("$(R)Del", msg)        # names the offender, not just the problem
+        @test !occursin("$(R)Add", msg[1:findfirst("Rewrite rules:", msg).stop])
+    end
+
+    @testset "an all-Rewrite set is allowed through validation" begin
+        # Every rule mutating one graph in place is coherent: the working set never grows,
+        # so the single-source requirement holds for the whole pass. It fails later for
+        # want of a server, which is the proof that validation let it past.
+        allrw = [trivial("D1", Jayhawk.MODE_REWRITE), trivial("D2", Jayhawk.MODE_REWRITE)]
+        e = try
+            seq(allrw, "<rw>", :Once, 1)
+        catch err
+            err
+        end
+        @test !(
+            e isa ArgumentError && occursin("mixes gistp:Rewrite", sprint(showerror, e))
+        )
+    end
+
+    @testset "a set fixpoint needs an explicit source" begin
+        # Same reason a rule fixpoint does: each pass must see the last one's output, and
+        # SPARQL's USING cannot name the store's default graph.
+        one = [trivial("Add", Jayhawk.MODE_CONSTRUCT)]
+        e = try
+            seq(one, "<fp>", :ToFixpoint, 5; source = String[])
+        catch err
+            err
+        end
+        @test e isa ArgumentError
+        @test occursin("needs an explicit `source`", sprint(showerror, e))
+    end
+
+    @testset "strategy and budget are checked before anything runs" begin
+        one = [trivial("Add", Jayhawk.MODE_CONSTRUCT)]
+        @test_throws ArgumentError seq(one, "<bad>", :Sideways, 1)
+        @test_throws ArgumentError seq(one, "<bad>", :Once, 0)
+    end
+end
+
 # Everything above is hermetic: no network, no server, ~6 seconds. Keep it that way.
 #
 # The SPARQL integration tests need a live Apache Jena Fuseki and are therefore opt-in.

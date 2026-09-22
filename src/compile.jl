@@ -2001,6 +2001,179 @@ function rule_catalogue(; ep::SparqlEndpoint = endpoint())
       guards = parse(Int, (r["guards"]::RDFLiteral).lexical)) for r in rows]
 end
 
+#################################################################
+#    Rule sets
+#################################################################
+#
+# A rule set is a gist:OrderedCollection, not an rdf:List. The reason is that SPARQL cannot
+# recover a position from a list: a property path walks the spine and yields membership as a
+# SET -- which is exactly right for gistp:oneOf, where authored order has no semantics, and
+# exactly wrong here. gist:sequence is a literal on the membership node, so the whole order
+# arrives from one ORDER BY rather than one round trip per member.
+#
+# The membership is reified, which also means the position belongs to the MEMBERSHIP rather
+# than to the rule: one rule can sit at different places in different sets. gistp:priority
+# cannot express that, being a property of a rule in isolation -- so it survives as the
+# ordering of last resort rather than as the mechanism.
+
+const GIST_NS = "https://w3id.org/semanticarts/ns/ontology/gist/"
+
+const C_RULESET = GISTP_NS * "RuleSet"
+const P_ISMEMBEROF = GIST_NS * "isMemberOf"
+const P_ISFIRSTMEMBEROF = GIST_NS * "isFirstMemberOf"
+const P_PROVIDESORDERFOR = GIST_NS * "providesOrderFor"
+const P_SEQUENCE = GIST_NS * "sequence"
+
+"""
+Everything the driver needs about one rule set, already fetched.
+
+`rules` holds rule IRIs rather than loaded `RuleSpec`s, in the order they are to be applied.
+Resolving a rule costs about a dozen round trips, and a caller that wants only to inspect a
+set's membership should not pay for all of them.
+
+`strategy` and `max_iterations` are the **set's own**, independent of its members'. Each rule
+still iterates according to its own declaration; these govern how many times the whole
+ordered pass is made.
+"""
+struct RuleSetSpec
+    iri::String
+    label::String
+    rules::Vector{String}
+    strategy::Union{Symbol,Nothing}     # :Once, :ToFixpoint, or unstated
+    max_iterations::Union{Int,Nothing}
+end
+
+"""
+    load_rule_set(set_iri; ep = endpoint()) -> RuleSetSpec
+
+Read one `gistp:RuleSet` out of the store, resolving its membership into an execution order.
+
+Order is `gist:sequence` ascending, then `gistp:priority` descending, then IRI. The second
+key is not decoration: equal sequence numbers are legal and mean "rank unspecified between
+these", and falling back on priority is the only interpretation that uses what the author
+actually said. The third is there so that a set with genuine ties still compiles to the same
+order twice running -- an engine whose output depends on the store's row order is not
+reproducible, whatever the rules say.
+
+Every membership is fetched with `OPTIONAL` and then checked, rather than joined on. A join
+would drop a member missing its `gist:sequence` or its `gist:providesOrderFor` and silently
+run a *shorter* set -- the same failure `load_filters` guards against, and worse here,
+because a missing rule in a cascade produces a plausible answer rather than an error.
+"""
+function load_rule_set(set_iri::AbstractString; ep::SparqlEndpoint = endpoint())
+    s = check_iri(set_iri)
+
+    typed = select("SELECT ?t WHERE { <$s> a <$C_RULESET> BIND(1 AS ?t) }"; ep = ep)
+    isempty(typed) && error(
+        "no rule set found at <$s>: it must be typed gistp:RuleSet in the default graph.",
+    )
+
+    labels = select("SELECT ?label WHERE { <$s> <$SKOS_LABEL> ?label }"; ep = ep)
+    label =
+        isempty(labels) ? "" :
+        (labels[1]["label"] isa RDFLiteral ? (labels[1]["label"]::RDFLiteral).lexical : "")
+
+    rows = select(
+        """
+SELECT ?m ?rule ?seq WHERE {
+  ?m <$P_ISMEMBEROF> <$s> .
+  OPTIONAL { ?m <$P_PROVIDESORDERFOR> ?rule }
+  OPTIONAL { ?m <$P_SEQUENCE>         ?seq }
+}""";
+        ep = ep,
+    )
+
+    isempty(rows) && error(
+        "rule set <$s> has no members. An empty set applies nothing, which is a typo " *
+        "rather than an intent -- a set exists to say what runs and in what order.",
+    )
+
+    entries = Tuple{Int,Int,String}[]     # (sequence, -priority, rule IRI)
+    for r in rows
+        # A membership may be a blank node -- that is gist's own idiom -- and it is only
+        # ever named back in an error, so render it instead of demanding an IRI. The RULE it
+        # orders must still be an IRI: a rule without identity cannot be loaded or undone.
+        member = sparql_text(r["m"])
+        haskey(r, "rule") || error(
+            "rule set <$s>: member $member has no gist:providesOrderFor, so it holds a " *
+            "position for nothing. Point it at a gistp:Rule or remove it.",
+        )
+        haskey(r, "seq") || error(
+            "rule set <$s>: member $member has no gist:sequence, so its position in the " *
+            "set is unstated and the set cannot be ordered. gist:precedesDirectly is not " *
+            "read here -- give the member an integer.",
+        )
+        rule = _iri(r["rule"])
+        istyped = select("SELECT ?t WHERE { <$rule> a <$C_RULE> BIND(1 AS ?t) }"; ep = ep)
+        isempty(istyped) && error(
+            "rule set <$s>: member $member orders <$rule>, which is not typed " *
+            "gistp:Rule. A set orders rules; ordering anything else would compile to " *
+            "nothing and run silently.",
+        )
+        push!(
+            entries,
+            (
+                parse(Int, (r["seq"]::RDFLiteral).lexical),
+                -load_priority(rule; ep = ep),
+                rule,
+            ),
+        )
+    end
+
+    sort!(entries)
+    rules = [e[3] for e in entries]
+
+    length(unique(rules)) == length(rules) || error(
+        "rule set <$s> orders the same rule at more than one position: " *
+        "$(join(sort(unique([r for r in rules if count(==(r), rules) > 1])), ", ")). " *
+        "A rule applied twice in one pass is either a typo or a fixpoint written by hand -- " *
+        "declare gistp:strategy gistp:ToFixpoint on the rule instead.",
+    )
+
+    # gist lets a collection name its first member outright. If that disagrees with the
+    # sequence numbers the set states its own order two ways and they contradict, which is
+    # worth failing on: whichever one the engine honoured, the other would be a lie.
+    firsts = select(
+        "SELECT ?m ?rule WHERE { ?m <$P_ISFIRSTMEMBEROF> <$s> ; <$P_PROVIDESORDERFOR> ?rule }";
+        ep = ep,
+    )
+    for f in firsts
+        declared = _iri(f["rule"])
+        declared == rules[1] || error(
+            "rule set <$s>: $(sparql_text(f["m"])) is gist:isFirstMemberOf the set and orders " *
+            "<$declared>, but the lowest gist:sequence belongs to <$(rules[1])>. The set " *
+            "states its order twice and the two disagree.",
+        )
+    end
+
+    RuleSetSpec(s, label, rules, load_strategy(s; ep = ep), load_max_iterations(s; ep = ep))
+end
+
+"""
+    list_rule_sets(; ep = endpoint()) -> Vector{NamedTuple}
+
+Every `gistp:RuleSet` in the store, with its label and membership count, for a catalogue.
+"""
+function list_rule_sets(; ep::SparqlEndpoint = endpoint())
+    rows = select(
+        """
+SELECT ?s ?label (COUNT(DISTINCT ?m) AS ?members) WHERE {
+  ?s a <$C_RULESET> .
+  OPTIONAL { ?s <$SKOS_LABEL> ?label }
+  OPTIONAL { ?m <$P_ISMEMBEROF> ?s }
+} GROUP BY ?s ?label ORDER BY ?s""";
+        ep = ep,
+    )
+    lex(r, k) = haskey(r, k) && r[k] isa RDFLiteral ? (r[k]::RDFLiteral).lexical : ""
+    return [
+        (
+            iri = _iri(r["s"]),
+            label = lex(r, "label"),
+            members = parse(Int, (r["members"]::RDFLiteral).lexical),
+        ) for r in rows
+    ]
+end
+
 export PatternTriple, RuleSpec, MintSpec, load_rule, load_pattern, load_variables, load_mints
 export rule_catalogue
 export compile_rule, compile_from_store, insert_query, rewrite_query, project_query
@@ -2011,6 +2184,7 @@ export NacSpec, nacs_text, where_body, strategy_symbol, check_no_blanks, check_p
 export load_filters, filters_text, check_filters
 export load_enums, values_text, enum_vars, check_enums
 export load_nac_graphs, load_strategy, load_priority, load_max_iterations
+export RuleSetSpec, load_rule_set, list_rule_sets, C_RULESET, GIST_NS
 export STRATEGY_ONCE, STRATEGY_TOFIXPOINT
 export parse_template, template_slots, bind_text, minted_vars
 export ambiguous_separators, collision_queries, check_collisions, mint_fanin

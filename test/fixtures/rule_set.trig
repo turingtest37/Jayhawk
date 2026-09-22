@@ -1,0 +1,151 @@
+#  Rule sets: one that works, and one of every way to get it wrong.
+#
+#  A set is a gist:OrderedCollection. Membership is reified -- a gist:OrderedMember carries
+#  gist:isMemberOf back to the set, gist:providesOrderFor out to the rule, and gist:sequence
+#  as its position -- which is what lets one rule sit at different places in different sets,
+#  and what lets SPARQL read the whole order with one ORDER BY.
+#
+#  The rules themselves come from person_to_employee.trig and transitive_rule.trig. A set
+#  holds positions, not rules, so it can order rules from anywhere; ordering two rules that
+#  share no vocabulary is not a contrivance, it is the normal case for a batch.
+#
+#  Everything here lives in the default graph: a set is a statement ABOUT rules, like a
+#  rule's mode or strategy, not a pattern with an extent of its own.
+
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix hr:    <http://example.org/rules/> .
+@prefix tc:    <http://example.org/tcrules/> .
+@prefix :      <http://example.org/sets/> .
+
+#################################################################
+#    A set that works
+#################################################################
+
+:HrThenParts
+    rdf:type gistp:RuleSet ;
+    skos:prefLabel "People, then parts" ;
+    skos:definition "A Construct rule and an Assert rule, in that order." ;
+    gistp:strategy gistp:Once .
+
+# Sequence 2 is declared FIRST in the file, deliberately. Order comes from gist:sequence,
+# never from document order, and a fixture that lists them in order cannot tell the
+# difference.
+:HrThenParts_2
+    rdf:type gist:OrderedMember ;
+    gist:isMemberOf       :HrThenParts ;
+    gist:providesOrderFor tc:PartOfTransitive ;
+    gist:sequence         2 .
+
+:HrThenParts_1
+    rdf:type gist:OrderedMember ;
+    gist:isMemberOf       :HrThenParts ;
+    gist:isFirstMemberOf  :HrThenParts ;
+    gist:providesOrderFor hr:PersonToEmployee ;
+    gist:sequence         1 .
+
+#################################################################
+#    A set with no members
+#################################################################
+#
+#  Applies nothing. That is a typo rather than an intent -- a set exists to say what runs.
+
+:NoMembers
+    rdf:type gistp:RuleSet ;
+    skos:prefLabel "A set someone never finished" .
+
+#################################################################
+#    A member with no gist:sequence
+#################################################################
+#
+#  Its position is unstated, so the set cannot be ordered. Fetched with OPTIONAL and then
+#  checked: an inner join would drop this member and silently run a SHORTER set, which in a
+#  cascade produces a plausible answer rather than an error.
+
+:MissingSequence
+    rdf:type gistp:RuleSet ;
+    skos:prefLabel "A set with an unplaced member" .
+
+:MissingSequence_1
+    rdf:type gist:OrderedMember ;
+    gist:isMemberOf       :MissingSequence ;
+    gist:providesOrderFor hr:PersonToEmployee .
+
+#################################################################
+#    A member that orders nothing
+#################################################################
+
+:MissingTarget
+    rdf:type gistp:RuleSet ;
+    skos:prefLabel "A set holding a position for nothing" .
+
+:MissingTarget_1
+    rdf:type gist:OrderedMember ;
+    gist:isMemberOf :MissingTarget ;
+    gist:sequence   1 .
+
+#################################################################
+#    A member ordering something that is not a rule
+#################################################################
+#
+#  Would compile to nothing and run silently, which is the worst available outcome.
+
+:OrdersANonRule
+    rdf:type gistp:RuleSet ;
+    skos:prefLabel "A set ordering a pattern by mistake" .
+
+:OrdersANonRule_1
+    rdf:type gist:OrderedMember ;
+    gist:isMemberOf       :OrdersANonRule ;
+    gist:providesOrderFor hr:PersonToEmployee_L ;   # a SparqlPattern, not a Rule
+    gist:sequence         1 .
+
+#################################################################
+#    gist:isFirstMemberOf contradicting gist:sequence
+#################################################################
+#
+#  The set states its order twice and the two disagree. Whichever the engine honoured, the
+#  other would be a lie, so neither is safe to pick.
+
+:FirstDisagrees
+    rdf:type gistp:RuleSet ;
+    skos:prefLabel "A set that contradicts itself about its first member" .
+
+:FirstDisagrees_1
+    rdf:type gist:OrderedMember ;
+    gist:isMemberOf       :FirstDisagrees ;
+    gist:providesOrderFor hr:PersonToEmployee ;
+    gist:sequence         1 .
+
+:FirstDisagrees_2
+    rdf:type gist:OrderedMember ;
+    gist:isMemberOf       :FirstDisagrees ;
+    gist:isFirstMemberOf  :FirstDisagrees ;        # but sequence 1 is the other one
+    gist:providesOrderFor tc:PartOfTransitive ;
+    gist:sequence         2 .
+
+#################################################################
+#    The same rule at two positions
+#################################################################
+#
+#  Either a typo or a fixpoint written by hand; the rule's own gistp:strategy is the place
+#  to say "again". This is also the symptom of a set file loaded twice when its memberships
+#  are blank nodes, which is the argument for giving each membership an IRI.
+
+:Duplicated
+    rdf:type gistp:RuleSet ;
+    skos:prefLabel "A set that runs one rule twice" .
+
+:Duplicated_1
+    rdf:type gist:OrderedMember ;
+    gist:isMemberOf       :Duplicated ;
+    gist:providesOrderFor hr:PersonToEmployee ;
+    gist:sequence         1 .
+
+:Duplicated_2
+    rdf:type gist:OrderedMember ;
+    gist:isMemberOf       :Duplicated ;
+    gist:providesOrderFor hr:PersonToEmployee ;
+    gist:sequence         2 .

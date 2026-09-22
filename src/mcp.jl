@@ -221,6 +221,148 @@ function tool_run_rule(rule::AbstractString; source::AbstractVector = String[],
 end
 
 """
+    tool_list_rule_sets(; ep = endpoint()) -> String
+
+The catalogue of rule sets: every `gistp:RuleSet`, its label, and how many rules it orders.
+"""
+function tool_list_rule_sets(; ep::SparqlEndpoint = endpoint())
+    cat = list_rule_sets(; ep = ep)
+    isempty(cat) && return "No rule sets are loaded in this store."
+    io = IOBuffer()
+    println(io, "$(length(cat)) rule set(s):\n")
+    for c in cat
+        println(io, "- <", c.iri, ">   ", c.members, " rule(s)")
+        isempty(c.label) || println(io, "    label: ", c.label)
+        c.members == 0 && println(
+            io,
+            "    NOTE: this set has no members and cannot be run -- an unfinished set.",
+        )
+    end
+    String(take!(io))
+end
+
+"""
+    tool_run_rules(set; source = String[], actor = "mcp", strategy = nothing,
+                   max_iterations = nothing, confirm = false, ep = endpoint()) -> String
+
+Apply an ordered rule set, reporting the order it resolved and what each rule contributed.
+
+The order is printed **before** the run, because a set's whole content is its order and a
+reviewer who cannot see what was about to happen has not reviewed anything. An unrunnable
+set is diagnosed here as text rather than raised: a model can act on "member 2 has no
+gist:sequence".
+
+`confirm` is required if any member is a `gistp:Rewrite`, on the same grounds as
+[`tool_run_rule`](@ref) -- with the additional one that a set hides the destructive member
+among others, so the prompt matters more, not less.
+"""
+function tool_run_rules(
+    set::AbstractString;
+    source::AbstractVector = String[],
+    actor::AbstractString = "mcp",
+    strategy::Union{Symbol,Nothing} = nothing,
+    max_iterations::Union{Integer,Nothing} = nothing,
+    confirm::Bool = false,
+    ep::SparqlEndpoint = endpoint(),
+)
+    spec = try
+        load_rule_set(set; ep = ep)
+    catch e
+        return "Refused: <$set> is not a runnable rule set.\n\n$(sprint(showerror, e))"
+    end
+
+    specs = [load_rule(r; ep = ep) for r in spec.rules]
+    rewrites = [s.iri for s in specs if mode_symbol(s) === :Rewrite]
+    listing = join(
+        ("  $i. <$(specs[i].iri)>   [$(mode_symbol(specs[i]))]" for i in eachindex(specs)),
+        "\n",
+    )
+
+    if !isempty(rewrites) && length(unique(mode_symbol(s) for s in specs)) > 1
+        return """
+               Refused: rule set <$set> mixes gistp:Rewrite with additive modes.
+
+               $listing
+
+               An additive rule writes into a new named graph that later rules must read, \
+               but a Rewrite takes exactly one source graph and that graph is its target -- \
+               so after the first additive firing there is no source it can accept. Split \
+               the set so it is visible which graph the rewrite edits.
+               """
+    end
+    if !isempty(rewrites) && !confirm
+        return """
+               Refused: rule set <$set> contains $(length(rewrites)) gistp:Rewrite rule(s), \
+               which DELETE from live data.
+
+               $listing
+
+               Run explain_rule on each before confirming -- a set hides a destructive rule \
+               among others, so read them individually. Then call run_rules again with \
+               confirm = true. Every removal stays reversible with undo_firing.
+               """
+    end
+
+    fs = run_rules(
+        spec;
+        source = source,
+        actor = actor,
+        strategy = strategy,
+        max_iterations = max_iterations,
+        ep = ep,
+    )
+    io = IOBuffer()
+    println(io, "Rule set <", set, ">", isempty(spec.label) ? "" : "  -- $(spec.label)")
+    println(
+        io,
+        "strategy: ",
+        something(strategy, spec.strategy, :Once),
+        "   order resolved from gist:sequence:\n",
+    )
+    println(io, listing, "\n")
+
+    if isempty(fs)
+        println(io, "Applied and changed nothing. No graph was created.")
+        return String(take!(io))
+    end
+    total = sum(f.count for f in fs)
+    removed = sum(f.removed for f in fs)
+    println(
+        io,
+        "Added ",
+        total,
+        " triple(s)",
+        removed > 0 ? " and removed $removed" : "",
+        " across ",
+        length(fs),
+        " firing(s):\n",
+    )
+    for f in fs
+        println(
+            io,
+            "  <",
+            f.rule,
+            ">  pass/iteration ",
+            f.iteration,
+            ": +",
+            f.count,
+            f.removed > 0 ? " / -$(f.removed)" : "",
+            " -> <",
+            f.graph,
+            ">",
+        )
+        isempty(f.tombstone) ||
+            println(io, "      removed triples kept in <", f.tombstone, ">")
+    end
+    println(
+        io,
+        "\nUndo any of these with undo_firing on its graph IRI. Undo in reverse ",
+        "order: a later rule may have read what an earlier one derived.",
+    )
+    String(take!(io))
+end
+
+"""
     tool_undo_firing(graph; ep = endpoint()) -> String
 
 Reverse one firing: drop its graph and retract its provenance record.
@@ -273,3 +415,4 @@ function tool_firings(; rule::Union{AbstractString,Nothing} = nothing,
 end
 
 export tool_list_rules, tool_explain_rule, tool_run_rule, tool_undo_firing, tool_firings
+export tool_list_rule_sets, tool_run_rules

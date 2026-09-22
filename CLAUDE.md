@@ -68,8 +68,8 @@ tested and documented**. Every term the vocabulary declares is supported except
 Implemented: the three modes; both variable mechanisms (declared `SparqlVariable` individuals
 and `"?x"^^gistp:var` literals); `iriTemplate` minting with RFC 6570 Level 1 slots;
 `hasNegativeCondition` guards; `hasFilterCondition` comparisons; `strategy` / `maxIterations`;
-`oneOf` → `VALUES`; `inGraph` scoping; firing graphs, provenance and exact undo; five MCP
-tools.
+`oneOf` → `VALUES`; `inGraph` scoping; firing graphs, provenance and exact undo; ordered rule
+sets; seven MCP tools.
 
 `hasFilterCondition` is the one term whose value is spliced into the emitted query, so it is
 the one term with an argued threat model rather than an assumed one: `check_filters` bars
@@ -96,11 +96,33 @@ The split between judgement and mechanism still holds, and is worth preserving:
 - **Deterministic code** for the mechanical step. No ambiguity, so it is real code — the
   difference between "usually compiles" and "provably compiles."
 
+### Rule sets — built
+`run_rules` applies an ordered set. A set is `gistp:RuleSet ⊑ gist:OrderedCollection`, with
+membership reified as `gist:OrderedMember` carrying `gist:providesOrderFor` and
+`gist:sequence`. **Not an `rdf:List`**, and the reason is decisive: SPARQL cannot recover a
+position from a list — a property path yields membership as a *set*, which is right for
+`gistp:oneOf` and wrong here — so order would need one round trip per member. A literal on
+the membership node is one `ORDER BY`. Reifying it also puts the position on the
+*membership* rather than the rule, so one rule can sit at different places in different
+sets, and the set itself is a resource that can carry a label, a definition and its own
+validity period. That last is the point: a revised guideline is a revised rule *set*.
+
+Two levels of iteration, independent: each rule honours its own `gistp:strategy`, and the
+set has one of its own governing how many times the whole ordered pass is made.
+`gistp:priority` survives as the ordering for a bare list of rules with no set object, and
+as the tiebreak between equal sequence numbers — note the directions disagree, priority
+being higher-first and `gist:sequence` lower-first.
+
+**Mixed modes are refused.** An additive rule's output is a new named graph that later rules
+must read, but a `Rewrite` takes exactly one source graph which is its target — contradictory
+the moment an additive rule has fired. A set is all-`Rewrite` or contains none. Lifting that
+needs write-side `inGraph`, below, and is the natural next round.
+
 ### Known next tasks
-- **`run_rules` (plural).** `gistp:priority` is loaded, validated and displayed, but nothing
-  acts on it: `run_rule` takes one rule at a time. Ordering a rule *set* is the missing piece.
 - **`gistp:inGraph` is read-side only.** Scope on R, with `Rewrite`, with `ToFixpoint`, or
-  with an empty `source` is refused rather than half-supported. Write-side scoping is open.
+  with an empty `source` is refused rather than half-supported. Write-side scoping is open,
+  and is now also what blocks a mixed-mode rule set: if an additive rule could be told which
+  graph to write into, a `Rewrite` later in the set would have a single target to name.
   A scope naming a `gistp:TabularDataSource` now compiles to `SERVICE <x-sparql-anything:>`,
   so a rule can read a CSV directly — but only the *binding source* half is built. The
   `gistp:SourceMap` half (`mapFrom`/`mapFirst`/`mapEach` → a Facade-X BGP, plus the
@@ -110,7 +132,15 @@ The split between judgement and mechanism still holds, and is worth preserving:
   SPARQL cannot express — arithmetic beyond trivia, statistics, optimisation, the Julia
   numerical stack. It is a separate package and nothing here depends on it; connecting them
   is now an explicit dependency decision rather than an accident of packaging.
-- **Trimming the export surface.** ~105 exported names, including compiler internals and
+- **Retaining history.** A rewrite's tombstone holds exactly `L∖I` — the facts that stopped
+  being true — and `undo_firing!` drops it. The archive exists until someone rewinds and
+  nothing indexes it meanwhile. Retention plus a PROV-O projection (firing = `prov:Activity`,
+  rule = `prov:Plan`, `prov:wasInvalidatedBy` for retracted triples) is cheap, since the
+  record is already `prov:Entity` with `prov:generatedAtTime`.
+- **Transaction time is not totally ordered.** `_now_xsd` stamps whole seconds and
+  `test/adversarial.jl:564` records that firings can tie. For a system whose claim is
+  ordering belief in time, that is a defect rather than a rounding choice.
+- **Trimming the export surface.** ~110 exported names, including compiler internals and
   generic ones (`select`, `interface`, `ask`, `endpoint`) that collide on `using`. A breaking
   change, so it belongs to a deliberate 0.5.0.
 
