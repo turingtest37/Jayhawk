@@ -1,0 +1,136 @@
+#  Rules that declare WHERE their output goes, with gistp:inGraph on the construct pattern.
+#
+#  Scope on the match pattern says which graphs a rule READS. Scope on the construct pattern
+#  says which graph it WRITES, and the two have almost nothing in common beyond the property
+#  name:
+#
+#    read   may bind a graph VARIABLE, so one rule can range over many graphs. It needs an
+#           explicit `source`, because with no dataset clause a graph variable enumerates
+#           every named graph in the store -- provenance and firings included.
+#    write  must be a CONSTANT. Different solutions going to different graphs would leave
+#           the firing graph -- one flat set of triples -- with nowhere to record which
+#           triple went where, so undo could not reverse it.
+#
+#  What does NOT change is the firing graph. A write-scoped rule still projects R into a
+#  fresh firing graph, which is then pruned and promoted into the destination. That is why
+#  the write is reversible: undo retracts from the destination exactly what the firing graph
+#  holds, rather than re-deriving it from the rule and hoping the two agree.
+#
+#      default graph   the Rules and their variables
+#      named graph L   what must be true
+#      named graph R   what becomes true, and the graph it becomes true IN
+
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix ex:    <http://example.org/ws/> .
+@prefix :      <http://example.org/wsrules/> .
+
+#################################################################
+#    A Construct that files its output in a named graph
+#################################################################
+
+:FileEmployee
+    rdf:type gistp:Rule ;
+    skos:prefLabel "File employee" ;
+    skos:definition """Derive an employee record and write it into the HR graph rather than
+                       leaving it in a firing graph for someone to merge by hand.""" ;
+    gistp:hasMatchPattern     :FileEmployee_L ;
+    gistp:hasConstructPattern :FileEmployee_R ;
+    gistp:rewriteMode         gistp:Construct .
+
+:FileEmployee_L rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "match: a person with a name" .
+
+# The destination. A constant, and it is the whole of the write-side feature.
+:FileEmployee_R rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "construct: the employee record, in the HR graph" ;
+    gistp:inGraph <urn:jayhawk:ws-test:hr> .
+
+:_P rdf:type gistp:SparqlVariable ; gistp:variableText "?_P" ;
+    skos:definition "The person. Bound by L, carried into R." .
+
+:FileEmployee_L {
+    :_P rdf:type gist:Person ;
+        gist:name "?nm"^^gistp:var .
+}
+
+:FileEmployee_R {
+    :_P rdf:type ex:Employee ;
+        ex:label "?nm"^^gistp:var .
+}
+
+#################################################################
+#    An Assert that closes a transitive relation IN PLACE
+#################################################################
+#
+#  This is the case a write scope makes possible, and it was refused outright before. An
+#  unscoped fixpoint appends each round's firing graph to the working set, so the dataset
+#  clause grows and a scoped rule would end up matching inside its own output. A write-scoped
+#  fixpoint promotes instead: the dataset clause never changes, and round two reads round
+#  one's results from the graph they were written to.
+#
+#  The destination must therefore also be readable, so it is named in `source` as well --
+#  which is the same graph, doing both jobs. Writing and reading one graph is what "in place"
+#  means.
+
+:CloseReportsTo
+    rdf:type gistp:Rule ;
+    skos:prefLabel "Reports-to is transitive" ;
+    skos:definition "If a reports to b and b reports to c, then a reports to c." ;
+    gistp:hasMatchPattern     :CloseReportsTo_L ;
+    gistp:hasConstructPattern :CloseReportsTo_R ;
+    gistp:rewriteMode         gistp:Assert ;
+    gistp:strategy            gistp:ToFixpoint ;
+    gistp:maxIterations       10 .
+
+:CloseReportsTo_L rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "match: a two-step reporting chain" .
+
+:CloseReportsTo_R rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "construct: the shortcut, in the same graph" ;
+    gistp:inGraph <urn:jayhawk:ws-test:org> .
+
+:_a rdf:type gistp:SparqlVariable ; gistp:variableText "?a" .
+:_b rdf:type gistp:SparqlVariable ; gistp:variableText "?b" .
+:_c rdf:type gistp:SparqlVariable ; gistp:variableText "?c" .
+
+:CloseReportsTo_L {
+    :_a ex:reportsTo :_b .
+    :_b ex:reportsTo :_c .
+}
+
+:CloseReportsTo_R {
+    :_a ex:reportsTo :_c .
+}
+
+#################################################################
+#    A destination that is a variable -- refused
+#################################################################
+#
+#  Bound per solution, so different people would be filed in different graphs and the firing
+#  graph would have no way to say which went where. Undo would be guesswork.
+
+:FileByVariable
+    rdf:type gistp:Rule ;
+    skos:prefLabel "File into whichever graph the data names" ;
+    gistp:hasMatchPattern     :FileByVariable_L ;
+    gistp:hasConstructPattern :FileByVariable_R ;
+    gistp:rewriteMode         gistp:Construct .
+
+:FileByVariable_L rdf:type gistp:SparqlPattern .
+:FileByVariable_R rdf:type gistp:SparqlPattern ;
+    gistp:inGraph :_g .
+
+:_g rdf:type gistp:SparqlVariable ; gistp:variableText "?_g" ;
+    skos:definition "A graph, bound by the data. Legal on a read scope, refused on a write." .
+
+:FileByVariable_L {
+    :_P rdf:type gist:Person ;
+        ex:filedIn :_g .
+}
+
+:FileByVariable_R {
+    :_P rdf:type ex:Employee .
+}

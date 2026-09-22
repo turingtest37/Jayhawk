@@ -1132,6 +1132,59 @@ function graph_scopes(spec::RuleSpec)
 end
 
 """
+    read_scopes(spec) -> Vector{String}
+
+The graph scopes a rule READS through: `gistp:inGraph` on the match pattern and on each
+negative condition, minus any data source.
+
+Separate from [`write_scope`](@ref) because the two have opposite requirements, and
+conflating them is what made every scoped rule look dangerous. A scoped *read* with no
+`source` is genuinely unsafe -- with no dataset clause a graph variable ranges over every
+named graph in the store, provenance and firings included. A scoped *write* reads nothing it
+was not already reading, so it needs no such guarantee.
+"""
+function read_scopes(spec::RuleSpec)
+    return String[
+        s for s in (spec.match_scope, (n.scope for n in spec.nacs)...) if
+        s !== nothing && !haskey(spec.services, s)
+    ]
+end
+
+"""
+    write_scope(spec) -> Union{String,Nothing}
+
+The constant graph IRI a rule's construct pattern declares as its destination, or `nothing`.
+
+The destination is **not** part of compilation: `insert_query` still projects `R` into a
+fresh firing graph, exactly as an unscoped rule does, and the scope is consumed afterwards by
+[`promote_query`](@ref). That split is what keeps the firing graph the unit of attribution and
+undo even when a rule writes into live data.
+"""
+write_scope(spec::RuleSpec) = spec.construct_scope
+
+"""
+    promote_query(; firing, target) -> String
+
+Copy a pruned firing graph into the graph its rule declared with `gistp:inGraph`.
+
+Applied from the firing graph rather than from `R`'s template, so the destination receives
+exactly what the firing graph claims -- which is what makes `undo_firing!` an exact inverse
+rather than a re-derivation that might differ.
+
+**No dataset clause, and that is an invariant rather than an omission.** `USING`/`USING NAMED`
+*replace* the dataset, so a graph absent from the clause is invisible even to a
+`GRAPH <constant>` in the `WHERE`: splice one in and this op silently copies nothing while
+reporting success. `rewrite_query`'s promotion op carries the same warning for the same
+reason, and both are asserted in the suite.
+"""
+function promote_query(; firing::AbstractString, target::AbstractString)
+    return """
+           INSERT { GRAPH <$(check_iri(target))> { ?__s ?__p ?__o } }
+           WHERE  { GRAPH <$(check_iri(firing))> { ?__s ?__p ?__o } }
+           """
+end
+
+"""
     is_scoped(spec) -> Bool
 
 Whether any of a rule's patterns names a **graph**. Decides the shape of the dataset clause.
@@ -1169,8 +1222,14 @@ function dataset_lines(
         # every named graph in the store, so `dry_run` on the round-5a fixture returned four
         # triples instead of three, the extra one asserting the rule's OWN pattern graph as
         # data; `apply_rule` wrote it and recorded it as a legitimate firing. Measured.
-        is_scoped(spec) && error(
-            "rule <$(spec.iri)>: a rule with gistp:inGraph must name its graphs. With no " *
+        # READ scopes only. A write scope names a destination that never appears in the
+        # query -- `promote_query` consumes it afterwards -- so it neither needs a dataset
+        # clause nor enumerates anything. Keying this off every scope made a rule that only
+        # declared where its output goes unrunnable against the default graph, for a hazard
+        # it does not have.
+        isempty(read_scopes(spec)) || error(
+            "rule <$(spec.iri)>: a rule whose match pattern or negative condition carries " *
+            "gistp:inGraph must name its graphs. With no " *
             "dataset clause a graph variable ranges over every named graph in the store -- " *
             "the provenance graph, every firing, every tombstone, and the rule catalogue's " *
             "own pattern graphs. An empty graph set is not 'the default graph' here, it is " *
@@ -1179,7 +1238,7 @@ function dataset_lines(
         return ""
     end
     plain = join(("$keyword <$(check_iri(g))>" for g in from), "\n")
-    is_scoped(spec) || return plain * "\n"
+    isempty(read_scopes(spec)) && return plain * "\n"
     return plain *
            "\n" *
            join(("$keyword NAMED <$(check_iri(g))>" for g in from), "\n") *
@@ -1245,11 +1304,11 @@ function match_text(spec::RuleSpec; indent::AbstractString="  ")
         bgp_text(spec.match, spec; indent=indent)
     else
         graph_wrap(
-        bgp_text(spec.match, spec; indent=indent * "  "),
-        spec.match_scope,
-        spec;
-        indent=indent,
-    )
+            bgp_text(spec.match, spec; indent=indent * "  "),
+            spec.match_scope,
+            spec;
+            indent=indent,
+        )
     end
 end
 
@@ -1629,20 +1688,30 @@ function check_scopes(spec::RuleSpec)
             "the match pattern to the source and let the results land in a firing graph.",
         )
 
-    spec.construct_scope === nothing || error(
-        "rule <$(spec.iri)>: gistp:inGraph on the construct pattern <$(spec.construct_graph)> " *
-        "is not supported yet. A rule that writes into a named graph has to record which " *
-        "graph each triple went to, or undo_firing! cannot reverse it -- and an " *
-        "irreversible write is not something to get by default. Scope the match pattern to " *
-        "read per graph; the results still land in a firing graph you can merge where you " *
-        "want them.",
-    )
+    # A write destination must be a constant. A graph VARIABLE on the construct pattern would
+    # send different solutions to different graphs, and the firing graph -- one flat set of
+    # triples -- has nowhere to record which triple went where, so undo could not reverse it
+    # without reifying every triple with its destination. A scoped READ may still bind a
+    # variable: reading from many graphs needs no record of where anything went.
+    spec.construct_scope === nothing ||
+        !haskey(spec.variables, spec.construct_scope) ||
+        error(
+            "rule <$(spec.iri)>: gistp:inGraph on the construct pattern " *
+            "<$(spec.construct_graph)> names the variable " *
+            "$(spec.variables[spec.construct_scope]), and a write destination has to be a " *
+            "constant graph IRI. Different solutions would go to different graphs, and a " *
+            "firing graph is one flat set of triples with nowhere to record which triple " *
+            "went where -- so undo_firing! could not reverse it. Name the graph outright, " *
+            "or mint it with gistp:iriTemplate and run the rule once per graph.",
+        )
 
     mode_symbol(spec) === :Rewrite && error(
         "rule <$(spec.iri)>: gistp:inGraph with gistp:Rewrite is not supported yet. A " *
         "rewrite deletes from exactly one target graph, and a scoped match can bind several " *
         "-- so the target, the tombstone and the undo record would each have to become a " *
-        "set. Use Construct or Assert, or drop the scope and name the graph in `source`.",
+        "set. A Rewrite already has a destination, which is the graph it reads: naming a " *
+        "second one is a different operation, not a scoped version of this one. Use " *
+        "Construct or Assert, or drop the scope and name the graph in `source`.",
     )
 
     # A graph variable is spliced into query text like any other variable. `check_variables`
@@ -2497,11 +2566,13 @@ function load_rule_set(set_iri::AbstractString; ep::SparqlEndpoint=endpoint())
     label = if isempty(labels)
         ""
     else
-        (if labels[1]["label"] isa RDFLiteral
-            (labels[1]["label"]::RDFLiteral).lexical
-        else
-            ""
-        end)
+        (
+            if labels[1]["label"] isa RDFLiteral
+                (labels[1]["label"]::RDFLiteral).lexical
+            else
+                ""
+            end
+        )
     end
 
     rows = select(
@@ -2619,6 +2690,7 @@ export STRATEGY_ONCE, STRATEGY_TOFIXPOINT
 export parse_template, template_slots, bind_text, minted_vars
 export ambiguous_separators, collision_queries, check_collisions, mint_fanin
 export GISTP_NS, MODE_CONSTRUCT, MODE_ASSERT, MODE_REWRITE
+export read_scopes, write_scope, promote_query
 export load_in_graph,
     load_services,
     is_scoped,

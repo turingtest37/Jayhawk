@@ -1631,7 +1631,7 @@ end
         end
     end
 
-    @testset "every unimplemented use of inGraph is refused, not approximated" begin
+    @testset "inGraph: what a scope may say on each side, and what it may not" begin
         base = person_to_employee()
         respec(; scope=nothing, cscope=nothing, mode=base.mode, nacs=NacSpec[]) = RuleSpec(
             base.iri,
@@ -1651,10 +1651,52 @@ end
             cscope,
         )
 
-        # writing into a named graph, before undo can reverse it
-        @test_throws ErrorException compile_rule(
-            respec(scope="urn:b", cscope="urn:b"); from=["urn:a"]
+        # A CONSTANT destination now compiles: the scope is not part of the query at all.
+        # insert_query still projects R into a fresh firing graph exactly as an unscoped rule
+        # does, and the destination is consumed afterwards by promote_query -- which is what
+        # keeps the firing graph the unit of attribution and of undo even when the rule
+        # writes into live data.
+        @test compile_rule(respec(scope="urn:b", cscope="urn:b"); from=["urn:a"]) isa String
+        @test write_scope(respec(cscope="urn:b")) == "urn:b"
+        @test write_scope(respec(scope="urn:b")) === nothing      # a read scope is not a write
+        @test read_scopes(respec(scope="urn:b", cscope="urn:c")) == ["urn:b"]
+
+        # A VARIABLE destination is refused. Different solutions would go to different
+        # graphs, and a firing graph is one flat set of triples with nowhere to record which
+        # triple went where -- so undo could not reverse it.
+        byvar = RuleSpec(
+            base.iri,
+            base.mode,
+            base.match_graph,
+            base.construct_graph,
+            base.match,
+            base.construct,
+            merge(base.variables, Dict("$(R)_G" => "?_G")),
+            base.mints,
+            base.enums,
+            NacSpec[],
+            nothing,
+            0,
+            nothing,
+            nothing,
+            "$(R)_G",
         )
+        e = try
+            compile_rule(byvar; from=["urn:a"])
+        catch err
+            err
+        end
+        @test e isa ErrorException
+        @test occursin("has to be a constant graph IRI", sprint(showerror, e))
+
+        # promote_query carries no dataset clause, and that is an invariant: USING REPLACES
+        # the dataset, so a graph absent from the clause is invisible even to a
+        # GRAPH <constant> in the WHERE -- splice one in and this silently copies nothing.
+        pq = promote_query(; firing="urn:f", target="urn:t")
+        @test occursin("INSERT { GRAPH <urn:t>", pq)
+        @test occursin("WHERE  { GRAPH <urn:f>", pq)
+        @test !occursin("USING", pq)
+        @test_throws ArgumentError promote_query(; firing="urn:f", target="urn:t bad")
         # a rewrite whose match binds several graphs, against a single-target tombstone
         @test_throws ErrorException compile_rule(
             respec(scope="urn:b", mode=Jayhawk.MODE_REWRITE)
@@ -2085,7 +2127,7 @@ end
     TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
     iri(x) = IRIRef(x)
 
-    trivial(name, mode; priority=0) = RuleSpec(
+    trivial(name, mode; priority=0, cscope=nothing) = RuleSpec(
         "$(R)$name",
         mode,
         "$(R)$(name)_L",
@@ -2100,7 +2142,7 @@ end
         priority,
         nothing,
         nothing,
-        nothing,
+        cscope,
         Dict{String,Vector{Pair{String,String}}}(),
         String[],
     )
@@ -2121,24 +2163,46 @@ end
         @test_throws ArgumentError run_rules(String[])
     end
 
-    @testset "mixing Rewrite with additive modes is refused" begin
-        # The requirements are contradictory, not merely awkward: an additive rule's output
-        # is a new named graph that must join the working set, and a Rewrite takes exactly
-        # one source graph which is its target. After the first additive firing there is no
-        # source the rewrite can accept.
-        mixed = [
+    @testset "a Rewrite may share a set only with directed additive rules" begin
+        # The contradiction is specific, not general. An additive rule with NO declared
+        # destination writes into a fresh firing graph that must join the working set for
+        # later rules to read it -- and a Rewrite takes exactly one source graph, which is
+        # its target, so after the first such firing there is no source it can accept.
+        #
+        # An additive rule that declares gistp:inGraph on its construct pattern has no such
+        # problem: its output is promoted into the named graph, the working set never grows,
+        # and the Rewrite reads the derived triples from the graph they went to.
+        undirected = [
             trivial("Add", Jayhawk.MODE_CONSTRUCT), trivial("Del", Jayhawk.MODE_REWRITE)
         ]
         e = try
-            seq(mixed, "<mixed>", :Once, 1)
+            seq(undirected, "<mixed>", :Once, 1)
         catch err
             err
         end
         @test e isa ArgumentError
         msg = sprint(showerror, e)
-        @test occursin("mixes gistp:Rewrite with additive modes", msg)
-        @test occursin("$(R)Del", msg)        # names the offender, not just the problem
-        @test !occursin("$(R)Add", msg[1:findfirst("Rewrite rules:", msg).stop])
+        @test occursin("additive rules that do not say where their output goes", msg)
+        # both offenders named, and on the correct side of the complaint
+        @test occursin("Rewrite rules: $(R)Del", msg)
+        @test occursin("no destination: $(R)Add", msg)
+        # and the fix is stated, not left to be inferred
+        @test occursin("gistp:inGraph on its construct pattern", msg)
+
+        directed = [
+            trivial("Add", Jayhawk.MODE_CONSTRUCT; cscope="urn:dest"),
+            trivial("Del", Jayhawk.MODE_REWRITE),
+        ]
+        e2 = try
+            seq(directed, "<mixed-ok>", :Once, 1)
+        catch err
+            err
+        end
+        # It gets past validation and fails later for want of a server, which is the proof.
+        @test !(
+            e2 isa ArgumentError &&
+            occursin("do not say where their output goes", sprint(showerror, e2))
+        )
     end
 
     @testset "an all-Rewrite set is allowed through validation" begin

@@ -1193,6 +1193,127 @@ ex:s2 ex:p ex:plain .
             engine_cleanup()
         end
 
+        @testset "a rule can declare where its output goes" begin
+            # Write-side gistp:inGraph. What does NOT change is the firing graph: a scoped rule
+            # still projects R into a fresh one, which is then pruned and promoted. That is why
+            # the write stays reversible -- undo retracts from the destination exactly what the
+            # firing graph holds, rather than re-deriving it and hoping the two agree.
+            WSR = "http://example.org/wsrules/"
+            WS = "http://example.org/ws/"
+            HR_G = "urn:jayhawk:ws-test:hr"
+            ORG_G = "urn:jayhawk:ws-test:org"
+            Jayhawk.load_file!(fixture("write_scoped_rule.trig"))
+            for g in (DATA_GRAPH, HR_G, ORG_G)
+                Jayhawk.update!("DROP SILENT GRAPH <$g>")
+            end
+            Jayhawk.update!("""
+                INSERT DATA { GRAPH <$DATA_GRAPH> {
+                  <urn:w:alice> a <$(GIST)Person> ; <$(GIST)name> "Alice" .
+                  <urn:w:bob>   a <$(GIST)Person> ; <$(GIST)name> "Bob" .
+                } }""")
+
+            @testset "the output lands in the declared graph, not just a firing" begin
+                f = run_rule("$(WSR)FileEmployee"; source=[DATA_GRAPH], actor="ws-test")[1]
+                @test f.count == 4
+                @test f.target == HR_G
+                @test isempty(f.tombstone)          # nothing was removed; this is not a rewrite
+                @test Jayhawk.graph_size(HR_G) == 4
+                # the firing graph keeps its own copy: the audit record, and what undo reads
+                @test Jayhawk.graph_size(f.graph) == 4
+                @test Jayhawk.ask(
+                    "ASK { GRAPH <$HR_G> { <urn:w:alice> a <$(WS)Employee> } }"
+                )
+
+                @testset "re-running is pruned against the DESTINATION" begin
+                    # Not against what the rule read. Those differ the moment the destination is
+                    # not itself a source, and reporting the wrong one would make a re-run of a
+                    # converged rule look productive.
+                    again = run_rule(
+                        "$(WSR)FileEmployee"; source=[DATA_GRAPH], actor="ws-test"
+                    )[1]
+                    @test again.count == 0
+                    @test !is_firing(again.graph)   # contributed nothing, so no record
+                end
+
+                @testset "undo retracts from the destination" begin
+                    undo_firing!(f.graph)
+                    @test Jayhawk.graph_size(HR_G) == 0
+                    @test !is_firing(f.graph)
+                end
+            end
+
+            @testset "a write-scoped Assert reaches a fixpoint in place" begin
+                # The case that was refused outright. An unscoped fixpoint appends each round's
+                # firing graph to the working set, so a scoped rule would end up matching inside
+                # its own output; a write-scoped one promotes instead, leaving the dataset clause
+                # unchanged while round two reads round one's results from the destination.
+                Jayhawk.update!("""
+                    INSERT DATA { GRAPH <$ORG_G> {
+                      <urn:w:a> <$(WS)reportsTo> <urn:w:b> .
+                      <urn:w:b> <$(WS)reportsTo> <urn:w:c> .
+                      <urn:w:c> <$(WS)reportsTo> <urn:w:d> .
+                    } }""")
+                fs = run_rule("$(WSR)CloseReportsTo"; source=[ORG_G], actor="ws-test")
+                @test length(fs) == 2                    # two productive rounds, then quiescence
+                @test [f.count for f in fs] == [2, 1]
+                @test all(f -> f.target == ORG_G, fs)
+                @test Jayhawk.graph_size(ORG_G) == 6     # 3 asserted + 3 derived, in place
+                @test Jayhawk.ask(
+                    "ASK { GRAPH <$ORG_G> { <urn:w:a> <$(WS)reportsTo> <urn:w:d> } }"
+                )
+
+                for f in reverse(fs)
+                    undo_firing!(f.graph)
+                end
+                @test Jayhawk.graph_size(ORG_G) == 3     # an exact inverse, not an approximation
+                @test !Jayhawk.ask(
+                    "ASK { GRAPH <$ORG_G> { <urn:w:a> <$(WS)reportsTo> <urn:w:d> } }"
+                )
+            end
+
+            @testset "a fixpoint that cannot read its destination is refused" begin
+                # Every round would re-derive the same triples, find them already promoted, prune
+                # to nothing and report convergence after one pass -- the right answer by
+                # accident, and the wrong one as soon as a second round would have derived
+                # anything.
+                e = try
+                    run_rule("$(WSR)CloseReportsTo"; source=[DATA_GRAPH], actor="ws-test")
+                catch err
+                    err
+                end
+                @test e isa ArgumentError
+                @test occursin("needs that graph in `source` as well", sprint(showerror, e))
+            end
+
+            @testset "a write scope does not demand a source the way a read scope does" begin
+                # The old refusal treated both alike. A scoped READ with no source is genuinely
+                # unsafe -- a graph variable would enumerate every named graph in the store. A
+                # scoped WRITE reads nothing it was not already reading.
+                Jayhawk.update!(
+                    """
+        INSERT DATA { <urn:w:carol> a <$(GIST)Person> ; <$(GIST)name> "Carol" }"""
+                )
+                f = run_rule("$(WSR)FileEmployee"; actor="ws-test")[1]   # no source at all
+                @test f.count == 2
+                @test Jayhawk.ask(
+                    "ASK { GRAPH <$HR_G> { <urn:w:carol> a <$(WS)Employee> } }"
+                )
+                undo_firing!(f.graph)
+                Jayhawk.update!("DELETE WHERE { <urn:w:carol> ?p ?o }")
+            end
+
+            for g in (DATA_GRAPH, HR_G, ORG_G)
+                Jayhawk.update!("DROP SILENT GRAPH <$g>")
+            end
+            for n in ("FileEmployee", "CloseReportsTo", "FileByVariable")
+                Jayhawk.update!(
+                    "DROP SILENT GRAPH <$(WSR)$(n)_L> ; DROP SILENT GRAPH <$(WSR)$(n)_R>"
+                )
+            end
+            Jayhawk.update!("DELETE WHERE { ?s <$(Jayhawk.P_INGRAPH)> ?o }")
+            engine_cleanup()
+        end
+
         @testset "transaction time is totally ordered" begin
             # A rule set made this matter. Before ordinals, both of these firings carried the
             # same whole-second stamp and iteration 1, and firings() reported them in the wrong

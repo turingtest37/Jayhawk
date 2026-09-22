@@ -174,16 +174,49 @@ Retention is deliberately coupled to the firing: undo restores the claim *and* f
 retraction. A retraction outliving the firing that made it would assert a fact is no longer
 held while the fact sits in the graph.
 
+### Write-side `gistp:inGraph` — built
+`gistp:inGraph` on the **construct** pattern declares where a rule's output goes. Crucially
+the destination is *not* part of compilation: `insert_query` still projects `R` into a fresh
+firing graph exactly as an unscoped rule does, and `promote_query` copies it into the
+destination afterwards. That split is the whole design — the firing graph stays the unit of
+attribution and of undo even when a rule writes into live data, because undo retracts from
+the destination exactly what the firing graph holds rather than re-deriving it and hoping the
+two agree.
+
+Read and write scopes turned out to have opposite requirements, and conflating them is what
+made every scoped rule look dangerous. `read_scopes` / `write_scope` separate them:
+
+- A scoped **read** with no `source` is genuinely unsafe — with no dataset clause a graph
+  variable ranges over every named graph in the store, provenance and firings included — and
+  it still cannot iterate, because each round appends its firing graph to the working set.
+- A scoped **write** reads nothing it was not already reading. It needs no `source`, and it
+  **can** iterate: output is promoted into the destination rather than appended, so the
+  dataset clause never changes and round two reads round one's results from the graph they
+  went to. That is a genuine fixpoint over a named graph, and it was refused outright before.
+  It does require the destination in `source`, else every round re-derives, finds its output
+  already promoted, prunes to nothing and reports convergence after one pass — the right
+  answer by accident.
+
+This also narrowed the rule-set refusal from "no mixed modes" to "no *undirected* additive
+rule alongside a `Rewrite`". Give the additive members a destination and a mixed set composes:
+the working set never grows, so the `Rewrite` still has exactly one source, and it reads the
+derived triples from the graph they were written to.
+
+Still refused: a scope on R with `Rewrite` (a rewrite's destination *is* the graph it reads;
+naming a second is a different operation), and a scope on R naming a `gistp:TabularDataSource`
+(a SERVICE cannot be written to).
+
 ### Known next tasks
-- **`gistp:inGraph` is read-side only.** Scope on R, with `Rewrite`, with `ToFixpoint`, or
-  with an empty `source` is refused rather than half-supported. Write-side scoping is open,
-  and is now also what blocks a mixed-mode rule set: if an additive rule could be told which
-  graph to write into, a `Rewrite` later in the set would have a single target to name.
-  A scope naming a `gistp:TabularDataSource` now compiles to `SERVICE <x-sparql-anything:>`,
-  so a rule can read a CSV directly — but only the *binding source* half is built. The
-  `gistp:SourceMap` half (`mapFrom`/`mapFirst`/`mapEach` → a Facade-X BGP, plus the
-  `separator` / `stringBefore` / `valuePattern*` pipeline) is not, so the pattern still
-  names `xyz:` columns itself.
+- **`gistp:SourceMap` is unbuilt.** A scope naming a `gistp:TabularDataSource` compiles to
+  `SERVICE <x-sparql-anything:>`, so a rule can read a CSV directly — but only the *binding
+  source* half exists. The `SourceMap` half (`mapFrom`/`mapFirst`/`mapEach` → a Facade-X BGP,
+  plus the `separator` / `stringBefore` / `valuePattern*` pipeline) is not, so the pattern
+  still names `xyz:` columns itself.
+- **A write destination must be a constant.** A graph *variable* on R would send different
+  solutions to different graphs, and a firing graph is one flat set of triples with nowhere
+  to record which triple went where — so undo could not reverse it. Refused. Per-solution
+  destinations would need the firing graph to carry a destination per triple; minting the
+  graph IRI with `gistp:iriTemplate` and running once per graph is the workaround.
 - **Wiring the extension surface.** `RdfMaterializer` is the intended home for operators
   SPARQL cannot express — arithmetic beyond trivia, statistics, optimisation, the Julia
   numerical stack. It is a separate package and nothing here depends on it; connecting them

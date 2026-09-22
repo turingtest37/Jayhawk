@@ -199,11 +199,18 @@ function record_firing!(f::Firing; actor::AbstractString, ep::SparqlEndpoint=end
     else
         MODE_REWRITE
     end
-    # A rewrite is only reversible if undo can find what it removed and where from, so both
-    # are part of the record rather than reconstructed later.
+    # Any firing that touched a graph other than its own is reversible only if undo can find
+    # WHICH graph, so the destination is recorded whenever there is one. Tying it to the
+    # tombstone was a bug this had: a write-scoped Construct has a target and no tombstone,
+    # so its destination went unrecorded, undo found nothing to retract, and the promoted
+    # triples stayed in live data with the record already gone. The probe caught it; an inner
+    # join would have hidden it.
+    tgt = isempty(f.target) ? "" : """
+            <$(f.graph)> <$(JH_NS)targetGraph> <$(f.target)> .
+    """
+    # Removal is the rewrite's half of that: what came out, and how much.
     rw = isempty(f.tombstone) ? "" : """
             <$(f.graph)> <$(JH_NS)tombstoneGraph> <$(f.tombstone)> ;
-                <$(JH_NS)targetGraph> <$(f.target)> ;
                 <$(JH_NS)removedCount> $(f.removed) .
     """
     # INSERT/WHERE rather than INSERT DATA, so the ordinal is read and written by the same
@@ -229,7 +236,7 @@ function record_firing!(f::Firing; actor::AbstractString, ep::SparqlEndpoint=end
             <$(JH_NS)actor> "$(escape_literal(actor))" ;
             <$(JH_NS)iteration> $(f.iteration) ;
             <$(JH_NS)tripleCount> $(f.count) .
-    $(srcs)$(rw)$(based)$(tomb_type)  }
+    $(srcs)$(tgt)$(rw)$(based)$(tomb_type)  }
     } WHERE {
       { SELECT (COALESCE(MAX(?o), 0) + 1 AS ?ord) WHERE {
           GRAPH <$PROVENANCE_GRAPH> { ?any <$(JH_NS)ordinal> ?o } } }
@@ -295,10 +302,37 @@ function apply_rule(
     )
 
     update!(insert_query(spec; into=into, from=source); ep=ep)
-    prune_known!(into, source; ep=ep)
+
+    # A declared destination joins the set pruned against, so `count` means "facts new to
+    # the place they are going" rather than "facts new to what the rule read". Those differ
+    # the moment the destination is not itself a source -- and reporting the wrong one would
+    # make a re-run of a converged rule look productive.
+    dest = write_scope(spec)
+    prune_known!(into, dest === nothing ? source : vcat(String.(source), dest); ep=ep)
     n = graph_size(into; ep=ep)
 
-    f = Firing(into, spec.iri, mode_symbol(spec), Int(iteration), n, String.(source))
+    # The firing graph stays the unit of attribution and of undo even when the rule writes
+    # into live data: promotion copies FROM it, so the destination receives exactly what the
+    # record claims. Nothing is promoted when nothing was derived.
+    if dest !== nothing && n > 0
+        update!(promote_query(; firing=into, target=dest); ep=ep)
+    end
+
+    f = if dest === nothing
+        Firing(into, spec.iri, mode_symbol(spec), Int(iteration), n, String.(source))
+    else
+        Firing(
+            into,
+            spec.iri,
+            mode_symbol(spec),
+            Int(iteration),
+            n,
+            String.(source),
+            "",
+            dest,
+            0,
+        )
+    end
     if n == 0
         update!("DROP SILENT GRAPH <$into>"; ep=ep)   # contributed nothing; leave no litter
     else
@@ -443,30 +477,57 @@ function run_rule(
     # Without a dataset clause `GRAPH ?g` enumerates every named graph there is, which here
     # means <urn:jayhawk:provenance> and every firing and tombstone ever written. Refusing is
     # the only safe reading -- there is no sensible default set of graphs.
-    is_scoped(spec) &&
+    !isempty(read_scopes(spec)) &&
         isempty(source) &&
         throw(
             ArgumentError(
-                "rule <$(spec.iri)>: a rule with gistp:inGraph must name its graphs in `source`. " *
+                "rule <$(spec.iri)>: a rule whose match pattern or negative condition " *
+                "carries gistp:inGraph must name its graphs in `source`. " *
                 "With no dataset clause a graph variable ranges over every named graph in the " *
                 "store, including <$PROVENANCE_GRAPH> and every firing and tombstone -- so an " *
                 "empty `source` is not 'the default graph' here, it is everything.",
             ),
         )
 
-    # Each round appends its firing graph to the working set, and the working set becomes the
-    # dataset clause -- so from round two a scoped rule would enumerate its own output as a
-    # graph to match in, and write into it.
-    is_scoped(spec) &&
+    # A scoped READ still cannot iterate: each round appends its firing graph to the working
+    # set, the working set becomes the dataset clause, and from round two the rule would
+    # enumerate its own output as a graph to match in.
+    #
+    # A scoped WRITE can, and this is where it pays off. Its output is promoted into the
+    # declared destination instead of being appended to the working set, so the dataset
+    # clause never changes and round two reads round one's results from the graph they were
+    # written to -- which is a genuine fixpoint over a named graph rather than over a growing
+    # pile of firings. It does require the destination to be readable, hence the check below.
+    !isempty(read_scopes(spec)) &&
         strat === :ToFixpoint &&
         throw(
             ArgumentError(
-                "rule <$(spec.iri)>: gistp:inGraph with a ToFixpoint strategy is not supported yet. " *
-                "Each iteration adds its firing graph to the working set, so the next round would " *
-                "bind that firing as a graph to match in. Declare gistp:strategy gistp:Once, or " *
-                "pass strategy = :Once.",
+                "rule <$(spec.iri)>: gistp:inGraph on the match pattern with a ToFixpoint " *
+                "strategy is not supported yet. Each iteration adds its firing graph to the " *
+                "working set, so the next round would bind that firing as a graph to match " *
+                "in. Declare gistp:strategy gistp:Once, or pass strategy = :Once. " *
+                "(A scope on the CONSTRUCT pattern does iterate -- its output is promoted " *
+                "into the destination rather than appended to the working set.)",
             ),
         )
+
+    # A write-scoped fixpoint that cannot read its own destination is not a fixpoint: every
+    # round would re-derive the same triples, find them already promoted, prune to nothing
+    # and report convergence after one productive pass. Which is the right answer by
+    # accident, and the wrong one as soon as a second round would have derived anything.
+    let dest = write_scope(spec)
+        dest === nothing ||
+            strat !== :ToFixpoint ||
+            dest in source ||
+            throw(
+                ArgumentError(
+                    "rule <$(spec.iri)>: running to a fixpoint while writing into <$dest> " *
+                    "needs that graph in `source` as well. Each round has to see what the " *
+                    "last one promoted, and the destination is where that output now lives " *
+                    "-- it is not appended to the working set the way an unscoped firing is.",
+                ),
+            )
+    end
     strat === :ToFixpoint &&
         isempty(source) &&
         throw(
@@ -511,7 +572,13 @@ function run_rule(
         # converged when a pass neither adds nor removes anything.
         f.count == 0 && f.removed == 0 && return firings
         push!(firings, f)
-        mode === :Rewrite || push!(working, f.graph)   # the rule now sees its own output
+        # A Rewrite edits its target in place, and a write-scoped rule has just promoted its
+        # output into the destination -- in both cases the working set already holds the
+        # rule's own results and appending the firing graph would only duplicate them into
+        # the dataset clause. Only an unscoped additive rule needs the append.
+        if mode !== :Rewrite && write_scope(spec) === nothing
+            push!(working, f.graph)   # the rule now sees its own output
+        end
     end
 
     return error(
@@ -624,19 +691,32 @@ function _run_rule_sequence(
         ArgumentError("rule set $label: max_iterations must be at least 1, got $budget."),
     )
 
-    modes = unique(mode_symbol(s) for s in specs)
     rewrites = [s.iri for s in specs if mode_symbol(s) === :Rewrite]
-    destructive = !isempty(rewrites)
-    if destructive && length(modes) > 1
+    # An additive rule with no declared destination is the one that cannot share a set with a
+    # Rewrite. Its output goes to a fresh firing graph which has to JOIN THE WORKING SET for
+    # later rules to read it -- and a Rewrite takes exactly one source graph, which is its
+    # target, so after the first such firing there is no source it can accept.
+    #
+    # Give those rules a gistp:inGraph on their construct pattern and the contradiction goes
+    # away: the output is promoted into the named destination instead, the working set never
+    # grows, and a Rewrite later in the set reads the derived triples from the graph they were
+    # written to. That is what write-side scoping bought beyond materialisation -- the mixed
+    # set stopped being a design question and became a precondition somebody can satisfy.
+    floating = [
+        s.iri for s in specs if mode_symbol(s) !== :Rewrite && write_scope(s) === nothing
+    ]
+    if !isempty(rewrites) && !isempty(floating)
         throw(
             ArgumentError(
-                "rule set $label mixes gistp:Rewrite with additive modes. " *
-                "Rewrite rules: $(join(rewrites, ", ")). An additive rule writes its output " *
-                "into a new named graph which must join the working set for later rules to " *
-                "read it, but a Rewrite takes exactly one source graph and that graph is its " *
-                "target -- so after the first additive firing there is no source it can " *
-                "accept. Split the set in two and run them in sequence, so it is visible " *
-                "which graph the rewrite is editing.",
+                "rule set $label mixes gistp:Rewrite with additive rules that do not say " *
+                "where their output goes. Rewrite rules: $(join(rewrites, ", ")). Additive " *
+                "rules with no destination: $(join(floating, ", ")). An undirected additive " *
+                "rule writes into a fresh firing graph which must join the working set for " *
+                "later rules to read it, but a Rewrite takes exactly one source graph and " *
+                "that graph is its target -- so after the first such firing there is no " *
+                "source it can accept. Give each of those rules gistp:inGraph on its " *
+                "construct pattern naming the graph the Rewrite reads, and the set composes; " *
+                "or split it in two and run them in sequence.",
             ),
         )
     end
@@ -663,11 +743,15 @@ function _run_rule_sequence(
                 (f.count == 0 && f.removed == 0) && continue
                 push!(firings, f)
                 changed = true
-                # A Rewrite edits the target in place, so the working set is already current
-                # and must stay a single graph. An additive firing has to be added for the
-                # next rule in the pass to see it -- which is what makes a set a cascade
-                # rather than a batch.
-                destructive || push!(working, f.graph)
+                # Only an UNDIRECTED additive firing is appended. A Rewrite edits its target
+                # in place and a write-scoped rule has promoted its output into the declared
+                # graph, so in both cases the working set already holds the rule's results and
+                # appending would duplicate them into the dataset clause. Appending when it is
+                # needed is what makes a set a cascade rather than a batch; not appending when
+                # it is not is what lets a Rewrite share the set.
+                if mode_symbol(spec) !== :Rewrite && write_scope(spec) === nothing
+                    push!(working, f.graph)
+                end
             end
         end
         set_strategy === :Once && return firings
@@ -824,25 +908,46 @@ function undo_firing!(
             "force = true if you are cleaning up a firing whose provenance write failed.",
         )
 
-    # A Rewrite changed the data in place, so reversing it is not a DROP. Retract what the
-    # rule added and restore what it removed, in that order and in one request, reading both
-    # halves out of the record the firing itself wrote.
+    # Whenever a firing touched a graph other than its own, reversing it is not a DROP.
+    # There are two such cases and they differ only in whether anything was removed, so the
+    # tombstone is OPTIONAL rather than required -- an inner join here would have silently
+    # skipped the write-scoped case and left promoted triples behind in the destination,
+    # with the firing record already gone and nothing left to say where they came from.
+    #
+    #   targetGraph, no tombstone   a write-scoped Construct or Assert. Its output was
+    #                               promoted into the declared graph, so undo retracts from
+    #                               there what the firing graph still holds.
+    #   targetGraph and tombstone   a Rewrite. Retract what it added, restore what it
+    #                               removed, in that order and in one request.
     rw = select(
         """
 SELECT ?target ?tomb WHERE { GRAPH <$PROVENANCE_GRAPH> {
-  <$g> <$(JH_NS)targetGraph> ?target ; <$(JH_NS)tombstoneGraph> ?tomb } }""";
+  <$g> <$(JH_NS)targetGraph> ?target .
+  OPTIONAL { <$g> <$(JH_NS)tombstoneGraph> ?tomb } } }""";
         ep=ep,
     )
+    tomb = if isempty(rw) || !haskey(rw[1], "tomb")
+        nothing
+    else
+        (rw[1]["tomb"]::IRIRef).value
+    end
     if !isempty(rw)
         target = (rw[1]["target"]::IRIRef).value
-        tomb = (rw[1]["tomb"]::IRIRef).value
+        # Reading the triples to retract out of the firing graph, never re-deriving them
+        # from the rule, is what makes this an exact inverse: whatever the destination
+        # received is precisely what goes back out.
+        restore = if tomb === nothing
+            ""
+        else
+            """ ;
+        INSERT { GRAPH <$target> { ?s ?p ?o } }
+        WHERE  { GRAPH <$tomb> { ?s ?p ?o } } ;
+        DROP SILENT GRAPH <$tomb>"""
+        end
         update!(
             """
         DELETE { GRAPH <$target> { ?s ?p ?o } }
-        WHERE  { GRAPH <$g> { ?s ?p ?o } } ;
-        INSERT { GRAPH <$target> { ?s ?p ?o } }
-        WHERE  { GRAPH <$tomb> { ?s ?p ?o } } ;
-        DROP SILENT GRAPH <$tomb>""";
+        WHERE  { GRAPH <$g> { ?s ?p ?o } }$restore""";
             ep=ep,
         )
     end
@@ -851,11 +956,11 @@ SELECT ?target ?tomb WHERE { GRAPH <$PROVENANCE_GRAPH> {
     # Both subjects the record uses: the firing's own triples and, for a rewrite, the
     # tombstone's type assertion. Everything else the record says hangs off the firing, which
     # is what keeps this a two-line retraction rather than a graph walk.
-    tomb_clause = if isempty(rw)
+    tomb_clause = if tomb === nothing
         ""
     else
         """
-    DELETE WHERE { GRAPH <$PROVENANCE_GRAPH> { <$((rw[1]["tomb"]::IRIRef).value)> ?tp ?to } } ;
+    DELETE WHERE { GRAPH <$PROVENANCE_GRAPH> { <$tomb> ?tp ?to } } ;
 """
     end
     update!(
