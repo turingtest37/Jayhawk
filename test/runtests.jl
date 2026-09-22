@@ -1252,17 +1252,21 @@ end
             base.construct_graph,
             if field === :L
                 vcat(
-                base.match,
-                [PatternTriple(BNode("x"), iri("$(G)isIdentifiedBy"), iri("$(R)_ID_1"))],
-            )
+                    base.match,
+                    [
+                        PatternTriple(
+                            BNode("x"), iri("$(G)isIdentifiedBy"), iri("$(R)_ID_1")
+                        ),
+                    ],
+                )
             else
                 base.match
             end,
             if field === :R
                 vcat(
-                base.construct,
-                [PatternTriple(iri("$(R)_Person_1"), iri("$(HR)worksAt"), BNode("y"))],
-            )
+                    base.construct,
+                    [PatternTriple(iri("$(R)_Person_1"), iri("$(HR)worksAt"), BNode("y"))],
+                )
             else
                 base.construct
             end,
@@ -2059,6 +2063,18 @@ end
         )
         @test_throws ArgumentError compile_rule(bad)
     end
+end
+
+@testset "transaction time carries fractional seconds" begin
+    # Whole seconds were not a rounding choice, they were a defect: every firing a rule SET
+    # produces lands inside one second and all report iteration 1, so the provenance log had
+    # nothing left to order them by and reported them in the wrong order -- stably, which
+    # reads as reliable. This is the hermetic half; the ordering itself is store-backed.
+    t = Jayhawk._now_xsd()
+    @test occursin(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$", t)
+    # Two stamps taken in a row must be able to differ at all -- with second resolution they
+    # provably could not.
+    @test length(t) == 24
 end
 
 @testset "rule sets (pure)" begin

@@ -118,6 +118,19 @@ must read, but a `Rewrite` takes exactly one source graph which is its target �
 the moment an additive rule has fired. A set is all-`Rewrite` or contains none. Lifting that
 needs write-side `inGraph`, below, and is the natural next round.
 
+### Transaction time — fixed
+`_now_xsd` stamps milliseconds, and every firing carries `jayhawk:ordinal`, a monotonic
+integer assigned by the same update that writes the record — read separately it could be
+claimed twice, and an ordinal that is merely usually unique is not an order. `firings()`
+sorts by timestamp, then ordinal, then iteration; the timestamp stays primary so a
+provenance graph written by an older version still reads sensibly instead of collapsing
+into one bucket.
+
+What forced it was `run_rules`: a set applies several rules inside one second, all reporting
+iteration 1, so the log had nothing left to order them by and reported them **in the wrong
+order** — stably, which reads as reliable. `MAX`, not `COUNT`: undo retracts a record, and a
+count-based ordinal would hand the next firing a number an existing record still holds.
+
 ### Known next tasks
 - **`gistp:inGraph` is read-side only.** Scope on R, with `Rewrite`, with `ToFixpoint`, or
   with an empty `source` is refused rather than half-supported. Write-side scoping is open,
@@ -137,9 +150,6 @@ needs write-side `inGraph`, below, and is the natural next round.
   nothing indexes it meanwhile. Retention plus a PROV-O projection (firing = `prov:Activity`,
   rule = `prov:Plan`, `prov:wasInvalidatedBy` for retracted triples) is cheap, since the
   record is already `prov:Entity` with `prov:generatedAtTime`.
-- **Transaction time is not totally ordered.** `_now_xsd` stamps whole seconds and
-  `test/adversarial.jl:564` records that firings can tie. For a system whose claim is
-  ordering belief in time, that is a defect rather than a rounding choice.
 - **Trimming the export surface.** ~110 exported names, including compiler internals and
   generic ones (`select`, `interface`, `ask`, `endpoint`) that collide on `using`. A breaking
   change, so it belongs to a deliberate 0.5.0.

@@ -68,7 +68,14 @@ end
 new_firing_graph() = string("urn:jayhawk:firing:", UUIDs.uuid4())
 new_tombstone_graph() = string("urn:jayhawk:tombstone:", UUIDs.uuid4())
 
-_now_xsd() = string(Dates.format(Dates.now(Dates.UTC), "yyyy-mm-ddTHH:MM:SS"), "Z")
+# Milliseconds, not whole seconds. xsd:dateTime permits a fractional part, and without one
+# every firing a rule SET produces lands on the same stamp: the rules all run inside one
+# second and all report iteration 1, so `firings()` had nothing left to order them by and
+# reported them in the wrong order -- stably, which is worse than flakily, because a
+# consistently wrong audit log looks like a reliable one. Resolution alone is not a total
+# order, so `jayhawk:ordinal` below is the guarantee; this just makes ties rare rather than
+# routine.
+_now_xsd() = string(Dates.format(Dates.now(Dates.UTC), "yyyy-mm-ddTHH:MM:SS.sss"), "Z")
 
 "How many triples are in a named graph."
 function graph_size(g::AbstractString; ep::SparqlEndpoint=endpoint())
@@ -119,9 +126,12 @@ function record_firing!(f::Firing; actor::AbstractString, ep::SparqlEndpoint=end
         ""
     else
         join(
-        ("    <$(f.graph)> <$(JH_NS)sourceGraph> <$(check_iri(g))> ." for g in f.source),
-        "\n",
-    ) * "\n"
+            (
+                "    <$(f.graph)> <$(JH_NS)sourceGraph> <$(check_iri(g))> ." for
+                g in f.source
+            ),
+            "\n",
+        ) * "\n"
     end
     mode_iri = if f.mode === :Construct
         MODE_CONSTRUCT
@@ -137,17 +147,31 @@ function record_firing!(f::Firing; actor::AbstractString, ep::SparqlEndpoint=end
                 <$(JH_NS)targetGraph> <$(f.target)> ;
                 <$(JH_NS)removedCount> $(f.removed) .
     """
+    # INSERT/WHERE rather than INSERT DATA, so the ordinal is read and written by the same
+    # update. Reading the maximum in a separate round trip would leave a window in which two
+    # firings could claim the same one -- and an ordinal that is merely usually unique is not
+    # a total order, which is the whole point of having it.
+    #
+    # An aggregate with no GROUP BY yields exactly one row even when its pattern matches
+    # nothing, so the first firing into an empty provenance graph gets ordinal 1 rather than
+    # no row and no record. That edge case is asserted in the suite, not assumed.
     update!(
         """
-    INSERT DATA { GRAPH <$PROVENANCE_GRAPH> {
+    INSERT {
+      GRAPH <$PROVENANCE_GRAPH> {
         <$(f.graph)> a <$(PROV_NS)Entity> , <$(JH_NS)Firing> ;
             <$(PROV_NS)generatedAtTime> "$(_now_xsd())"^^<http://www.w3.org/2001/XMLSchema#dateTime> ;
+            <$(JH_NS)ordinal> ?ord ;
             <$(JH_NS)appliedRule> <$(f.rule)> ;
             <$(JH_NS)rewriteMode> <$mode_iri> ;
             <$(JH_NS)actor> "$(escape_literal(actor))" ;
             <$(JH_NS)iteration> $(f.iteration) ;
             <$(JH_NS)tripleCount> $(f.count) .
-    $(srcs)$(rw)} }""";
+    $(srcs)$(rw)  }
+    } WHERE {
+      { SELECT (COALESCE(MAX(?o), 0) + 1 AS ?ord) WHERE {
+          GRAPH <$PROVENANCE_GRAPH> { ?any <$(JH_NS)ordinal> ?o } } }
+    }""";
         ep=ep,
     )
     return nothing
@@ -781,7 +805,7 @@ function firings(;
     filt = rule === nothing ? "" : "FILTER(?rule = <$(check_iri(rule))>)"
     rows = select(
         """
-SELECT ?g ?rule ?at ?n ?actor ?iter ?rem ?tomb WHERE {
+SELECT ?g ?rule ?at ?n ?actor ?iter ?rem ?tomb ?ord WHERE {
   GRAPH <$PROVENANCE_GRAPH> {
     ?g <$(JH_NS)appliedRule>       ?rule ;
        <$(PROV_NS)generatedAtTime> ?at ;
@@ -790,8 +814,9 @@ SELECT ?g ?rule ?at ?n ?actor ?iter ?rem ?tomb WHERE {
        <$(JH_NS)iteration>         ?iter .
     OPTIONAL { ?g <$(JH_NS)removedCount>   ?rem }
     OPTIONAL { ?g <$(JH_NS)tombstoneGraph> ?tomb }
+    OPTIONAL { ?g <$(JH_NS)ordinal>        ?ord }
   } $filt
-} ORDER BY DESC(?at) DESC(?iter)""";
+} ORDER BY DESC(?at) DESC(COALESCE(?ord, 0)) DESC(?iter)""";
         ep=ep,
     )
     return [
@@ -806,6 +831,10 @@ SELECT ?g ?rule ?at ?n ?actor ?iter ?rem ?tomb WHERE {
             # describing half the change.
             removed=haskey(r, "rem") ? parse(Int, (r["rem"]::RDFLiteral).lexical) : 0,
             tombstone=haskey(r, "tomb") ? (r["tomb"]::IRIRef).value : "",
+            # 0 for a record written before ordinals existed. Timestamp stays the primary
+            # sort key for exactly that reason: an old provenance graph must still read in a
+            # sensible order rather than collapsing into one bucket.
+            ordinal=haskey(r, "ord") ? parse(Int, (r["ord"]::RDFLiteral).lexical) : 0,
         ) for r in rows
     ]
 end

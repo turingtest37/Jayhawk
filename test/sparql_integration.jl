@@ -1067,6 +1067,63 @@ ex:s2 ex:p ex:plain .
 
         engine_cleanup()
         Jayhawk.update!("DROP SILENT GRAPH <$BKA> ; DROP SILENT GRAPH <$BKB>")
+        @testset "transaction time is totally ordered" begin
+            # A rule set made this matter. Before ordinals, both of these firings carried the
+            # same whole-second stamp and iteration 1, and firings() reported them in the wrong
+            # order -- consistently, so it looked trustworthy.
+            SETS = "http://example.org/sets/"
+            Jayhawk.load_file!(fixture("person_to_employee.trig"))
+            Jayhawk.load_file!(fixture("transitive_rule.trig"))
+            Jayhawk.load_file!(fixture("rule_set.trig"))
+            Jayhawk.update!("DROP SILENT GRAPH <$DATA_GRAPH>")
+            Jayhawk.update!("DROP SILENT GRAPH <$(Jayhawk.PROVENANCE_GRAPH)>")
+            Jayhawk.update!("""
+                INSERT DATA { GRAPH <$DATA_GRAPH> {
+                  <urn:o:p1> a <$(GIST)Person> ; <$(GIST)isIdentifiedBy> <urn:o:i1> .
+                  <urn:o:i1> a <$(GIST)ID> ; <$(GIST)containedText> "E-9" .
+                  <urn:o:a> <$(TC)partOf> <urn:o:b> .
+                  <urn:o:b> <$(TC)partOf> <urn:o:c> .
+                } }""")
+
+            fs = run_rules("$(SETS)HrThenParts"; source=[DATA_GRAPH], actor="ordinal-test")
+            log = [l for l in firings() if l.actor == "ordinal-test"]
+
+            @testset "the first firing into an empty provenance graph is ordinal 1" begin
+                # The aggregate edge case, asserted rather than assumed -- an earlier attempt
+                # left ?ord unbound here, and SPARQL silently drops a triple with an unbound
+                # object, so the ordinal vanished with no error anywhere.
+                @test minimum(l.ordinal for l in log) == 1
+            end
+
+            @testset "ordinals are distinct and the log is in application order" begin
+                @test length(unique(l.ordinal for l in log)) == length(log)
+                @test [l.graph for l in log] == reverse([f.graph for f in fs])
+                # and the stamps themselves now differ, which second resolution made impossible
+                @test all(occursin(".", l.at) for l in log)
+            end
+
+            @testset "an ordinal is never reused after an undo" begin
+                # MAX, not COUNT. Undoing a firing retracts its record, so a count-based ordinal
+                # would hand the next firing a number an existing record still holds -- and two
+                # records sharing an ordinal is exactly the tie it exists to break.
+                highest = maximum(l.ordinal for l in log)
+                earliest = argmin(l -> l.ordinal, log)
+                undo_firing!(earliest.graph)
+                f = run_rule(
+                    "$(RULES)PersonToEmployee"; source=[DATA_GRAPH], actor="ordinal-test"
+                )[1]
+                again = only(l for l in firings() if l.graph == f.graph)
+                @test again.ordinal > highest
+                undo_firing!(f.graph)
+            end
+
+            for f in reverse(fs)
+                is_firing(f.graph) && undo_firing!(f.graph)
+            end
+            Jayhawk.update!("DROP SILENT GRAPH <$DATA_GRAPH>")
+            engine_cleanup()
+        end
+
         @testset "a rule set loads and runs in order" begin
             SETS = "http://example.org/sets/"
             Jayhawk.load_file!(fixture("person_to_employee.trig"))
