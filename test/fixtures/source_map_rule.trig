@@ -1,0 +1,134 @@
+#  gistp:SourceMap: naming a column instead of a Facade-X predicate.
+#
+#  A gistp:TabularDataSource already compiled to SERVICE <x-sparql-anything:>, so a rule could
+#  always read a CSV -- but it had to name the Facade-X predicates itself. That meant the
+#  author doing the percent-encoding and knowing the row-container idiom, neither of which is
+#  anything to do with the rule. A source map says "this variable comes from that column" and
+#  the compiler owes the rest.
+#
+#  The column strings here are the source's own spelling, which is what gistp:mapFromString
+#  is for: 'given name' has a space and 'dc.title[en]' has brackets. SPARQL Anything encodes
+#  the first and not the second, and the compiler has to agree with it exactly or the rule
+#  matches nothing. See fx_predicate for how that rule was established -- by measurement,
+#  because the published documentation is wrong about it.
+#
+#      default graph   the Rule, its data source, its variables and its source maps
+#      named graph L   EMPTY of Facade-X triples: the maps generate them
+#      named graph R   what becomes true
+
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix fx:    <http://sparql.xyz/facade-x/ns/> .
+@prefix ex:    <http://example.org/staff/> .
+@prefix :      <http://example.org/smrules/> .
+
+:StaffFromCsv
+    rdf:type gistp:Rule ;
+    skos:prefLabel "Staff from CSV" ;
+    skos:definition """Read a staff roster, minting a person per row from the id column and
+                       cleaning the title and skills columns on the way in.""" ;
+    gistp:hasMatchPattern     :StaffFromCsv_L ;
+    gistp:hasConstructPattern :StaffFromCsv_R ;
+    gistp:rewriteMode         gistp:Construct .
+
+:StaffFromCsv_L rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "match: a row of the roster" ;
+    gistp:inGraph :_Roster .
+
+:StaffFromCsv_R rdf:type gistp:SparqlPattern ;
+    skos:prefLabel "construct: the person" .
+
+:_Roster rdf:type gistp:TabularDataSource ;
+    fx:location    "test/fixtures/staff.csv" ;
+    fx:csv.headers "true" ;
+    fx:null-string "" .
+
+# --- source maps -----------------------------------------------------------
+
+# The plain case: one column, one variable, no pipeline. Compiles to exactly the triple an
+# author would have written by hand -- which is the point. The feature is not a new
+# mechanism, it is the author no longer owing an IRI.
+:IdMap a gistp:SourceMap ;
+    gistp:mapTo         :_id ;
+    gistp:mapFromString "id" .
+
+# A column whose name needs encoding. The author writes the space; the compiler writes %20.
+:GivenMap a gistp:SourceMap ;
+    gistp:mapTo         :_given ;
+    gistp:mapFromString "given name" .
+
+# Brackets, which SPARQL Anything does NOT encode -- and a value pipeline. The titles carry a
+# parenthetical the roster's owner wants dropped, and gistp:stringBefore says so without a
+# FILTER or a BIND in the pattern.
+:TitleMap a gistp:SourceMap ;
+    gistp:mapTo         :_title ;
+    gistp:mapFromString "dc.title[en]" ;
+    gistp:stringBefore  " (" .
+
+# A multi-valued cell. gistp:separator is a literal string, not a regular expression, so "||"
+# reaches the store as \|\| -- an author who writes "." means a full stop.
+#
+# The two patterns are decisions about a finished value rather than transformations of it, so
+# they come last and compile to FILTERs: keep anything lowercase, drop anything empty.
+:SkillsMap a gistp:SourceMap ;
+    gistp:mapTo             :_skill ;
+    gistp:mapFromString     "skills" ;
+    gistp:separator         "||" ;
+    gistp:valuePatternMatch "^[a-z]+$" .
+
+# --- variables -------------------------------------------------------------
+
+:_id a gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?id" ;
+    gistp:requiresDatatype xsd:string .
+:_given a gistp:LiteralVariable , gistp:SparqlVariable ; gistp:variableText "?given" .
+:_title a gistp:LiteralVariable , gistp:SparqlVariable ; gistp:variableText "?title" .
+:_skill a gistp:LiteralVariable , gistp:SparqlVariable ; gistp:variableText "?skill" .
+
+# Minted from the id column, which a source map bound. That is the join the feature exists
+# for: iriTemplate reads a value the match pattern never mentions.
+:_Person a gistp:SparqlVariable ;
+    gistp:variableText "?_Person" ;
+    gistp:iriTemplate  "http://example.org/staff/{id}" ;
+    gistp:hasSlot [ rdf:type gistp:TemplateSlot ;
+                    gistp:slotName "id" ; gistp:slotValue :_id ] .
+
+#################################################################
+#    L -- empty of Facade-X triples on purpose
+#################################################################
+#
+#  Every triple the SERVICE needs is generated from the source maps. A pattern that also
+#  named a mapped variable would JOIN with the generated triple, quietly requiring the column
+#  and the pattern to carry the same string -- check_source_maps refuses that.
+#
+#  L is therefore EMPTY, and that is the correct shape rather than a shortcut. An earlier
+#  draft of this fixture put `:_Roster rdf:type gistp:TabularDataSource` here for fear that an
+#  empty pattern would be refused -- which would have been a silent disaster: the triple lands
+#  INSIDE the SERVICE, where the CSV contains no such statement, so the whole rule would have
+#  matched nothing while looking perfectly reasonable.
+
+:StaffFromCsv_L {
+}
+
+#################################################################
+#    R -- what becomes true
+#################################################################
+
+:StaffFromCsv_R {
+    :_Person rdf:type ex:Person ;
+             ex:givenName "?given"^^gistp:var ;
+             ex:title     "?title"^^gistp:var ;
+             ex:skill     "?skill"^^gistp:var .
+}
+
+#  What this rule does to row p3, which is worth knowing before you write one.
+#
+#  p3 is 'TBD-hire,Vacant,' -- an empty skills cell. gistp:separator splits it into no values
+#  at all, so the row yields NO SOLUTION, and p3 disappears entirely: not just its skills but
+#  its type and its name too. That is ordinary SPARQL -- a mapped variable is a required join,
+#  not an optional one -- but it is the opposite of what someone reading the source maps
+#  top-to-bottom would guess, and it is why the roster has a third row at all. Anything that
+#  must survive a missing cell needs its own rule.

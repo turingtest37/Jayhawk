@@ -1193,6 +1193,138 @@ ex:s2 ex:p ex:plain .
             engine_cleanup()
         end
 
+        @testset "source maps load off the store and generate the Facade-X shape" begin
+            # Stock Fuseki has no x-sparql-anything: SERVICE, so what is asserted here is the
+            # compiled text and the loading. The rule is run against real SPARQL Anything in
+            # test/fixtures -- see the fixture's own notes and the commit that added it.
+            SMR = "http://example.org/smrules/"
+            STAFF = "http://example.org/staff/"
+            Jayhawk.load_file!(fixture("source_map_rule.trig"))
+
+            @testset "a map is found from the variable it feeds, including a mint slot's" begin
+                spec = load_rule("$(SMR)StaffFromCsv")
+                @test length(spec.source_maps) == 4
+                byvar = Dict(m.variable => m for m in spec.source_maps)
+                @test sort(collect(keys(byvar))) == ["?given", "?id", "?skill", "?title"]
+                @test byvar["?given"].column == "given name"
+                @test byvar["?title"].column == "dc.title[en]"
+                @test byvar["?title"].string_before == " ("
+                @test byvar["?skill"].separator == "||"
+                @test byvar["?skill"].pattern_match == "^[a-z]+\$"
+                # ?id appears in NO pattern -- only as an iriTemplate slot value. Judging
+                # relevance from the patterns alone dropped exactly this map, and the failure
+                # surfaced as "minting from another minted variable", which it is not.
+                @test byvar["?id"].column == "id"
+                @test !any(
+                    t -> any(
+                        x ->
+                            x isa RDFLiteral && is_var_literal(x) && x.lexical == "?id",
+                        (t.subject, t.predicate, t.object),
+                    ),
+                    vcat(spec.match, spec.construct),
+                )
+            end
+
+            @testset "the generated triples sit inside the SERVICE, the pipeline outside" begin
+                q = compile_from_store("$(SMR)StaffFromCsv")
+                @test occursin("SERVICE <$(Jayhawk.SA_SERVICE)>", q)
+                svc = q[findfirst("SERVICE", q).start:findfirst("\n  }", q).stop]
+                # the row variable is synthesised, so the author never writes rdf:_1 or fx:root
+                @test occursin("$(Jayhawk.FX_ROW_VAR) <$(Jayhawk.XYZ_NS)id> ?id .", svc)
+                @test occursin(
+                    "$(Jayhawk.FX_ROW_VAR) <$(Jayhawk.XYZ_NS)given%20name> ?given .", svc
+                )
+                @test occursin("$(Jayhawk.XYZ_NS)dc.title[en]", svc)     # NOT %5Ben%5D
+                # apf:strSplit is an ARQ property function the Facade-X evaluator has no reason
+                # to know, and the split joins over values the service already produced.
+                @test !occursin("strSplit", svc)
+                @test occursin("<$(Jayhawk.APF_STRSPLIT)> (?__rawskill", q)
+                # the separator reached the store as a regex, not as a literal "||"
+                @test occursin("\"\\\\|\\\\|\"", q)
+                @test q == compile_from_store("$(SMR)StaffFromCsv")      # byte-stable
+            end
+
+            @testset "the mint reads a column the pattern never names" begin
+                q = compile_from_store("$(SMR)StaffFromCsv")
+                @test occursin("ENCODE_FOR_URI(STR(?id))", q)
+                @test findfirst("<$(Jayhawk.XYZ_NS)id> ?id", q).start <
+                    findfirst("AS ?_Person", q).start
+            end
+
+            @testset "every list-valued alternative is refused by name" begin
+                # Fetched with OPTIONAL purely so they can be refused: read through an inner join
+                # they would come back as no source map at all, and the rule would compile to a
+                # pattern with an unbound variable rather than to an error.
+                for (prop, fragment) in (
+                    (Jayhawk.P_MAPFROM, "has no class for one yet"),
+                    (Jayhawk.P_MAPFIRST, "COALESCE"),
+                    (Jayhawk.P_MAPEACH, "MULTIPLIES solutions"),
+                    (Jayhawk.P_CONCAT, "CONCAT"),
+                )
+                    Jayhawk.update!(
+                        "INSERT DATA { <$(SMR)IdMap> <$prop> <urn:sm:whatever> }"
+                    )
+                    e = try
+                        load_rule("$(SMR)StaffFromCsv")
+                    catch err
+                        err
+                    end
+                    @test e isa ErrorException
+                    @test occursin(fragment, sprint(showerror, e))
+                    Jayhawk.update!(
+                        "DELETE DATA { <$(SMR)IdMap> <$prop> <urn:sm:whatever> }"
+                    )
+                end
+                # and with them all gone it loads again, which is what makes the above meaningful
+                @test length(load_rule("$(SMR)StaffFromCsv").source_maps) == 4
+            end
+
+            @testset "a map with no column, and two maps for one variable, are refused" begin
+                Jayhawk.update!(
+                    "DELETE DATA { <$(SMR)IdMap> <$(Jayhawk.P_MAPFROMSTR)> \"id\" }"
+                )
+                e = try
+                    load_rule("$(SMR)StaffFromCsv")
+                catch err
+                    err
+                end
+                @test occursin("declares no gistp:mapFromString", sprint(showerror, e))
+                Jayhawk.update!(
+                    "INSERT DATA { <$(SMR)IdMap> <$(Jayhawk.P_MAPFROMSTR)> \"id\" }"
+                )
+
+                Jayhawk.update!("""INSERT DATA {
+                    <$(SMR)IdMap2> a <$(Jayhawk.C_SOURCEMAP)> ;
+                        <$(Jayhawk.P_MAPTO)> <$(SMR)_id> ;
+                        <$(Jayhawk.P_MAPFROMSTR)> "identifier" }""")
+                e = try
+                    load_rule("$(SMR)StaffFromCsv")
+                catch err
+                    err
+                end
+                @test occursin(
+                    "is fed by more than one gistp:SourceMap", sprint(showerror, e)
+                )
+                Jayhawk.update!("DELETE WHERE { <$(SMR)IdMap2> ?p ?o }")
+                @test length(load_rule("$(SMR)StaffFromCsv").source_maps) == 4
+            end
+
+            Jayhawk.update!("DROP SILENT GRAPH <$(SMR)StaffFromCsv_L>")
+            Jayhawk.update!("DROP SILENT GRAPH <$(SMR)StaffFromCsv_R>")
+            Jayhawk.update!("""
+                DELETE WHERE { ?s a <$(Jayhawk.C_SOURCEMAP)> } ;
+                DELETE WHERE { ?s <$(Jayhawk.P_MAPTO)> ?o } ;
+                DELETE WHERE { ?s <$(Jayhawk.P_MAPFROMSTR)> ?o } ;
+                DELETE WHERE { ?s <$(Jayhawk.P_SEPARATOR)> ?o } ;
+                DELETE WHERE { ?s <$(Jayhawk.P_STRBEFORE)> ?o } ;
+                DELETE WHERE { ?s <$(Jayhawk.P_PATMATCH)> ?o } ;
+                DELETE WHERE { ?s <$(Jayhawk.P_PATEXCLUDE)> ?o } ;
+                DELETE WHERE { ?s a <$(Jayhawk.C_LITERALVAR)> } ;
+                DELETE WHERE { ?s <$(Jayhawk.P_INGRAPH)> ?o } ;
+                DELETE WHERE { ?s a <$(Jayhawk.C_TABULARSOURCE)> }""")
+            engine_cleanup()
+        end
+
         @testset "a rule can declare where its output goes" begin
             # Write-side gistp:inGraph. What does NOT change is the firing graph: a scoped rule
             # still projects R into a fresh one, which is then pruned and promoted. That is why

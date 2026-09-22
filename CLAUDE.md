@@ -206,12 +206,42 @@ Still refused: a scope on R with `Rewrite` (a rewrite's destination *is* the gra
 naming a second is a different operation), and a scope on R naming a `gistp:TabularDataSource`
 (a SERVICE cannot be written to).
 
+### `gistp:SourceMap` — built
+A source map says "this variable comes from that column" and the compiler owes the rest: the
+Facade-X predicate IRI, the row container, and the value pipeline. The match pattern no
+longer names `xyz:` predicates, and for an extraction rule L is **empty** — the maps supply
+all of it.
+
+`mapFromString` carries "the source's own spelling", so `fx_predicate` owes the encoding, and
+**the rule was measured against SPARQL Anything 1.3.0 rather than read from its docs, which
+are wrong**: both upstream and the local skill notes claim `dc.title[en]` becomes
+`dc.title%5Ben%5D`. It does not. That version encodes exactly the characters SPARQL's
+`IRIREF` production forbids — `<>"{}|^\` and backtick, plus ≤U+0020 — and leaves brackets,
+`%` and `#` raw. A query naming the documented form matches nothing. That set is precisely
+what `check_iri` rejects, so the encoder's specification is "make it pass `check_iri`,
+changing nothing else" — the agreement is the same SPARQL production seen twice.
+
+The pipeline order is the vocabulary's, not a choice: `separator` splits (so must be first),
+`stringBefore` truncates each value, then `valuePatternMatch` / `valuePatternExclude` are
+decisions about a finished value and compile to `FILTER`s. `separator` is a literal string
+while ARQ's `apf:strSplit` takes a regex, so `regex_quote` owes that escaping too — an author
+who writes `"."` means a full stop. `stringBefore` compiles to
+`IF(CONTAINS(…), STRBEFORE(…), …)` rather than a bare `STRBEFORE`, which returns the empty
+string when the needle is absent and would silently blank every value not containing it.
+
+A map with no pipeline compiles to exactly the one triple an author would have written by
+hand. The feature is not a new mechanism; it is the author no longer owing an IRI.
+
+Worth knowing before writing one: a mapped variable is a **required** join. A row whose
+mapped cell is empty yields no solution at all, so the whole row vanishes — not just that
+value. Ordinary SPARQL, and the opposite of what the maps read like.
+
 ### Known next tasks
-- **`gistp:SourceMap` is unbuilt.** A scope naming a `gistp:TabularDataSource` compiles to
-  `SERVICE <x-sparql-anything:>`, so a rule can read a CSV directly — but only the *binding
-  source* half exists. The `SourceMap` half (`mapFrom`/`mapFirst`/`mapEach` → a Facade-X BGP,
-  plus the `separator` / `stringBefore` / `valuePattern*` pipeline) is not, so the pattern
-  still names `xyz:` columns itself.
+- **The list-valued source-map terms are unbuilt**: `gistp:mapFrom` (the vocabulary has no
+  class for a source attribute, so there is nothing to read a column name off),
+  `gistp:mapFirst` (COALESCE over one binding per member), `gistp:concat` (CONCAT likewise),
+  and `gistp:mapEach` — the hardest, because it *multiplies* solutions and so is a UNION over
+  the match rather than an expression over one binding. All four are refused by name.
 - **A write destination must be a constant.** A graph *variable* on R would send different
   solutions to different graphs, and a firing graph is one flat set of triples with nowhere
   to record which triple went where — so undo could not reverse it. Refused. Per-solution

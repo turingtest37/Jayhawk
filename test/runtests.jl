@@ -2107,6 +2107,251 @@ end
     end
 end
 
+@testset "source maps (pure)" begin
+    # The parts of gistp:SourceMap that need no store: the two encoders, the emitted shape,
+    # and the refusals. Loading a map out of a triplestore is exercised in
+    # test/sparql_integration.jl, and the whole rule is run against real SPARQL Anything
+    # there too -- stock Fuseki has no such SERVICE.
+    R = "http://example.org/rules/"
+    iri(x) = IRIRef(x)
+    var(x) = RDFLiteral(x, Jayhawk.GISTP_VAR)
+    XYZ = Jayhawk.XYZ_NS
+
+    @testset "fx_predicate encodes exactly what SPARQL's IRIREF forbids" begin
+        # MEASURED against SPARQL Anything 1.3.0, not read from its docs, which are wrong:
+        # both the upstream reference and the local skill notes claim dc.title[en] becomes
+        # dc.title%5Ben%5D. It does not, and a query naming that form matches nothing.
+        @test fx_predicate("id") == "$(XYZ)id"
+        @test fx_predicate("given name") == "$(XYZ)given%20name"       # space IS encoded
+        @test fx_predicate("dc.title[en]") == "$(XYZ)dc.title[en]"     # brackets are NOT
+        @test fx_predicate("a%b") == "$(XYZ)a%b"                       # nor is percent
+        @test fx_predicate("a#b") == "$(XYZ)a#b"                       # nor hash
+        for (raw, enc) in (
+            "a|b" => "a%7Cb",
+            "a{b}" => "a%7Bb%7D",
+            "a^b" => "a%5Eb",
+            "a`b" => "a%60b",
+            "a\\b" => "a%5Cb",
+            "a<b>c" => "a%3Cb%3Ec",
+            "a\"b" => "a%22b",
+        )
+            @test fx_predicate(raw) == "$(XYZ)$enc"
+        end
+        # The specification is "make it pass check_iri, changing nothing else" -- and the
+        # agreement between the two sets is no coincidence: both come from the same
+        # SPARQL production.
+        for h in ("id", "given name", "dc.title[en]", "a|b", "a{b}", "a^b", "a\"b", "a b c")
+            @test Jayhawk.check_iri(fx_predicate(h)) == fx_predicate(h)
+        end
+    end
+
+    @testset "regex_quote makes a separator mean itself" begin
+        # gistp:separator is "the character or string which separates usable values" -- a
+        # literal. apf:strSplit takes a REGEX. An author who writes "." means a full stop,
+        # and without this the field would split between every character of it.
+        @test regex_quote("||") == "\\|\\|"
+        @test regex_quote(".") == "\\."
+        @test regex_quote(";") == ";"                     # nothing to escape
+        @test regex_quote("a+b(c)") == "a\\+b\\(c\\)"
+    end
+
+    smspec(maps) = RuleSpec(
+        "$(R)Extract",
+        Jayhawk.MODE_CONSTRUCT,
+        "$(R)Extract_L",
+        "$(R)Extract_R",
+        PatternTriple[],
+        [
+            PatternTriple(
+                iri("http://example.org/s"), iri("http://example.org/p"), var("?given")
+            ),
+        ],
+        Dict{String,String}(),
+        Dict{String,MintSpec}(),
+        Dict{String,Vector{RDFTerm}}(),
+        NacSpec[],
+        nothing,
+        0,
+        nothing,
+        "$(R)_Src",
+        nothing,
+        Dict("$(R)_Src" => ["$(Jayhawk.FX_NS)location" => "d.csv"]),
+        String[],
+        maps,
+    )
+
+    @testset "a map with no pipeline is one triple pattern" begin
+        # The feature is not a new mechanism, it is the author no longer owing an IRI: the
+        # simple case compiles to exactly what they would have written by hand.
+        spec = smspec([
+            SourceMapSpec(
+                "$(R)M", "?given", "given name", nothing, nothing, nothing, nothing
+            ),
+        ])
+        bgp = source_map_bgp(spec)
+        @test bgp == "  $(Jayhawk.FX_ROW_VAR) <$(XYZ)given%20name> ?given .\n"
+        @test source_map_pipeline(spec) == ""        # nothing to clean, nothing emitted
+    end
+
+    @testset "a pipeline binds a raw variable first, because SPARQL cannot rebind" begin
+        spec = smspec([
+            SourceMapSpec("$(R)M", "?skill", "skills", "||", " (", "^[a-z]+\$", "^x")
+        ])
+        @test occursin("<$(XYZ)skills> ?__rawskill .", source_map_bgp(spec))
+        pipe = source_map_pipeline(spec)
+        # split first -- everything after it operates on one value, not the unsplit cell
+        @test occursin(
+            "?__spskill <$(Jayhawk.APF_STRSPLIT)> (?__rawskill \"\\\\|\\\\|\")", pipe
+        )
+        # then truncate, and NOT with a bare STRBEFORE: "if the object string does not match,
+        # the incoming value must be retained unchanged", and STRBEFORE returns "" instead.
+        @test occursin("IF(CONTAINS(?__spskill", pipe)
+        @test occursin("AS ?skill)", pipe)
+        # then the two decisions about a finished value, as FILTERs
+        @test occursin("FILTER(REGEX(?skill, \"^[a-z]+\$\"))", pipe)
+        @test occursin("FILTER(!REGEX(?skill, \"^x\"))", pipe)
+        @test findfirst("strSplit", pipe).start < findfirst("IF(CONTAINS", pipe).start
+        @test findfirst("IF(CONTAINS", pipe).start < findfirst("FILTER(REGEX", pipe).start
+    end
+
+    @testset "a source map without a data source is refused" begin
+        # Only a gistp:TabularDataSource makes columns exist. Without one the generated row
+        # variable would range over whatever the dataset clause holds -- matching the wrong
+        # thing rather than failing.
+        bare = RuleSpec(
+            "$(R)Extract",
+            Jayhawk.MODE_CONSTRUCT,
+            "$(R)Extract_L",
+            "$(R)Extract_R",
+            PatternTriple[],
+            [
+                PatternTriple(
+                    iri("http://example.org/s"), iri("http://example.org/p"), var("?given")
+                ),
+            ],
+            Dict{String,String}(),
+            Dict{String,MintSpec}(),
+            Dict{String,Vector{RDFTerm}}(),
+            NacSpec[],
+            nothing,
+            0,
+            nothing,
+            nothing,
+            nothing,
+            Dict{String,Vector{Pair{String,String}}}(),
+            String[],
+            [
+                SourceMapSpec(
+                    "$(R)M", "?given", "given name", nothing, nothing, nothing, nothing
+                ),
+            ],
+        )
+        e = try
+            check_source_maps(bare)
+        catch err
+            err
+        end
+        @test e isa ErrorException
+        @test occursin(
+            "no gistp:inGraph naming a gistp:TabularDataSource", sprint(showerror, e)
+        )
+    end
+
+    @testset "a variable both mapped and matched is refused" begin
+        # The generated triple and the authored one would JOIN, so the rule would quietly
+        # require the column and the pattern to carry the same string.
+        clash = RuleSpec(
+            "$(R)Extract",
+            Jayhawk.MODE_CONSTRUCT,
+            "$(R)Extract_L",
+            "$(R)Extract_R",
+            [
+                PatternTriple(
+                    iri("http://example.org/s"), iri("http://example.org/q"), var("?given")
+                ),
+            ],
+            [
+                PatternTriple(
+                    iri("http://example.org/s"), iri("http://example.org/p"), var("?given")
+                ),
+            ],
+            Dict{String,String}(),
+            Dict{String,MintSpec}(),
+            Dict{String,Vector{RDFTerm}}(),
+            NacSpec[],
+            nothing,
+            0,
+            nothing,
+            "$(R)_Src",
+            nothing,
+            Dict("$(R)_Src" => ["$(Jayhawk.FX_NS)location" => "d.csv"]),
+            String[],
+            [
+                SourceMapSpec(
+                    "$(R)M", "?given", "given name", nothing, nothing, nothing, nothing
+                ),
+            ],
+        )
+        e = try
+            check_source_maps(clash)
+        catch err
+            err
+        end
+        @test e isa ErrorException
+        @test occursin("both fed by a gistp:SourceMap and", sprint(showerror, e))
+    end
+
+    @testset "an empty match pattern is allowed only when maps supply it" begin
+        # For an extraction rule the maps supply ALL of L, and an author with nothing else to
+        # say about the row correctly writes nothing. Requiring a token triple would be worse:
+        # the obvious one -- the data source's own type assertion -- lands inside the SERVICE
+        # where the CSV holds no such statement, and the rule matches nothing while looking
+        # entirely reasonable.
+        ok = smspec([
+            SourceMapSpec(
+                "$(R)M", "?given", "given name", nothing, nothing, nothing, nothing
+            ),
+        ])
+        @test compile_rule(ok; from=String[]) isa String
+        # R here mentions no variable at all, so check_bound passes and the empty-pattern
+        # check is what actually fires. With a variable in R the earlier, better error wins --
+        # it names the unbound variable -- which is why this spec is deliberately duller.
+        novars = RuleSpec(
+            "$(R)Extract",
+            Jayhawk.MODE_CONSTRUCT,
+            "$(R)Extract_L",
+            "$(R)Extract_R",
+            PatternTriple[],
+            [
+                PatternTriple(
+                    iri("http://example.org/s"),
+                    iri("http://example.org/p"),
+                    iri("http://example.org/o"),
+                ),
+            ],
+            Dict{String,String}(),
+            Dict{String,MintSpec}(),
+            Dict{String,Vector{RDFTerm}}(),
+            NacSpec[],
+            nothing,
+            0,
+            nothing,
+            nothing,
+            nothing,
+            Dict{String,Vector{Pair{String,String}}}(),
+            String[],
+            SourceMapSpec[],
+        )
+        e = try
+            compile_rule(novars; from=String[])
+        catch err
+            err
+        end
+        @test e isa ErrorException
+        @test occursin("is empty and no gistp:SourceMap supplies it", sprint(showerror, e))
+    end
+end
+
 @testset "transaction time carries fractional seconds" begin
     # Whole seconds were not a rounding choice, they were a defect: every firing a rule SET
     # produces lands inside one second and all report iteration 1, so the provenance log had

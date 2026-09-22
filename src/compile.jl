@@ -102,6 +102,24 @@ end
 NacSpec(graph, triples) = NacSpec(graph, triples, nothing)
 
 """
+One `gistp:SourceMap`: a column, the literal variable it feeds, and the value pipeline.
+
+`column` is the source's own spelling; [`fx_predicate`](@ref) turns it into an IRI. The four
+pipeline fields are each `nothing` when unstated, and a map with none of them compiles to a
+single triple pattern -- which is what keeps an ordinary extraction rule's output as simple
+as it was when the author wrote the predicate by hand.
+"""
+struct SourceMapSpec
+    iri::String
+    variable::String                       # the gistp:variableText it binds, e.g. "?given"
+    column::String
+    separator::Union{String,Nothing}
+    string_before::Union{String,Nothing}
+    pattern_match::Union{String,Nothing}
+    pattern_exclude::Union{String,Nothing}
+end
+
+"""
 Everything the compiler needs about one rule, already fetched.
 
 `variables` maps a variable's IRI to its `gistp:variableText`. `mints` holds the minted
@@ -144,6 +162,55 @@ struct RuleSpec
     # is spliced into the query, so `check_filters` has to earn that splice -- see it for
     # what is rejected and why.
     filters::Vector{String}
+    # gistp:SourceMap: which column feeds which literal variable, and how the value is
+    # cleaned on the way. Compilation input like `mints` and `enums` -- it becomes triple
+    # patterns inside the SERVICE plus a pipeline after the match. Empty for every rule that
+    # names its own Facade-X predicates, which is what keeps those rules' output unchanged.
+    source_maps::Vector{SourceMapSpec}
+end
+
+# The full spec minus `source_maps`, which is the arity everything written before source maps
+# existed uses. Same bargain as the constructors below: adding a field to the spec must not
+# invalidate a call site that had nothing to say about it.
+function RuleSpec(
+    iri,
+    mode,
+    lg,
+    cg,
+    match,
+    construct,
+    variables,
+    mints,
+    enums,
+    nacs,
+    strategy,
+    priority,
+    maxit,
+    mscope,
+    cscope,
+    services,
+    filters,
+)
+    return RuleSpec(
+        iri,
+        mode,
+        lg,
+        cg,
+        match,
+        construct,
+        variables,
+        mints,
+        enums,
+        nacs,
+        strategy,
+        priority,
+        maxit,
+        mscope,
+        cscope,
+        services,
+        filters,
+        SourceMapSpec[],
+    )
 end
 
 # Every call site written before the control layer stays valid: a rule with no negative
@@ -167,6 +234,7 @@ function RuleSpec(iri, mode, lg, cg, match, construct, variables, mints)
         nothing,
         Dict{String,Vector{Pair{String,String}}}(),
         String[],
+        SourceMapSpec[],
     )
 end
 
@@ -191,6 +259,7 @@ function RuleSpec(
         nothing,
         Dict{String,Vector{Pair{String,String}}}(),
         String[],
+        SourceMapSpec[],
     )
 end
 
@@ -227,6 +296,7 @@ function RuleSpec(
         nothing,
         Dict{String,Vector{Pair{String,String}}}(),
         String[],
+        SourceMapSpec[],
     )
 end
 
@@ -267,6 +337,7 @@ function RuleSpec(
         cscope,
         Dict{String,Vector{Pair{String,String}}}(),
         String[],
+        SourceMapSpec[],
     )
 end
 
@@ -380,6 +451,11 @@ SELECT ?mode ?l ?c WHERE {
     # would be loaded as no variable at all and emitted as a bare IRI.
     graphs = String[lg, cg, (n.graph for n in nacs)...]
 
+    # Bound rather than inlined because `load_source_maps` needs both: a source map is found
+    # from the variables the rule uses, and a mint slot is one of the places a rule uses one.
+    vars = load_variables(graphs; ep=ep)
+    mints = load_mints(graphs; ep=ep)
+
     return RuleSpec(
         r,
         mode,
@@ -387,8 +463,8 @@ SELECT ?mode ?l ?c WHERE {
         cg,
         load_pattern(lg; ep=ep),
         load_pattern(cg; ep=ep),
-        load_variables(graphs; ep=ep),
-        load_mints(graphs; ep=ep),
+        vars,
+        mints,
         load_enums(graphs; ep=ep),
         nacs,
         load_strategy(r; ep=ep),
@@ -407,7 +483,28 @@ SELECT ?mode ?l ?c WHERE {
             ep=ep,
         ),
         load_filters(r; ep=ep),
+        load_source_maps(r, graphs; also=_slot_var_texts(vars, mints), ep=ep),
     )
+end
+
+"""
+    _slot_var_texts(variables, mints) -> Set{String}
+
+The `gistp:variableText` of every variable an `gistp:iriTemplate` slot supplies.
+
+Separate from the patterns because a slot value is a statement in the default graph, not a
+triple in L or R: a minted IRI can read a variable that appears in neither.
+"""
+function _slot_var_texts(
+    variables::AbstractDict{String,String}, mints::AbstractDict{String,MintSpec}
+)
+    out = Set{String}()
+    for (_, m) in mints, (_, term) in m.slots
+        term isa IRIRef || continue
+        t = get(variables, term.value, nothing)
+        t === nothing || push!(out, t)
+    end
+    return out
 end
 
 """
@@ -893,8 +990,16 @@ function check_mints(spec::RuleSpec)
     # now that `match_text` scopes the collision and fan-in queries too: while those built an
     # unscoped L, a mint keyed on the graph variable would have been checked against a query
     # in which that variable was unbound.
+    #
+    # A source-mapped variable counts too, and this is the join the feature exists for: an
+    # iriTemplate minting a node per row reads the id COLUMN, which the match pattern never
+    # mentions. Without this, the obvious thing to want from a source map is refused with a
+    # message about minting from another minted variable, which it is not.
     bound = union(
-        vars_in(spec.match, spec), enum_vars(spec), scope_vars(spec.match_scope, spec)
+        vars_in(spec.match, spec),
+        enum_vars(spec),
+        scope_vars(spec.match_scope, spec),
+        Set(m.variable for m in spec.source_maps),
     )
     for (iri, m) in spec.mints
         text = get(spec.variables, iri, nothing)
@@ -1276,6 +1381,10 @@ and a template may mint from it; each condition wraps its own triples inside its
 function where_body(spec::RuleSpec)
     return string(
         match_text(spec),
+        # Before VALUES and BIND, both of which may read a mapped value: a minted IRI built
+        # from a column has to see the cleaned string, not the raw cell. And after the match,
+        # because `apf:strSplit` joins over values the SERVICE has already produced.
+        source_map_pipeline(spec),
         values_text(spec),
         binds_text(spec),
         nacs_text(spec),
@@ -1303,12 +1412,23 @@ function match_text(spec::RuleSpec; indent::AbstractString="  ")
     return if spec.match_scope === nothing
         bgp_text(spec.match, spec; indent=indent)
     else
-        graph_wrap(
-            bgp_text(spec.match, spec; indent=indent * "  "),
-            spec.match_scope,
-            spec;
-            indent=indent,
-        )
+        # Source maps go INSIDE the wrapper, because the row container only exists there.
+        # They are appended rather than prepended so an authored pattern renders exactly as
+        # it did before any source map existed.
+        # bgp_text does not end in a newline and source_map_bgp does, so the two need a
+        # separator between them and none after -- graph_wrap adds its own. Getting this
+        # wrong ran the last authored triple and the first generated one onto a single line,
+        # which SPARQL accepts and a reader does not.
+        authored = bgp_text(spec.match, spec; indent=indent * "  ")
+        generated = source_map_bgp(spec; indent=indent * "  ")
+        inner = if isempty(authored)
+            chomp(generated)
+        elseif isempty(generated)
+            authored
+        else
+            authored * "\n" * chomp(generated)
+        end
+        graph_wrap(inner, spec.match_scope, spec; indent=indent)
     end
 end
 
@@ -1970,11 +2090,20 @@ function check_bound(spec::RuleSpec)
     check_mints(spec)
     check_scopes(spec)
     check_filters(spec)
+    check_source_maps(spec)
     # L's graph variable is bound by the GRAPH clause, not by any triple, so `vars_in` -- which
     # walks subject, predicate and object -- cannot see it. Without this a rule that records
     # which graph a fact came from, the whole point of scoping the match, is refused as
     # use-before-def on the one variable L most definitely binds.
-    matched = union(vars_in(spec.match, spec), scope_vars(spec.match_scope, spec))
+    matched = union(
+        vars_in(spec.match, spec),
+        scope_vars(spec.match_scope, spec),
+        # A source-mapped variable is bound by a triple pattern the COMPILER generates, so
+        # `vars_in` -- which walks only the authored pattern -- cannot see it. Without this,
+        # the whole point of a source map (letting R use a column the pattern never names) is
+        # refused as use-before-def on the one variable that is most definitely bound.
+        Set(m.variable for m in spec.source_maps),
+    )
 
     # A negative condition's *graph* may not be a variable L does not bind, and the asymmetry
     # is worth stating because it is not obvious: a condition's TRIPLES may introduce fresh
@@ -2043,8 +2172,19 @@ function compile_rule(spec::RuleSpec; from::AbstractVector=String[])
     m = mode_symbol(spec)
     froms = dataset_lines(spec, from; keyword="FROM")
 
+    # A rule with no L matches everything, so an empty match pattern is refused -- unless
+    # source maps supply it. For an extraction rule they supply ALL of it: every triple the
+    # SERVICE needs is generated from the columns, and an author with nothing else to say
+    # about the row correctly has nothing to write here. Requiring a token triple would be
+    # worse than permitting none, because the obvious token -- the data source's own type
+    # assertion -- lands inside the SERVICE where the CSV contains no such statement, and the
+    # rule would match nothing while looking entirely reasonable.
     isempty(spec.match) &&
-        error("rule <$(spec.iri)>: match pattern <$(spec.match_graph)> is empty.")
+        isempty(spec.source_maps) &&
+        error(
+            "rule <$(spec.iri)>: match pattern <$(spec.match_graph)> is empty and no " *
+            "gistp:SourceMap supplies it, so the rule would match everything.",
+        )
     isempty(spec.construct) &&
         error("rule <$(spec.iri)>: construct pattern <$(spec.construct_graph)> is empty.")
 
@@ -2496,6 +2636,354 @@ SELECT ?r ?mode ?label ?def (COUNT(?n) AS ?guards) WHERE {
 end
 
 #################################################################
+#    Source maps: naming a column instead of a Facade-X predicate
+#################################################################
+#
+# A gistp:TabularDataSource already compiles to SERVICE <x-sparql-anything:>, so a rule could
+# always read a CSV -- but it had to name the Facade-X predicates itself, which meant the
+# author doing the percent-encoding and knowing the row-container idiom. A gistp:SourceMap
+# says "this variable comes from that column" and the compiler owes the rest.
+
+const XYZ_NS = "http://sparql.xyz/facade-x/data/"
+const APF_STRSPLIT = "http://jena.apache.org/ARQ/property#strSplit"
+
+# The row container, synthesised rather than authored. There is exactly one row per solution,
+# so one variable suffices, and minting it here means the match pattern need not mention the
+# Facade-X shape at all. Double underscore to stay out of any author's namespace.
+const FX_ROW_VAR = "?__fxrow"
+
+const C_SOURCEMAP = GISTP_NS * "SourceMap"
+const C_LITERALVAR = GISTP_NS * "LiteralVariable"
+const P_MAPTO = GISTP_NS * "mapTo"
+const P_MAPFROMSTR = GISTP_NS * "mapFromString"
+const P_MAPFROM = GISTP_NS * "mapFrom"
+const P_MAPFIRST = GISTP_NS * "mapFirst"
+const P_MAPEACH = GISTP_NS * "mapEach"
+const P_CONCAT = GISTP_NS * "concat"
+const P_SEPARATOR = GISTP_NS * "separator"
+const P_STRBEFORE = GISTP_NS * "stringBefore"
+const P_PATMATCH = GISTP_NS * "valuePatternMatch"
+const P_PATEXCLUDE = GISTP_NS * "valuePatternExclude"
+
+"""
+    fx_predicate(column) -> String
+
+The Facade-X predicate IRI for a source column name.
+
+`gistp:mapFromString` carries "the source's own spelling -- 'dc.title[en]' rather than any
+sanitized form", so turning that into an IRI is the compiler's job, and getting it wrong
+produces a rule that matches nothing rather than an error.
+
+**The rule was measured against SPARQL Anything 1.3.0, not read from its docs, which are
+wrong on this.** Both the upstream reference and the local skill notes claim `dc.title[en]`
+becomes `dc.title%5Ben%5D`; it does not. That version percent-encodes exactly the characters
+SPARQL's `IRIREF` production forbids -- `<>"{}|^\\` and backtick, plus anything at or below
+U+0020 -- and leaves every other character raw, brackets and `%` and `#` included. Verified
+both directions: a query naming `dc.title%5Ben%5D` matches nothing, and one naming a raw
+space is a syntax error.
+
+That set is exactly what [`check_iri`](@ref) rejects, and the agreement is not a coincidence
+-- both are governed by the same SPARQL production. So the encoder's specification is simply
+"make it pass `check_iri`, changing nothing else".
+"""
+function fx_predicate(column::AbstractString)
+    io = IOBuffer()
+    print(io, XYZ_NS)
+    for c in column
+        if c in ('<', '>', '"', '{', '}', '|', '^', '`', '\\') || c <= ' '
+            for b in codeunits(string(c))
+                print(io, '%', uppercase(string(b; base=16, pad=2)))
+            end
+        else
+            print(io, c)
+        end
+    end
+    return String(take!(io))
+end
+
+"""
+    regex_quote(literal) -> String
+
+A literal string as a regular expression matching exactly itself.
+
+`gistp:separator` is "the character or string which separates usable values" -- a literal.
+ARQ's `apf:strSplit` takes a **regex**. So `"||"` has to reach the store as `\\|\\|`, and an
+author who writes `"."` means a full stop rather than any character. Escaping it here is the
+difference between splitting a field and splitting between every character of it.
+"""
+function regex_quote(literal::AbstractString)
+    io = IOBuffer()
+    for c in literal
+        c in ('\\', '.', '^', '$', '|', '?', '*', '+', '(', ')', '[', ']', '{', '}') &&
+            print(io, '\\')
+        print(io, c)
+    end
+    return String(take!(io))
+end
+
+"""
+    load_source_maps(rule_iri, graphs; ep = endpoint()) -> Vector{SourceMapSpec}
+
+Every `gistp:SourceMap` feeding a variable that occurs in `graphs`.
+
+Reached through `gistp:mapTo`, which is the only link the vocabulary gives: a source map
+names the variable it fills, and nothing names the source map. So the rule is found from its
+variables rather than the other way round, and a map whose variable the rule never mentions
+is simply not this rule's business.
+
+Every field is fetched with `OPTIONAL` and then checked. The list-valued alternatives to
+`mapFromString` are fetched too, for the sole purpose of refusing them by name: read through
+an inner join they would come back as no source map at all, and the rule would compile to a
+pattern with an unbound variable rather than to an error.
+
+Sorted by column so compiled output is byte-stable.
+"""
+function load_source_maps(
+    rule_iri::AbstractString,
+    graphs::AbstractVector;
+    also::AbstractSet{String}=Set{String}(),
+    ep::SparqlEndpoint=endpoint(),
+)
+    rows = select(
+        """
+SELECT ?m ?var ?vartext ?col ?sep ?before ?match ?exclude ?from ?first ?each ?cat WHERE {
+  ?m a <$C_SOURCEMAP> ; <$P_MAPTO> ?var .
+  ?var <$P_VARIABLETEXT> ?vartext .
+  OPTIONAL { ?m <$P_MAPFROMSTR> ?col }
+  OPTIONAL { ?m <$P_SEPARATOR>  ?sep }
+  OPTIONAL { ?m <$P_STRBEFORE>  ?before }
+  OPTIONAL { ?m <$P_PATMATCH>   ?match }
+  OPTIONAL { ?m <$P_PATEXCLUDE> ?exclude }
+  OPTIONAL { ?m <$P_MAPFROM>    ?from }
+  OPTIONAL { ?m <$P_MAPFIRST>   ?first }
+  OPTIONAL { ?m <$P_MAPEACH>    ?each }
+  OPTIONAL { ?m <$P_CONCAT>     ?cat }
+}""";
+        ep=ep,
+    )
+    isempty(rows) && return SourceMapSpec[]
+
+    # Which literal variables does this rule actually use? A gistp:var literal is declared
+    # nowhere -- it is identified only by its datatype and matched across patterns by lexical
+    # form -- so the occurrence check is against the patterns' own text.
+    #
+    # `also` carries the variables a gistp:iriTemplate's slots reference, and it is a
+    # requirement rather than a refinement: a rule that mints one node per row reads the id
+    # column and need never mention it in a pattern. Judging relevance from the patterns
+    # alone dropped exactly the source map such a rule most needs, and the failure surfaced
+    # as "minting from another minted variable", which it is not.
+    used = Set{String}(also)
+    for g in graphs, t in load_pattern(g; ep=ep), pos in (t.subject, t.predicate, t.object)
+        is_var_literal(pos) && push!(used, (pos::RDFLiteral).lexical)
+    end
+
+    lex(r, k) = haskey(r, k) ? (r[k]::RDFLiteral).lexical : nothing
+    out = SourceMapSpec[]
+    for r in rows
+        vt = (r["vartext"]::RDFLiteral).lexical
+        vt in used || continue
+        m = _iri(r["m"])
+
+        for (key, term, why) in (
+            (
+                "from",
+                P_MAPFROM,
+                "gistp:mapFrom names the source attribute as a resource, and this vocabulary " *
+                "has no class for one yet -- there is nothing to read a column name off. Use " *
+                "gistp:mapFromString, which carries the source's own spelling.",
+            ),
+            (
+                "first",
+                P_MAPFIRST,
+                "gistp:mapFirst is a list of alternative columns, first populated one wins. " *
+                "Not built: it compiles to COALESCE over one binding per member, which is a " *
+                "different shape from the single triple pattern below.",
+            ),
+            (
+                "each",
+                P_MAPEACH,
+                "gistp:mapEach is a list of additive columns, all values kept. Not built, and " *
+                "it is the hardest of the three: it MULTIPLIES solutions, so it is a UNION " *
+                "over the match rather than an expression over one binding.",
+            ),
+            (
+                "cat",
+                P_CONCAT,
+                "gistp:concat is a list whose values are joined as strings. Not built: it " *
+                "compiles to CONCAT over one binding per member.",
+            ),
+        )
+            haskey(r, key) && error("rule <$rule_iri>: source map <$m> uses <$term>. $why")
+        end
+
+        col = lex(r, "col")
+        col === nothing && error(
+            "rule <$rule_iri>: source map <$m> feeds $vt but declares no " *
+            "gistp:mapFromString, so there is no column to read it from. A map with no " *
+            "source would leave $vt unbound, and an unbound variable in a pattern matches " *
+            "anything rather than failing.",
+        )
+        isempty(col) && error(
+            "rule <$rule_iri>: source map <$m> declares an empty gistp:mapFromString. No " *
+            "column is named by the empty string.",
+        )
+        push!(
+            out,
+            SourceMapSpec(
+                m,
+                vt,
+                col,
+                lex(r, "sep"),
+                lex(r, "before"),
+                lex(r, "match"),
+                lex(r, "exclude"),
+            ),
+        )
+    end
+
+    sort!(out; by=x -> (x.column, x.variable))
+    dupes = [x.variable for x in out if count(y -> y.variable == x.variable, out) > 1]
+    isempty(dupes) || error(
+        "rule <$rule_iri>: $(join(unique(dupes), ", ")) is fed by more than one " *
+        "gistp:SourceMap. One variable takes one value per solution; two maps would emit " *
+        "two triple patterns for it, which silently becomes a JOIN requiring both columns " *
+        "to hold the same string. gistp:mapFirst and gistp:mapEach are the vocabulary's " *
+        "answers to several columns, and neither is built yet.",
+    )
+    return out
+end
+
+"""
+    source_map_bgp(spec; indent = "  ") -> String
+
+The Facade-X triple patterns a rule's source maps generate, one per mapped column.
+
+Emitted **inside** the `SERVICE` block, because that is where the row container exists. The
+subject is [`FX_ROW_VAR`](@ref), synthesised here rather than authored: Facade-X gives one
+container per row, so a single variable binds each row in turn and the author never has to
+mention `rdf:_1` or `fx:root`.
+
+A map with a value pipeline binds a *raw* variable instead of its target, because SPARQL
+cannot rebind: the pipeline in [`source_map_pipeline`](@ref) then produces the target from it.
+A map with no pipeline binds the target directly, so the simple case compiles to exactly the
+triple an author would have written by hand.
+"""
+function source_map_bgp(spec::RuleSpec; indent::AbstractString="  ")
+    isempty(spec.source_maps) && return ""
+    return join(
+        (
+            "$(indent)$FX_ROW_VAR <$(fx_predicate(m.column))> $(_sm_bound(m)) ." for
+            m in spec.source_maps
+        ),
+        "\n",
+    ) * "\n"
+end
+
+"Whether a source map transforms its value, and therefore needs a raw binding first."
+_sm_piped(m::SourceMapSpec) = m.separator !== nothing || m.string_before !== nothing
+
+"The variable a source map's column binds directly: its target, or a raw stand-in."
+function _sm_bound(m::SourceMapSpec)
+    return _sm_piped(m) ? "?__raw" * replace(m.variable, "?" => "") : m.variable
+end
+
+"""
+    source_map_pipeline(spec; indent = "  ") -> String
+
+The value pipeline: split, truncate, keep, drop -- in that order, and the order is the
+vocabulary's rather than a choice.
+
+`gistp:separator` splits one cell into many values, so it must come first or everything after
+it would operate on the unsplit string. `gistp:stringBefore` then truncates each value.
+`gistp:valuePatternMatch` and `gistp:valuePatternExclude` are decisions about a finished
+value, so they come last, and they are `FILTER`s rather than transformations.
+
+Emitted **outside** the `SERVICE` block. `apf:strSplit` is an ARQ property function, which
+the Facade-X evaluator has no reason to understand, and the split is a join over values the
+service has already produced.
+"""
+function source_map_pipeline(spec::RuleSpec; indent::AbstractString="  ")
+    isempty(spec.source_maps) && return ""
+    lines = String[]
+    for m in spec.source_maps
+        cur = _sm_bound(m)
+        # The last transform must land on the target variable, so work out up front which
+        # one that is. An intermediate gets its own name; nothing else may claim the target.
+        last_is_split = m.separator !== nothing && m.string_before === nothing
+        stem = replace(m.variable, "?" => "")
+        if m.separator !== nothing
+            dest = last_is_split ? m.variable : "?__sp$stem"
+            push!(
+                lines,
+                "$(indent)$dest <$APF_STRSPLIT> ($cur \"$(escape_literal(regex_quote(m.separator)))\") .",
+            )
+            cur = dest
+        end
+        if m.string_before !== nothing
+            sb = "\"$(escape_literal(m.string_before))\""
+            # "If the object string does not match the incoming value, the incoming value
+            # must be retained unchanged" -- so not a bare STRBEFORE, which returns the empty
+            # string when the needle is absent and would silently blank every value that
+            # happens not to contain it.
+            push!(
+                lines,
+                "$(indent)BIND(IF(CONTAINS($cur, $sb), STRBEFORE($cur, $sb), $cur) AS $(m.variable))",
+            )
+            cur = m.variable
+        end
+        m.pattern_match === nothing || push!(
+            lines,
+            "$(indent)FILTER(REGEX($(m.variable), \"$(escape_literal(m.pattern_match))\"))",
+        )
+        m.pattern_exclude === nothing || push!(
+            lines,
+            "$(indent)FILTER(!REGEX($(m.variable), \"$(escape_literal(m.pattern_exclude))\"))",
+        )
+    end
+    # A leading newline and none trailing, which is the convention every other section of
+    # `where_body` follows: `graph_wrap` closes with "}" and no newline, so a section that
+    # ended with one instead would put a blank line before whatever came next.
+    return isempty(lines) ? "" : "\n" * join(lines, "\n")
+end
+
+"""
+    check_source_maps(spec) -> spec
+
+Refuse a rule whose source maps cannot be evaluated.
+
+A source map reads a column, and the only thing that makes columns exist is a
+`gistp:TabularDataSource` on the match pattern -- which is what compiles to the `SERVICE`
+the generated triples go inside. Without one there is no row container and
+[`FX_ROW_VAR`](@ref) would range over whatever the dataset clause happens to hold: not an
+error, just a rule that matches the wrong thing or nothing at all.
+"""
+function check_source_maps(spec::RuleSpec)
+    isempty(spec.source_maps) && return spec
+    spec.match_scope !== nothing && haskey(spec.services, spec.match_scope) || error(
+        "rule <$(spec.iri)>: $(length(spec.source_maps)) gistp:SourceMap(s) " *
+        "($(join((m.variable for m in spec.source_maps), ", "))) but the match pattern " *
+        "<$(spec.match_graph)> has no gistp:inGraph naming a gistp:TabularDataSource. A " *
+        "source map reads a column, and only a data source makes columns exist -- " *
+        "without one the generated row variable would range over whatever the dataset " *
+        "clause holds, matching the wrong thing rather than failing.",
+    )
+    # A mapped variable must not also be bound by the authored pattern: the generated triple
+    # and the authored one would join, quietly requiring the column and the pattern to agree.
+    authored = Set{String}()
+    for t in spec.match, pos in (t.subject, t.predicate, t.object)
+        is_var_literal(pos) && push!(authored, (pos::RDFLiteral).lexical)
+    end
+    clash = sort!([m.variable for m in spec.source_maps if m.variable in authored])
+    isempty(clash) || error(
+        "rule <$(spec.iri)>: $(join(clash, ", ")) is both fed by a gistp:SourceMap and " *
+        "bound by the match pattern <$(spec.match_graph)>. The generated triple and the " *
+        "authored one would join, so the rule would quietly require the column and the " *
+        "pattern to carry the same string. Let the source map bind it, and drop it from the " *
+        "pattern.",
+    )
+    return spec
+end
+#################################################################
 #    Rule sets
 #################################################################
 #
@@ -2691,6 +3179,8 @@ export parse_template, template_slots, bind_text, minted_vars
 export ambiguous_separators, collision_queries, check_collisions, mint_fanin
 export GISTP_NS, MODE_CONSTRUCT, MODE_ASSERT, MODE_REWRITE
 export read_scopes, write_scope, promote_query
+export SourceMapSpec, load_source_maps, source_map_bgp, source_map_pipeline
+export check_source_maps, fx_predicate, regex_quote, XYZ_NS, FX_ROW_VAR
 export load_in_graph,
     load_services,
     is_scoped,
