@@ -61,6 +61,25 @@ Every application writes into its own `urn:jayhawk:firing:<uuid>` graph with a p
 record, so `firings()` lists what ran and `undo_firing!(g)` reverses it exactly — including
 replaying the tombstone for a destructive rewrite.
 
+The record is carried by **gist**, not PROV-O: a firing is a `gist:Event`, its rule and sources
+are `gist:isBasedOn`, its actor a `gist:hasParticipant`. Because it states both an
+`actualStartDateTime` and an `actualEndDateTime`, a reasoner *derives* `gist:HistoricalEvent`
+rather than being told it — the class is never asserted outright.
+
+## Beyond one rule at a time
+
+```julia
+run_rules("…/sets/BondEnrichment"; source = [D, DERIVED], actor = "doug")
+retractions(predicate = "…/gist/hasPositionIn")    # what was once true
+```
+
+| | |
+|---|---|
+| **Ordered rule sets** | A `gistp:RuleSet` is a `gist:OrderedCollection` with reified membership, so one `ORDER BY` recovers the order. Two independent levels of iteration: each rule's own `gistp:strategy`, and the set's, for when a later rule feeds an earlier one. |
+| **Write destinations** | `gistp:inGraph` on the *construct* pattern says where output goes. The firing graph stays the unit of attribution and of undo, so a rule can write into live data and still be reversed exactly. |
+| **History** | `retractions()` answers *what was once true*. A rewrite always kept what it deleted; the provenance record is now the index, so finding it no longer means knowing a UUID. |
+| **Tabular sources** | `gistp:SourceMap` says "this variable comes from that column" and the compiler owes the Facade-X predicate, the row container and the value pipeline. For an extraction rule **L is empty**. |
+
 ## The three modes
 
 | Mode | Result | Use it for |
@@ -79,6 +98,7 @@ repetition: whatever is preserved is written into both patterns.
 | [`docs/user-guide.md`](docs/user-guide.md) | Writing, running, reviewing and undoing rules. **Start here.** |
 | [`docs/developer-guide.md`](docs/developer-guide.md) | Architecture, invariants, and where the sharp edges are. |
 | [`examples/moneygraph/`](examples/moneygraph/) | Four runnable rules, one per feature, asserted by the test suite. |
+| `~/dev/PatternTester` | Four larger worked examples over two years of a real portfolio: rule sets, rewrites and history, graph-scoped reads, and a CSV read through source maps. |
 | `CLAUDE-about.md` | What is in the repo, for coding agents. |
 
 ## Driving it from an agent

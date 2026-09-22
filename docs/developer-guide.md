@@ -372,10 +372,11 @@ hashing each node's surroundings, which is graph isomorphism.
 
 In the order I would take them.
 
-**Rule sets and conflict analysis.** `gistp:priority` is loaded and *displayed* by
-`explain_rule`, but nothing orders anything by it, because `run_rule` takes one rule at a
-time. A process engine needs `run_rules(set)` — and, to be trustworthy, an answer to "does
-order matter here?" There is a cheap conservative one: over predicates,
+**Conflict analysis.** Rule sets themselves are **built** — `run_rules` applies a
+`gistp:RuleSet`, a `gist:OrderedCollection` whose membership is reified so one `ORDER BY`
+recovers the order, and `gistp:priority` orders a bare list and breaks `gist:sequence` ties.
+What is still missing is the part that makes a set *trustworthy*: an answer to "does order
+matter here?" There is a cheap conservative one: over predicates,
 
 ```
 delta(A) = predicates in (L_A ∖ I_A) ∪ (R_A ∖ I_A)
@@ -399,5 +400,16 @@ because slugging is lossy and a collision merges two things into one node.
 **Legacy migration** — R2RML/Ontop virtualisation, view harvesting, rule mining, differential
 testing against the running system. The enterprise adoption path, and the reason the engine
 exists.
+
+**The list-valued source-map terms.** `gistp:mapFrom` (the vocabulary has no class for a
+source attribute, so there is nothing to read a column name off), `gistp:mapFirst` (COALESCE
+over one binding per member), `gistp:concat` (CONCAT likewise), and `gistp:mapEach` — the
+hardest, because it *multiplies* solutions and so is a UNION over the match rather than an
+expression over one binding. All four are refused by name rather than ignored.
+
+**A write destination that is a variable.** Refused, and it needs more than a check to lift:
+different solutions would go to different graphs and a firing graph is one flat set of triples
+with nowhere to record which triple went where, so undo could not reverse it. Minting the
+graph IRI with `gistp:iriTemplate` and running once per graph is the workaround.
 
 **Chained minting** and **RFC 6570 Level 2**, both deliberately deferred and both small.

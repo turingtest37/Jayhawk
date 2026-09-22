@@ -585,6 +585,18 @@ gives you the labels, definitions and guard counts, which is what you want when 
 generated from the store rather than maintained in a wiki that drifts.
 
 ```julia
+list_rule_sets()                                  # iri, label, member count
+spec = load_rule_set("https://…/sets/BondEnrichment")
+spec.rules                                        # resolved into execution order
+```
+
+**Why.** A set's whole content is its *order*, so `load_rule_set` resolves membership into one
+before you run anything — and every membership is fetched with `OPTIONAL` and then checked
+rather than joined on, because a join would drop a member missing its `gist:sequence` and
+silently run a **shorter** set. In a cascade that produces a plausible answer rather than an
+error, which is worse than failing.
+
+```julia
 spec = load_rule("https://…/rules/ClassifyBond")
 ```
 
@@ -605,7 +617,10 @@ inspection function reads:
 | `enums` | variable IRI ⇒ the values `oneOf` allows. **Check this first when a rule stops firing** — see §10 |
 | `nacs` | a `NacSpec` per guard |
 | `strategy`, `priority`, `max_iterations` | execution policy, or `nothing` where unstated |
-| `match_scope`, `construct_scope` | `gistp:inGraph`, or `nothing` |
+| `match_scope`, `construct_scope` | `gistp:inGraph` — where the rule **reads** and where it **writes**, or `nothing` |
+| `source_maps` | a `SourceMapSpec` per `gistp:SourceMap`: column, target variable, and pipeline |
+| `services` | scopes that name a `gistp:TabularDataSource`, with their `fx:` properties |
+| `filters` | the `gistp:filterText` of each `gistp:hasFilterCondition`, sorted |
 
 ```julia
 spec.mode                      # "https://…/patterns/gist/Assert"
@@ -698,6 +713,18 @@ which is the right place for a one-off — you are not editing a rule to run an 
 somebody will eventually ask.
 
 ```julia
+run_rules("…/sets/BondEnrichment"; source = [D, DERIVED], actor = "doug")
+run_rules(["…/RuleA", "…/RuleB"]; source = [D])        # a bare list, ordered by priority
+run_rules(set; strategy = :ToFixpoint, max_iterations = 5)
+```
+
+**Why.** `run_rules` applies an ordered set, and the set's own strategy governs how many times
+the whole pass is made — which is the only way to express "a later rule feeds an earlier one".
+`set` may be a `RuleSetSpec`, the IRI of a `gistp:RuleSet`, or a bare vector of rule IRIs.
+Returns every `Firing` in the order it ran, and members that contributed nothing yield none.
+See §9's **Rule sets** for the vocabulary and for why mixed modes are refused.
+
+```julia
 apply_rule(spec; into = "urn:my:firing", source = [D], actor = "doug", iteration = 1)
 apply_rewrite!(spec; source = [D], actor = "doug")
 ```
@@ -728,6 +755,66 @@ firings(rule = "…/ClassifyBond")           # just this rule's
 remember to ship. It answers what ran, when, on whose authority, how much it changed, and —
 for a rewrite — where the removed triples are being kept.
 
+Ordering is a **total** order, not a timestamp. `_now_xsd` stamps milliseconds and every
+firing also carries `jayhawk:ordinal`, a monotonic integer assigned by the *same update* that
+writes the record — read separately it could be claimed twice, and an ordinal that is merely
+usually unique is not an order. `firings()` sorts by timestamp, then ordinal, then iteration,
+with the timestamp staying primary so a provenance graph written by an older version still
+reads sensibly. What forced it was `run_rules`: a set applies several rules inside one second,
+all reporting iteration 1, so the log had nothing left to order them by and reported them **in
+the wrong order** — stably, which reads as reliable.
+
+```julia
+retractions()                                           # everything a Rewrite has removed
+retractions(predicate = "…/hasPositionIn")              # or constrain s, p, o by IRI
+```
+
+```
+(subject = "<…/_InvestmentAccount_51590610_7150450>",
+ predicate = "<…/gist/hasPositionIn>",
+ object = "<…/_MarketableSecurity_7150450>",
+ rule = "…/RetireMaturedPosition", at = "2026-09-22T12:17:54.562Z",
+ actor = "doug", target = "urn:…:positions", tombstone = "urn:jayhawk:tombstone:…", ordinal = 8)
+```
+
+*Also a real row from `~/dev/PatternTester`, not a fixture from this repo.*
+
+**Why.** *What was once true.* A rewrite always wrote `L∖I` to a tombstone, so the deleted
+triples always survived their own deletion — but finding one meant already knowing a UUID
+nobody holds. Here the provenance record is the **index**: tombstones are reached through
+`jayhawk:tombstoneGraph`, so only graphs this engine wrote are ever searched, and each match
+arrives already joined to the rule that retracted it and the transaction time it happened at.
+
+The two halves of the question then read symmetrically: **what is true now** is a query against
+the data, and **what was once true** is this. One thing the query cannot distinguish, and it
+matters: never-asserted and still-true both come back empty.
+
+#### The record is carried by gist, not by PROV-O
+
+A firing is a `gist:Event` — "something that occurs over a period of time, often characterized
+as an activity being carried out by some person, organization, or software application", which
+is a rule firing exactly. Its rule and each source graph are `gist:isBasedOn`; the actor is a
+`gist:hasParticipant`; a tombstone is `gist:isProducedBy` the firing that carved it out. The
+engine's own `jayhawk:` terms stay alongside and are what the driver actually reads.
+
+Two things that choice buys. gist is already this project's upper ontology and already a
+dependency of the pattern vocabulary, so the record speaks the same language as the data it
+describes. And **being a historical event is inferred rather than asserted**:
+`gist:HistoricalEvent` is an *equivalent* class — `gist:Event` with exactly one
+`actualStartDateTime` and exactly one `actualEndDateTime` — so the record states the two
+datetimes and a reasoner reaches the classification. The suite asserts the class is never
+stated outright. That is the difference between a machine-verifiable axiom and a label.
+
+`gist:hasParticipant` and not its subproperty `gist:comesFromAgent`, whose range is
+`gist:Organization ∪ gist:Person`: most actors here are software, and asserting that "mcp" is a
+person is a falsehood a reasoner would propagate. Start equals end because the engine does not
+measure how long an application took — claiming an unobserved duration would be worse than
+claiming none.
+
+PROV-O was considered and dropped: it fit the shape well but meant a second vocabulary to keep
+in step for no gain the record did not already have. Any downstream alignment — PROV-O,
+Biolink, OWL-Time — is a projection over this record and belongs to the project that needs it.
+
 ```julia
 is_firing("urn:jayhawk:firing:10a16717-…")    # true
 is_firing(D)                                  # false
@@ -743,6 +830,16 @@ consults. That check is deliberate and worth understanding: membership is decide
 provenance record, not by the `urn:jayhawk:firing:` prefix, because a prefix is a naming
 convention anyone can imitate and a provenance record is something only the engine writes.
 `undo_firing!` reverses rule applications. It is not a way to delete a graph.
+
+**Retention is deliberately coupled to the firing**: undo restores the claim *and* forgets the
+retraction, so a graph that has been undone stops appearing in `retractions()`. A retraction
+outliving the firing that made it would assert a fact is no longer held while the fact sits in
+the graph.
+
+A **write-scoped** rule undoes just as exactly. Undo retracts from the *destination* precisely
+what the firing graph holds, rather than re-deriving the rule and hoping the two agree — which
+is the whole reason the firing graph stays the unit of attribution even when a rule writes
+into live data.
 
 ### 8.8 Terms
 
@@ -777,11 +874,14 @@ you just read, and for comparing terms as strings when you want set arithmetic o
 print(tool_list_rules())
 print(tool_explain_rule("…/ClassifyBond"; source = [D]))
 tool_run_rule("…/RetireListing"; source = [D], actor = "doc")
+print(tool_list_rule_sets())
+tool_run_rules("…/sets/BondEnrichment"; source = [D], actor = "doc")
 tool_firings()
+tool_retractions(predicate = "…/hasPositionIn")
 tool_undo_firing("urn:jayhawk:firing:…")
 ```
 
-**Why.** These five return **formatted prose rather than data structures**, which makes them
+**Why.** These seven return **formatted prose rather than data structures**, which makes them
 the right thing for an LLM and, it turns out, for a human at a REPL. `tool_explain_rule` in
 particular is the single most useful function in this guide: metadata, compiled SPARQL and a
 dry run in one block.
@@ -831,6 +931,8 @@ you did not expect.
 | Emission | `where_body`, `bgp_text`, `bind_text`, `values_text`, `nacs_text`, `graph_wrap`, `dataset_lines`, `escape_literal`, `term_sparql` | Each fragment of the generated query. `where_body` is the one that matters — all seven query builders route through it, so a guard cannot be honoured by only some of them. |
 | Variables | `vars_in`, `var_of`, `scope_vars`, `enum_vars`, `minted_vars`, `is_scoped` | Which variables a pattern binds, and how. |
 | Minting | `parse_template`, `template_slots`, `mint_fanin`, `collision_queries`, `ambiguous_separators` | RFC 6570 template handling and the collision analysis that stops two bindings minting one IRI. |
+| Source maps | `fx_predicate`, `regex_quote`, `source_map_bgp`, `source_map_pipeline`, `load_source_maps` | Column name to Facade-X predicate, and the split/truncate/keep/drop pipeline. `fx_predicate` is the one measured against the service rather than derived. |
+| Rule sets | `load_rule_set`, `list_rule_sets` | Membership resolved into an execution order. |
 | Validation | `check_bound`, `check_variables`, `check_mints`, `check_enums`, `check_no_blanks`, `check_positions`, `check_scopes`, `check_iri`, `check_collisions`, `check_target_empty` | Every refusal in §11. Each is callable on its own, which is how you find out *which* check rejected a rule. |
 | Loading | `load_pattern`, `load_variables`, `load_mints`, `load_enums`, `load_nac_graphs`, `load_strategy`, `load_priority`, `load_max_iterations`, `load_in_graph` | The individual SELECTs `load_rule` assembles. Useful when one part of a rule loads wrong. |
 | Plumbing | `mode_symbol`, `strategy_symbol`, `new_firing_graph`, `new_tombstone_graph` | Conversions and IRI minting for the harness. |
@@ -839,7 +941,7 @@ you did not expect.
 
 ## 9. The rest of the language
 
-Four features cover most of what real rules need beyond match-and-assert.
+Six features cover most of what real rules need beyond match-and-assert.
 
 ### Minting: creating something that did not exist
 
@@ -1000,9 +1102,10 @@ One combination is refused outright: a **`Rewrite` run to a fixpoint with no gua
 stated budget**. A deleting rule has nothing to tell it when it is done, and falling back to
 100 destructive passes is not a decision the engine will make for you.
 
-`gistp:priority` is loaded, validated and displayed, but nothing acts on it yet — `run_rule`
-takes one rule at a time. Record your intent now and it will be honoured when rule-set
-ordering lands.
+`gistp:priority` orders a bare list of rules handed to `run_rules`, higher first, and breaks
+ties between equal `gist:sequence` numbers inside a `gistp:RuleSet`. Note that the two
+directions disagree: priority is higher-first, `gist:sequence` is lower-first. See
+**Rule sets** below.
 
 ### Enumerations
 
@@ -1020,9 +1123,161 @@ works it out and `explain_rule` shows the result.
 
 ### Graph scoping
 
-`gistp:inGraph` scopes a *pattern* to a named graph. A declared variable binds whichever graph
-matched; any other IRI is a constant. This is read-side only for now: scope on R, with
-`Rewrite`, with `ToFixpoint`, or with an empty `source` is refused rather than half-supported.
+`gistp:inGraph` scopes a *pattern*, and it reads three ways — decided by what the value **is**,
+not by separate vocabulary:
+
+| the value is | the pattern reads | |
+|---|---|---|
+| a declared `gistp:SparqlVariable` | many graphs, binding whichever matched | read side only |
+| an IRI typed `gistp:TabularDataSource` | a *file*, via `SERVICE <x-sparql-anything:>` | read side only, see **Source maps** |
+| any other IRI | one named graph | read **or** write |
+
+**Read scope and write scope are not one property wearing one name**, and conflating them is
+what made every scoped rule look dangerous. They have opposite requirements:
+
+- A scoped **read** *requires* an explicit `source`. With no dataset clause a graph variable
+  ranges over every named graph in the store — the provenance graph, every firing, every
+  tombstone, the rule catalogue's own patterns. It also cannot iterate, because each round
+  appends its firing graph to the working set.
+- A scoped **write** must name a **constant**. Different solutions going to different graphs
+  would leave the firing graph — one flat set of triples — with nowhere to record which triple
+  went where, so `undo_firing!` could not reverse it. It needs no `source` of its own, and it
+  **can** iterate: output is promoted into the destination rather than appended, so the dataset
+  clause never changes and round two reads round one's results from the graph they went to.
+
+Still refused: a scope on R with `Rewrite` (a rewrite's destination *is*
+the graph it reads; naming a second is a different operation), and a scope on R naming a
+`gistp:TabularDataSource` (a `SERVICE` cannot be written to).
+
+### Rule sets: what runs, in what order, and how many times
+
+`run_rule` takes one rule. A `gistp:RuleSet` takes several, in a stated order:
+
+```turtle
+set:BondEnrichment
+    rdf:type gistp:RuleSet ;
+    skos:prefLabel "Bond enrichment" ;
+    gistp:strategy      gistp:ToFixpoint ;
+    gistp:maxIterations 5 .
+
+set:BondEnrichment_1
+    rdf:type gist:OrderedMember ;
+    gist:isMemberOf       set:BondEnrichment ;
+    gist:isFirstMemberOf  set:BondEnrichment ;
+    gist:providesOrderFor :TypeTradeBonds ;
+    gist:sequence         1 .
+```
+
+```julia
+run_rules("https://…/sets/BondEnrichment"; source = [D, DERIVED], actor = "doug")
+run_rules(["…/RuleA", "…/RuleB"]; source = [D])      # a bare list: gistp:priority orders it
+```
+
+A set is a `gist:OrderedCollection` and membership is **reified** — a `gist:OrderedMember`
+carries `gist:isMemberOf` back to the set, `gist:providesOrderFor` out to the rule, and
+`gist:sequence` as its position. It is deliberately **not** an `rdf:List`, and the reason is
+decisive: SPARQL can recover membership from a list as a *set* but not a position, so an
+`rdf:List` would cost one round trip per member where this costs one `ORDER BY`. Putting the
+position on the *membership* rather than on the rule is also what lets one rule sit at
+different places in different sets, and what makes the set itself a resource that can carry a
+label, a definition and a validity period. **A revised guideline is a revised rule set.**
+
+**Two levels of iteration, and they are independent.** Each rule still honours its own
+`gistp:strategy`, so an `Assert` member closes internally before the next member is reached.
+The *set's* strategy governs how many times the whole ordered pass is made. You need the
+second whenever a later rule feeds an earlier one, and no arrangement of per-rule strategies
+expresses that — a rule's own fixpoint iterates that rule alone:
+
+```
+pass 1  :TypeTradeBonds    +7
+pass 1  :MergeBondDetails  +12
+pass 2  :TypeTradeBonds    +3     <- securities that were not bonds until pass 1 ran
+pass 3  (both ran, added nothing -- converged)
+```
+
+*Those four lines are from `~/dev/PatternTester/demo_merge_bond.jl` rather than from this
+repo's examples, so unlike the rest of this guide they are not asserted by
+`test/sparql_integration.jl`. They are output of a run, not a fixture.*
+
+A member that contributes nothing yields **no `Firing`**. `apply_rule` drops the empty graph
+without recording provenance, so returning one would hand back a firing `undo_firing!` must
+refuse.
+
+**Mixed modes are refused**, with one escape. An additive rule's output is a new named graph
+later rules must read, but a `gistp:Rewrite` takes exactly one source graph which is also its
+target — contradictory the moment an additive rule has fired. So a set is all-`Rewrite` or
+contains none. Give the additive members a `gistp:inGraph` destination and the contradiction
+goes away: the working set never grows, the rewrite still has exactly one source, and it reads
+the derived triples from the graph they were written to.
+
+### Source maps: naming a column instead of a predicate
+
+A pattern scoped to a `gistp:TabularDataSource` compiles to `SERVICE <x-sparql-anything:>`, so
+a rule could always read a CSV — but it had to name the Facade-X predicates itself, which meant
+the author doing the percent-encoding and knowing the row-container idiom. A `gistp:SourceMap`
+says *this variable comes from that column* and the compiler owes the rest:
+
+```turtle
+:_Confirmations rdf:type gistp:TabularDataSource ;
+    fx:location    "data/econfirmation_2023.csv" ;
+    fx:csv.headers "true" ;
+    fx:null-string "" .
+
+:TradeIdMap a gistp:SourceMap ;
+    gistp:mapTo         :_tradeId ;
+    gistp:mapFromString "Trade #" .          # the source's own spelling
+
+:BondMaturityMap a gistp:SourceMap ;
+    gistp:mapTo             :_bondMaturity ;
+    gistp:mapFromString     "Description" ;
+    gistp:separator         "," ;             # split the cell into clauses
+    gistp:valuePatternMatch "^ *DUE " .       # keep the one stating maturity
+```
+
+**For an extraction rule L is EMPTY**, and that is the correct shape rather than a shortcut.
+Every triple the `SERVICE` needs is generated from the maps. A pattern that *also* named a
+mapped variable would join with the generated triple, quietly requiring the column and the
+pattern to carry the same string — `check_source_maps` refuses it. And putting the data-source
+declaration inside L "to be safe" is a silent disaster: the triple lands **inside** the
+`SERVICE`, where the file contains no such statement, and the rule matches nothing while
+looking perfectly reasonable.
+
+The pipeline order is the vocabulary's, not a choice:
+
+| | |
+|---|---|
+| `gistp:separator` | splits one cell into many values, so it must come **first** |
+| `gistp:stringBefore` | truncates each value |
+| `gistp:valuePatternMatch` / `gistp:valuePatternExclude` | decisions about a *finished* value, so they compile to `FILTER`s |
+
+`separator` is a **literal**, though ARQ's `apf:strSplit` takes a regex — the compiler escapes
+it, so an author who writes `"."` means a full stop. `stringBefore` compiles to
+`IF(CONTAINS(…), STRBEFORE(…), …)` rather than a bare `STRBEFORE`, which returns the empty
+string when the needle is absent and would silently blank every value not containing it.
+
+Two things to know before writing one.
+
+**A mapped variable is a REQUIRED JOIN.** With `fx:null-string ""` a blank cell yields no
+triple, so a row whose mapped cell is empty produces no solution at all — the whole **row**
+vanishes, not just that value. Ordinary SPARQL, and the opposite of what a list of columns
+reads like. Anything that must survive a missing cell needs its own rule.
+
+**`fx:location` is resolved by the store's process, and cannot be a variable.** A location is
+fixed when the rule is authored; supplying one at invocation is a parameter mechanism this
+engine deliberately does not have. A wrong path is not an error — the service yields no rows
+and the rule reports adding nothing.
+
+> **The encoding is measured, not derived, and the docs are wrong about it.** Upstream claims
+> `dc.title[en]` becomes `dc.title%5Ben%5D`; it does not. SPARQL Anything escapes `<>"{}|^\`
+> and backtick and everything ≤U+0020 — what SPARQL's `IRIREF` forbids — **plus `#`, `(` and
+> `)`, which it permits**. Brackets, `%`, `&`, `+`, `?` and `;` are left raw. An earlier
+> version of `fx_predicate` specified itself as "exactly what `check_iri` rejects", which was
+> tidy and false, and broke every column with a `#` in its name. Getting this wrong produces a
+> rule that **matches nothing rather than erroring**, so if a source-map rule returns zero,
+> check the predicate against the service before anything else.
+
+The list-valued terms — `gistp:mapFrom`, `gistp:mapFirst`, `gistp:mapEach` and `gistp:concat`
+— are **not built**, and are refused by name rather than ignored.
 
 ---
 
