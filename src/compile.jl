@@ -15,26 +15,26 @@
 
 const GISTP_NS = "https://w3id.org/semanticarts/ns/patterns/gist/"
 
-const P_MATCH        = GISTP_NS * "hasMatchPattern"
-const P_CONSTRUCT    = GISTP_NS * "hasConstructPattern"
-const P_MODE         = GISTP_NS * "rewriteMode"
+const P_MATCH = GISTP_NS * "hasMatchPattern"
+const P_CONSTRUCT = GISTP_NS * "hasConstructPattern"
+const P_MODE = GISTP_NS * "rewriteMode"
 const P_VARIABLETEXT = GISTP_NS * "variableText"
-const P_IRITEMPLATE  = GISTP_NS * "iriTemplate"
-const P_HASSLOT      = GISTP_NS * "hasSlot"
-const P_SLOTNAME     = GISTP_NS * "slotName"
-const P_SLOTVALUE    = GISTP_NS * "slotValue"
-const P_ONEOF        = GISTP_NS * "oneOf"
-const P_NAC          = GISTP_NS * "hasNegativeCondition"
-const P_FILTER       = GISTP_NS * "hasFilterCondition"
-const P_FILTERTEXT   = GISTP_NS * "filterText"
-const P_INGRAPH      = GISTP_NS * "inGraph"
+const P_IRITEMPLATE = GISTP_NS * "iriTemplate"
+const P_HASSLOT = GISTP_NS * "hasSlot"
+const P_SLOTNAME = GISTP_NS * "slotName"
+const P_SLOTVALUE = GISTP_NS * "slotValue"
+const P_ONEOF = GISTP_NS * "oneOf"
+const P_NAC = GISTP_NS * "hasNegativeCondition"
+const P_FILTER = GISTP_NS * "hasFilterCondition"
+const P_FILTERTEXT = GISTP_NS * "filterText"
+const P_INGRAPH = GISTP_NS * "inGraph"
 
 const RDF_FIRST = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first"
-const RDF_REST  = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest"
-const P_STRATEGY     = GISTP_NS * "strategy"
-const P_PRIORITY     = GISTP_NS * "priority"
-const P_MAXITER      = GISTP_NS * "maxIterations"
-const C_SPARQLVAR    = GISTP_NS * "SparqlVariable"
+const RDF_REST = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest"
+const P_STRATEGY = GISTP_NS * "strategy"
+const P_PRIORITY = GISTP_NS * "priority"
+const P_MAXITER = GISTP_NS * "maxIterations"
+const C_SPARQLVAR = GISTP_NS * "SparqlVariable"
 # No C_FILTERCOND. `load_filters` reaches a condition through gistp:hasFilterCondition and
 # never through its type, on purpose: joining on `?f a gistp:FilterCondition` would drop an
 # untyped condition silently, and a dropped filter widens the rule. The property is the
@@ -44,22 +44,26 @@ const C_TABULARSOURCE = GISTP_NS * "TabularDataSource"
 # SPARQL Anything's Facade-X vocabulary. `fx:` properties on a gistp:TabularDataSource are
 # emitted verbatim into the SERVICE body; `xyz:` predicates appear in the pattern itself and
 # reach the compiler as ordinary absolute IRIs, so nothing here has to know about them.
-const FX_NS          = "http://sparql.xyz/facade-x/ns/"
-const P_FX_LOCATION  = FX_NS * "location"
-const SA_SERVICE     = "x-sparql-anything:"
-const C_RULE         = GISTP_NS * "Rule"
+const FX_NS = "http://sparql.xyz/facade-x/ns/"
+const P_FX_LOCATION = FX_NS * "location"
+const SA_SERVICE = "x-sparql-anything:"
+const C_RULE = GISTP_NS * "Rule"
 
 const MODE_CONSTRUCT = GISTP_NS * "Construct"
-const MODE_ASSERT    = GISTP_NS * "Assert"
-const MODE_REWRITE   = GISTP_NS * "Rewrite"
+const MODE_ASSERT = GISTP_NS * "Assert"
+const MODE_REWRITE = GISTP_NS * "Rewrite"
 
-const STRATEGY_ONCE       = GISTP_NS * "Once"
+const STRATEGY_ONCE = GISTP_NS * "Once"
 const STRATEGY_TOFIXPOINT = GISTP_NS * "ToFixpoint"
 
 strategy_symbol(s::AbstractString) =
-    s == STRATEGY_ONCE       ? :Once :
-    s == STRATEGY_TOFIXPOINT ? :ToFixpoint :
-    throw(ArgumentError("unknown gistp:strategy <$s>"))
+    if s == STRATEGY_ONCE
+        :Once
+    elseif s == STRATEGY_TOFIXPOINT
+        :ToFixpoint
+    else
+        throw(ArgumentError("unknown gistp:strategy <$s>"))
+    end
 
 "One triple of a pattern, with terms still un-substituted."
 struct PatternTriple
@@ -144,39 +148,178 @@ end
 
 # Every call site written before the control layer stays valid: a rule with no negative
 # conditions and no stated policy behaves exactly as it did.
-RuleSpec(iri, mode, lg, cg, match, construct, variables, mints) =
-    RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-             Dict{String,Vector{RDFTerm}}(), NacSpec[], nothing, 0, nothing, nothing, nothing, Dict{String,Vector{Pair{String,String}}}(), String[])
+function RuleSpec(iri, mode, lg, cg, match, construct, variables, mints)
+    return RuleSpec(
+        iri,
+        mode,
+        lg,
+        cg,
+        match,
+        construct,
+        variables,
+        mints,
+        Dict{String,Vector{RDFTerm}}(),
+        NacSpec[],
+        nothing,
+        0,
+        nothing,
+        nothing,
+        nothing,
+        Dict{String,Vector{Pair{String,String}}}(),
+        String[],
+    )
+end
 
-RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-         nacs, strategy, priority, maxit) =
-    RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-             Dict{String,Vector{RDFTerm}}(), nacs, strategy, priority, maxit, nothing, nothing, Dict{String,Vector{Pair{String,String}}}(), String[])
+function RuleSpec(
+    iri, mode, lg, cg, match, construct, variables, mints, nacs, strategy, priority, maxit
+)
+    return RuleSpec(
+        iri,
+        mode,
+        lg,
+        cg,
+        match,
+        construct,
+        variables,
+        mints,
+        Dict{String,Vector{RDFTerm}}(),
+        nacs,
+        strategy,
+        priority,
+        maxit,
+        nothing,
+        nothing,
+        Dict{String,Vector{Pair{String,String}}}(),
+        String[],
+    )
+end
 
-RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-         enums, nacs, strategy, priority, maxit) =
-    RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-             enums, nacs, strategy, priority, maxit, nothing, nothing, Dict{String,Vector{Pair{String,String}}}(), String[])
+function RuleSpec(
+    iri,
+    mode,
+    lg,
+    cg,
+    match,
+    construct,
+    variables,
+    mints,
+    enums,
+    nacs,
+    strategy,
+    priority,
+    maxit,
+)
+    return RuleSpec(
+        iri,
+        mode,
+        lg,
+        cg,
+        match,
+        construct,
+        variables,
+        mints,
+        enums,
+        nacs,
+        strategy,
+        priority,
+        maxit,
+        nothing,
+        nothing,
+        Dict{String,Vector{Pair{String,String}}}(),
+        String[],
+    )
+end
 
 # The arity before `services`: every rule that reads only the store builds one, and it is by
 # far the most-used constructor in the suite.
-RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-         enums, nacs, strategy, priority, maxit, mscope, cscope) =
-    RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-             enums, nacs, strategy, priority, maxit, mscope, cscope,
-             Dict{String,Vector{Pair{String,String}}}(), String[])
+function RuleSpec(
+    iri,
+    mode,
+    lg,
+    cg,
+    match,
+    construct,
+    variables,
+    mints,
+    enums,
+    nacs,
+    strategy,
+    priority,
+    maxit,
+    mscope,
+    cscope,
+)
+    return RuleSpec(
+        iri,
+        mode,
+        lg,
+        cg,
+        match,
+        construct,
+        variables,
+        mints,
+        enums,
+        nacs,
+        strategy,
+        priority,
+        maxit,
+        mscope,
+        cscope,
+        Dict{String,Vector{Pair{String,String}}}(),
+        String[],
+    )
+end
 
 # The arity before `filters`: every rule authored before filter conditions existed builds one.
-RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-         enums, nacs, strategy, priority, maxit, mscope, cscope, services) =
-    RuleSpec(iri, mode, lg, cg, match, construct, variables, mints,
-             enums, nacs, strategy, priority, maxit, mscope, cscope, services, String[])
+function RuleSpec(
+    iri,
+    mode,
+    lg,
+    cg,
+    match,
+    construct,
+    variables,
+    mints,
+    enums,
+    nacs,
+    strategy,
+    priority,
+    maxit,
+    mscope,
+    cscope,
+    services,
+)
+    return RuleSpec(
+        iri,
+        mode,
+        lg,
+        cg,
+        match,
+        construct,
+        variables,
+        mints,
+        enums,
+        nacs,
+        strategy,
+        priority,
+        maxit,
+        mscope,
+        cscope,
+        services,
+        String[],
+    )
+end
 
 mode_symbol(m::AbstractString) =
-    m == MODE_CONSTRUCT ? :Construct :
-    m == MODE_ASSERT    ? :Assert    :
-    m == MODE_REWRITE   ? :Rewrite   :
-    throw(ArgumentError("unknown gistp:rewriteMode <$m>"))
+    if m == MODE_CONSTRUCT
+        :Construct
+    elseif m == MODE_ASSERT
+        :Assert
+    elseif m == MODE_REWRITE
+        :Rewrite
+    else
+        throw(ArgumentError("unknown gistp:rewriteMode <$m>"))
+    end
 
 mode_symbol(s::RuleSpec) = mode_symbol(s.mode)
 
@@ -184,8 +327,13 @@ mode_symbol(s::RuleSpec) = mode_symbol(s.mode)
 # Reading a rule out of the store
 # ---------------------------------------------------------------------------
 
-_iri(t::RDFTerm) = t isa IRIRef ? t.value :
-    throw(ArgumentError("expected an IRI, got $(sparql_text(t))"))
+function _iri(t::RDFTerm)
+    return if t isa IRIRef
+        t.value
+    else
+        throw(ArgumentError("expected an IRI, got $(sparql_text(t))"))
+    end
+end
 
 """
     load_rule(rule_iri; ep = endpoint()) -> RuleSpec
@@ -197,46 +345,69 @@ graph, then the triples of each named graph. The pattern *is* its graph: a patte
 also the IRI of the graph holding its triples, so there is no membership vocabulary and no
 predicate blacklist separating payload from metadata.
 """
-function load_rule(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
+function load_rule(rule_iri::AbstractString; ep::SparqlEndpoint=endpoint())
     r = check_iri(rule_iri)
-    rows = select("""
-        SELECT ?mode ?l ?c WHERE {
-          <$r> <$P_MATCH>     ?l ;
-               <$P_CONSTRUCT> ?c ;
-               <$P_MODE>      ?mode .
-        }"""; ep = ep)
+    rows = select(
+        """
+SELECT ?mode ?l ?c WHERE {
+  <$r> <$P_MATCH>     ?l ;
+       <$P_CONSTRUCT> ?c ;
+       <$P_MODE>      ?mode .
+}""";
+        ep=ep,
+    )
 
     isempty(rows) && error(
         "no rule found at <$r>: it must carry gistp:hasMatchPattern, " *
-        "gistp:hasConstructPattern and gistp:rewriteMode in the default graph.")
+        "gistp:hasConstructPattern and gistp:rewriteMode in the default graph.",
+    )
     length(rows) == 1 || error(
         "<$r> has $(length(rows)) match/construct/mode combinations; exactly one is " *
-        "required. gistPatternShapes.ttl RuleShape enforces this -- validate first.")
+        "required. gistPatternShapes.ttl RuleShape enforces this -- validate first.",
+    )
 
-    row  = rows[1]
+    row = rows[1]
     mode = _iri(row["mode"])
-    lg   = _iri(row["l"])
-    cg   = _iri(row["c"])
+    lg = _iri(row["l"])
+    cg = _iri(row["c"])
 
-    nacs = [NacSpec(g, load_pattern(g; ep = ep), load_in_graph(g; ep = ep))
-            for g in load_nac_graphs(r; ep = ep)]
+    nacs = [
+        NacSpec(g, load_pattern(g; ep=ep), load_in_graph(g; ep=ep)) for
+        g in load_nac_graphs(r; ep=ep)
+    ]
     # The negative conditions' graphs join the scoping set: a variable may appear ONLY
     # inside a condition -- that is the existentially-quantified case -- and without this it
     # would be loaded as no variable at all and emitted as a bare IRI.
     graphs = String[lg, cg, (n.graph for n in nacs)...]
 
-    RuleSpec(r, mode, lg, cg,
-             load_pattern(lg; ep = ep), load_pattern(cg; ep = ep),
-             load_variables(graphs; ep = ep), load_mints(graphs; ep = ep),
-             load_enums(graphs; ep = ep),
-             nacs, load_strategy(r; ep = ep), load_priority(r; ep = ep),
-             load_max_iterations(r; ep = ep),
-             load_in_graph(lg; ep = ep), load_in_graph(cg; ep = ep),
-             load_services(String[s for s in (load_in_graph(lg; ep = ep),
-                                              load_in_graph(cg; ep = ep),
-                                              (n.scope for n in nacs)...)
-                                 if s !== nothing]; ep = ep),
-             load_filters(r; ep = ep))
+    return RuleSpec(
+        r,
+        mode,
+        lg,
+        cg,
+        load_pattern(lg; ep=ep),
+        load_pattern(cg; ep=ep),
+        load_variables(graphs; ep=ep),
+        load_mints(graphs; ep=ep),
+        load_enums(graphs; ep=ep),
+        nacs,
+        load_strategy(r; ep=ep),
+        load_priority(r; ep=ep),
+        load_max_iterations(r; ep=ep),
+        load_in_graph(lg; ep=ep),
+        load_in_graph(cg; ep=ep),
+        load_services(
+            String[
+                s for s in (
+                    load_in_graph(lg; ep=ep),
+                    load_in_graph(cg; ep=ep),
+                    (n.scope for n in nacs)...,
+                ) if s !== nothing
+            ];
+            ep=ep,
+        ),
+        load_filters(r; ep=ep),
+    )
 end
 
 """
@@ -248,39 +419,48 @@ Every enumerated variable *occurring in `graphs`*, with the values `gistp:oneOf`
 back sorted rather than in list order: `VALUES` is a set of solutions, so authored order has
 no semantics, and sorting is what keeps compiled output byte-stable.
 """
-function load_enums(graphs::AbstractVector; ep::SparqlEndpoint = endpoint())
-    rows = select("""
-        SELECT DISTINCT ?v ?val WHERE {
-          ?v a <$C_SPARQLVAR> ;
-             <$P_ONEOF>/<$RDF_REST>*/<$RDF_FIRST> ?val .
-          $(_occurs_in(graphs))
-        }"""; ep = ep)
+function load_enums(graphs::AbstractVector; ep::SparqlEndpoint=endpoint())
+    rows = select(
+        """
+SELECT DISTINCT ?v ?val WHERE {
+  ?v a <$C_SPARQLVAR> ;
+     <$P_ONEOF>/<$RDF_REST>*/<$RDF_FIRST> ?val .
+  $(_occurs_in(graphs))
+}""";
+        ep=ep,
+    )
     # Declared enumerations are collected separately from their members, so an empty list
     # is distinguishable from no list at all. gistp:oneOf () is rdf:nil: the property path
     # below matches nothing, and without this the variable would come back merely
     # un-enumerated and be diagnosed later as an unbound variable -- pointing the author at
     # a typo rather than at the truncated list they actually wrote.
-    declared = select("""
-        SELECT DISTINCT ?v WHERE {
-          ?v a <$C_SPARQLVAR> ; <$P_ONEOF> ?list .
-          $(_occurs_in(graphs))
-        }"""; ep = ep)
+    declared = select(
+        """
+SELECT DISTINCT ?v WHERE {
+  ?v a <$C_SPARQLVAR> ; <$P_ONEOF> ?list .
+  $(_occurs_in(graphs))
+}""";
+        ep=ep,
+    )
     out = Dict{String,Vector{RDFTerm}}(_iri(r["v"]) => RDFTerm[] for r in declared)
     for r in rows
         push!(get!(out, _iri(r["v"]), RDFTerm[]), r["val"])
     end
     for vs in values(out)
-        sort!(vs; by = sparql_text)
+        sort!(vs; by=sparql_text)
         unique!(vs)
     end
-    out
+    return out
 end
 
 "The negative-condition graph IRIs of one rule, sorted so compiled output is stable."
-function load_nac_graphs(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
-    rows = select("""
-        SELECT ?n WHERE { <$(check_iri(rule_iri))> <$P_NAC> ?n } ORDER BY ?n"""; ep = ep)
-    sort!([_iri(r["n"]) for r in rows])
+function load_nac_graphs(rule_iri::AbstractString; ep::SparqlEndpoint=endpoint())
+    rows = select(
+        """
+SELECT ?n WHERE { <$(check_iri(rule_iri))> <$P_NAC> ?n } ORDER BY ?n""";
+        ep=ep,
+    )
+    return sort!([_iri(r["n"]) for r in rows])
 end
 
 """
@@ -299,55 +479,63 @@ the loudest possible bug arriving as the quietest possible symptom, and it is th
 the empty guard, which is skipped precisely because an empty `FILTER NOT EXISTS` can never
 fail.
 """
-function load_filters(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
-    rows = select("""
-        SELECT ?f ?t WHERE {
-          <$(check_iri(rule_iri))> <$P_FILTER> ?f .
-          OPTIONAL { ?f <$P_FILTERTEXT> ?t }
-        }"""; ep = ep)
+function load_filters(rule_iri::AbstractString; ep::SparqlEndpoint=endpoint())
+    rows = select(
+        """
+SELECT ?f ?t WHERE {
+  <$(check_iri(rule_iri))> <$P_FILTER> ?f .
+  OPTIONAL { ?f <$P_FILTERTEXT> ?t }
+}""";
+        ep=ep,
+    )
     out = String[]
     for r in rows
         haskey(r, "t") || error(
             "rule <$rule_iri>: gistp:hasFilterCondition names $(sparql_text(r["f"])), which " *
             "declares no gistp:filterText. A condition with no expression would compile to " *
             "no FILTER at all, so the rule would silently match MORE than it says, not " *
-            "less. Give it a gistp:filterText or drop the gistp:hasFilterCondition.")
+            "less. Give it a gistp:filterText or drop the gistp:hasFilterCondition.",
+        )
         t = r["t"]
         t isa RDFLiteral || error(
             "rule <$rule_iri>: gistp:filterText is $(sparql_text(t)), which is not a " *
-            "literal. A filter condition is a SPARQL expression written as a string.")
+            "literal. A filter condition is a SPARQL expression written as a string.",
+        )
         is_var_literal(t) && error(
             "rule <$rule_iri>: gistp:filterText is the variable $(repr(t.lexical)), which " *
-            "nothing in a rule binds. A condition is fixed when the rule is authored.")
+            "nothing in a rule binds. A condition is fixed when the rule is authored.",
+        )
         push!(out, t.lexical)
     end
-    sort!(unique!(out))
+    return sort!(unique!(out))
 end
 
 "A rule's declared application strategy, or `nothing` if it states none."
-function load_strategy(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
-    rows = select("SELECT ?s WHERE { <$(check_iri(rule_iri))> <$P_STRATEGY> ?s }"; ep = ep)
+function load_strategy(rule_iri::AbstractString; ep::SparqlEndpoint=endpoint())
+    rows = select("SELECT ?s WHERE { <$(check_iri(rule_iri))> <$P_STRATEGY> ?s }"; ep=ep)
     isempty(rows) && return nothing
     length(rows) == 1 || error(
-        "<$rule_iri> declares $(length(rows)) gistp:strategy values; at most one is allowed.")
-    strategy_symbol(_iri(rows[1]["s"]))
+        "<$rule_iri> declares $(length(rows)) gistp:strategy values; at most one is allowed.",
+    )
+    return strategy_symbol(_iri(rows[1]["s"]))
 end
 
 "A rule's ordering hint when several are applied as a set. Absent means 0."
-function load_priority(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
-    rows = select("SELECT ?p WHERE { <$(check_iri(rule_iri))> <$P_PRIORITY> ?p }"; ep = ep)
-    isempty(rows) ? 0 : parse(Int, (rows[1]["p"]::RDFLiteral).lexical)
+function load_priority(rule_iri::AbstractString; ep::SparqlEndpoint=endpoint())
+    rows = select("SELECT ?p WHERE { <$(check_iri(rule_iri))> <$P_PRIORITY> ?p }"; ep=ep)
+    return isempty(rows) ? 0 : parse(Int, (rows[1]["p"]::RDFLiteral).lexical)
 end
 
 "A rule's own fixpoint budget, or `nothing` to use the caller's."
-function load_max_iterations(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint())
-    rows = select("SELECT ?m WHERE { <$(check_iri(rule_iri))> <$P_MAXITER> ?m }"; ep = ep)
+function load_max_iterations(rule_iri::AbstractString; ep::SparqlEndpoint=endpoint())
+    rows = select("SELECT ?m WHERE { <$(check_iri(rule_iri))> <$P_MAXITER> ?m }"; ep=ep)
     isempty(rows) && return nothing
     n = parse(Int, (rows[1]["m"]::RDFLiteral).lexical)
     n >= 1 || error(
         "<$rule_iri>: gistp:maxIterations is $n. A budget below 1 cannot be satisfied by " *
-        "any run; gistPatternShapes.ttl RuleShape rejects it -- validate first.")
-    n
+        "any run; gistPatternShapes.ttl RuleShape rejects it -- validate first.",
+    )
+    return n
 end
 
 """
@@ -359,31 +547,38 @@ Unlike a pattern's triples, this lives in the **default** graph -- it is a state
 the pattern, not part of it -- which is why it needs its own query and why the variable it
 names has to be fed to [`load_variables`](@ref) explicitly. See [`_occurs_in`](@ref).
 """
-function load_in_graph(pattern_iri::AbstractString; ep::SparqlEndpoint = endpoint())
-    rows = select(
-        "SELECT ?g WHERE { <$(check_iri(pattern_iri))> <$P_INGRAPH> ?g }"; ep = ep)
+function load_in_graph(pattern_iri::AbstractString; ep::SparqlEndpoint=endpoint())
+    rows = select("SELECT ?g WHERE { <$(check_iri(pattern_iri))> <$P_INGRAPH> ?g }"; ep=ep)
     isempty(rows) && return nothing
     length(rows) == 1 || error(
         "pattern <$pattern_iri> declares $(length(rows)) gistp:inGraph values; at most one " *
         "is allowed. A pattern is evaluated in one graph. gistPatternShapes.ttl " *
-        "SparqlPatternShape enforces this -- validate first.")
+        "SparqlPatternShape enforces this -- validate first.",
+    )
     g = rows[1]["g"]
     g isa IRIRef || error(
         "pattern <$pattern_iri>: gistp:inGraph is $(sparql_text(g)), which is not an IRI. " *
         "A graph name is an IRI -- either a declared gistp:SparqlVariable or a constant " *
         "graph. No literal can name a graph, so there is no \"?g\"^^gistp:var reading here " *
-        "as there is for gistp:slotValue.")
-    check_iri(g.value)
+        "as there is for gistp:slotValue.",
+    )
+    return check_iri(g.value)
 end
 
 "Fetch the triples of one pattern graph, sorted so output is reproducible."
-function load_pattern(graph_iri::AbstractString; ep::SparqlEndpoint = endpoint())
-    rows = select("""
-        SELECT ?s ?p ?o WHERE { GRAPH <$(check_iri(graph_iri))> { ?s ?p ?o } }"""; ep = ep)
+function load_pattern(graph_iri::AbstractString; ep::SparqlEndpoint=endpoint())
+    rows = select(
+        """
+SELECT ?s ?p ?o WHERE { GRAPH <$(check_iri(graph_iri))> { ?s ?p ?o } }""";
+        ep=ep,
+    )
     ts = [PatternTriple(r["s"], r["p"], r["o"]) for r in rows]
     # SPARQL solution order is unspecified. Sorting here is what makes compiled output
     # byte-stable across stores and runs, which is what makes golden-file tests possible.
-    sort!(ts; by = t -> (sparql_text(t.subject), sparql_text(t.predicate), sparql_text(t.object)))
+    return sort!(
+        ts;
+        by=t -> (sparql_text(t.subject), sparql_text(t.predicate), sparql_text(t.object)),
+    )
 end
 
 """
@@ -420,19 +615,32 @@ string match, and the one the language works to avoid elsewhere. Nothing needs i
 `gistp:requiresDatatype` is compiler-side metadata the engine does not read, and
 `gistp:oneOf` on such a variable would need it. Add a sixth alternative then, not before.
 """
-_occurs_in(graphs) = string(
-    join(("{ GRAPH <$(check_iri(g))> { { ?v ?p$i ?o$i } UNION { ?s$i ?v ?o$i } " *
-          "UNION { ?s$i ?p$i ?v } } }" for (i, g) in enumerate(graphs)),
-         "\n          UNION "),
-    isempty(graphs) ? "" :
-    "\n          UNION { VALUES ?pat { " *
-    join(("<$(check_iri(g))>" for g in graphs), " ") *
-    " } ?pat <$P_INGRAPH> ?v }",
-    isempty(graphs) ? "" :
-    "\n          UNION { VALUES ?spat { " *
-    join(("<$(check_iri(g))>" for g in graphs), " ") *
-    " } GRAPH ?spat { { ?mv ?mp ?mo } UNION { ?ms ?mv ?mo } UNION { ?ms ?mp ?mv } } " *
-    "?mv <$P_HASSLOT> ?mslot . ?mslot <$P_SLOTVALUE> ?v }")
+function _occurs_in(graphs)
+    return string(
+        join(
+            (
+                "{ GRAPH <$(check_iri(g))> { { ?v ?p$i ?o$i } UNION { ?s$i ?v ?o$i } " *
+                "UNION { ?s$i ?p$i ?v } } }" for (i, g) in enumerate(graphs)
+            ),
+            "\n          UNION ",
+        ),
+        if isempty(graphs)
+            ""
+        else
+            "\n          UNION { VALUES ?pat { " *
+            join(("<$(check_iri(g))>" for g in graphs), " ") *
+            " } ?pat <$P_INGRAPH> ?v }"
+        end,
+        if isempty(graphs)
+            ""
+        else
+            "\n          UNION { VALUES ?spat { " *
+            join(("<$(check_iri(g))>" for g in graphs), " ") *
+            " } GRAPH ?spat { { ?mv ?mp ?mo } UNION { ?ms ?mv ?mo } UNION { ?ms ?mp ?mv } } " *
+            "?mv <$P_HASSLOT> ?mslot . ?mslot <$P_SLOTVALUE> ?v }"
+        end,
+    )
+end
 
 """
     load_variables(graphs; ep = endpoint()) -> Dict{String,String}
@@ -450,13 +658,16 @@ rule's query, so the thing that executed was not the thing anyone reviewed.
 A variable's declarations live in the default graph; its *occurrences* are what the two
 pattern graphs record, and occurrence is what membership of a rule means.
 """
-function load_variables(graphs::AbstractVector; ep::SparqlEndpoint = endpoint())
-    rows = select("""
-        SELECT DISTINCT ?v ?t WHERE {
-          ?v a <$C_SPARQLVAR> ; <$P_VARIABLETEXT> ?t .
-          $(_occurs_in(graphs))
-        }"""; ep = ep)
-    Dict{String,String}(_iri(r["v"]) => (r["t"]::RDFLiteral).lexical for r in rows)
+function load_variables(graphs::AbstractVector; ep::SparqlEndpoint=endpoint())
+    rows = select(
+        """
+SELECT DISTINCT ?v ?t WHERE {
+  ?v a <$C_SPARQLVAR> ; <$P_VARIABLETEXT> ?t .
+  $(_occurs_in(graphs))
+}""";
+        ep=ep,
+    )
+    return Dict{String,String}(_iri(r["v"]) => (r["t"]::RDFLiteral).lexical for r in rows)
 end
 
 """
@@ -477,24 +688,28 @@ That used to end "nothing the compiler needs is reachable only from the default 
 default graph and its object occupies no position inside any pattern. [`_occurs_in`](@ref)
 carries a fourth alternative for exactly that case.
 """
-function load_mints(graphs::AbstractVector; ep::SparqlEndpoint = endpoint())
-    rows = select("""
-        SELECT DISTINCT ?v ?tmpl ?name ?value WHERE {
-          ?v a <$C_SPARQLVAR> ; <$P_IRITEMPLATE> ?tmpl .
-          $(_occurs_in(graphs))
-          OPTIONAL { ?v <$P_HASSLOT> ?slot .
-                     ?slot <$P_SLOTNAME> ?name ; <$P_SLOTVALUE> ?value . }
-        }"""; ep = ep)
+function load_mints(graphs::AbstractVector; ep::SparqlEndpoint=endpoint())
+    rows = select(
+        """
+SELECT DISTINCT ?v ?tmpl ?name ?value WHERE {
+  ?v a <$C_SPARQLVAR> ; <$P_IRITEMPLATE> ?tmpl .
+  $(_occurs_in(graphs))
+  OPTIONAL { ?v <$P_HASSLOT> ?slot .
+             ?slot <$P_SLOTNAME> ?name ; <$P_SLOTVALUE> ?value . }
+}""";
+        ep=ep,
+    )
     out = Dict{String,MintSpec}()
     for r in rows
         v = _iri(r["v"])
         m = get!(out, v) do
-            MintSpec(v, (r["tmpl"]::RDFLiteral).lexical, Dict{String,RDFTerm}())
+            return MintSpec(v, (r["tmpl"]::RDFLiteral).lexical, Dict{String,RDFTerm}())
         end
-        haskey(r, "name") && haskey(r, "value") &&
+        haskey(r, "name") &&
+            haskey(r, "value") &&
             (m.slots[(r["name"]::RDFLiteral).lexical] = r["value"])
     end
-    out
+    return out
 end
 
 # ---------------------------------------------------------------------------
@@ -516,7 +731,7 @@ identity in one case and string equality in the other.
 function var_of(t::RDFTerm, spec::RuleSpec)
     t isa IRIRef && haskey(spec.variables, t.value) && return spec.variables[t.value]
     t isa RDFLiteral && is_var_literal(t) && return var_name(t)
-    nothing
+    return nothing
 end
 
 "Render one term in a BGP: its variable name if it is one, else its constant syntax."
@@ -524,17 +739,19 @@ function term_sparql(t::RDFTerm, spec::RuleSpec)
     v = var_of(t, spec)
     v === nothing || return v
     t isa IRIRef && check_iri(t.value)
-    sparql_text(t)
+    return sparql_text(t)
 end
 
 "Render a list of pattern triples as a Basic Graph Pattern."
-function bgp_text(ts::Vector{PatternTriple}, spec::RuleSpec; indent::AbstractString = "  ")
+function bgp_text(ts::Vector{PatternTriple}, spec::RuleSpec; indent::AbstractString="  ")
     # Sorted HERE, not only in load_pattern. "Same spec, same bytes" has to hold for every
     # RuleSpec however it was built -- including one an MCP client hands in -- and a BGP is
     # a set, so the order it was written in carries no meaning to preserve.
-    lines = ("$indent$(term_sparql(t.subject, spec)) $(term_sparql(t.predicate, spec)) " *
-             "$(term_sparql(t.object, spec)) ." for t in ts)
-    join(sort(collect(lines)), "\n")
+    lines = (
+        "$indent$(term_sparql(t.subject, spec)) $(term_sparql(t.predicate, spec)) " *
+        "$(term_sparql(t.object, spec)) ." for t in ts
+    )
+    return join(sort(collect(lines)), "\n")
 end
 
 "Every distinct SPARQL variable appearing anywhere in a pattern."
@@ -544,7 +761,7 @@ function vars_in(ts::Vector{PatternTriple}, spec::RuleSpec)
         v = var_of(pos, spec)
         v === nothing || push!(s, v)
     end
-    s
+    return s
 end
 
 # ---------------------------------------------------------------------------
@@ -570,20 +787,27 @@ function parse_template(t::AbstractString)
         c = t[i]
         if c == '{'
             close_at = findnext(==('}'), t, i)
-            close_at === nothing && throw(ArgumentError(
-                "unterminated '{' in iriTemplate $(repr(String(t)))"))
+            close_at === nothing &&
+                throw(ArgumentError("unterminated '{' in iriTemplate $(repr(String(t)))"))
             name = t[nextind(t, i):prevind(t, close_at)]
-            isempty(name) && throw(ArgumentError(
-                "empty {} expression in iriTemplate $(repr(String(t)))"))
+            isempty(name) && throw(
+                ArgumentError("empty {} expression in iriTemplate $(repr(String(t)))")
+            )
             if !occursin(r"^[a-zA-Z_][a-zA-Z0-9_]*$", name)
                 op = first(name)
-                op in ('+', '#', '.', '/', ';', '?', '&') && throw(ArgumentError(
-                    "iriTemplate $(repr(String(t))) uses the RFC 6570 operator '$op' in " *
-                    "{$name}. Only Level 1 ({name}) is supported: Level 2 reserved " *
-                    "expansion would need an encoding SPARQL cannot express exactly."))
-                throw(ArgumentError(
-                    "{$name} is not a legal RFC 6570 Level 1 expression in iriTemplate " *
-                    "$(repr(String(t)))"))
+                op in ('+', '#', '.', '/', ';', '?', '&') && throw(
+                    ArgumentError(
+                        "iriTemplate $(repr(String(t))) uses the RFC 6570 operator '$op' in " *
+                        "{$name}. Only Level 1 ({name}) is supported: Level 2 reserved " *
+                        "expansion would need an encoding SPARQL cannot express exactly.",
+                    ),
+                )
+                throw(
+                    ArgumentError(
+                        "{$name} is not a legal RFC 6570 Level 1 expression in iriTemplate " *
+                        "$(repr(String(t)))",
+                    ),
+                )
             end
             lit = String(take!(buf))
             isempty(lit) || push!(parts, (:lit, lit))
@@ -598,7 +822,7 @@ function parse_template(t::AbstractString)
     end
     lit = String(take!(buf))
     isempty(lit) || push!(parts, (:lit, lit))
-    parts
+    return parts
 end
 
 "Slot names appearing in a template, in order of first occurrence."
@@ -629,16 +853,16 @@ create a collision.
 function ambiguous_separators(t::AbstractString)
     parts = parse_template(t)
     bad = String[]
-    for i in 1:length(parts)-1
+    for i in 1:(length(parts) - 1)
         parts[i][1] === :slot || continue
-        if parts[i+1][1] === :slot
+        if parts[i + 1][1] === :slot
             push!(bad, "")                                  # {a}{b}
-        elseif i + 2 <= length(parts) && parts[i+2][1] === :slot
-            sep = parts[i+1][2]
+        elseif i + 2 <= length(parts) && parts[i + 2][1] === :slot
+            sep = parts[i + 1][2]
             occursin(UNRESERVED_ONLY, sep) && push!(bad, sep)
         end
     end
-    bad
+    return bad
 end
 
 """
@@ -669,18 +893,22 @@ function check_mints(spec::RuleSpec)
     # now that `match_text` scopes the collision and fan-in queries too: while those built an
     # unscoped L, a mint keyed on the graph variable would have been checked against a query
     # in which that variable was unbound.
-    bound = union(vars_in(spec.match, spec), enum_vars(spec), scope_vars(spec.match_scope, spec))
+    bound = union(
+        vars_in(spec.match, spec), enum_vars(spec), scope_vars(spec.match_scope, spec)
+    )
     for (iri, m) in spec.mints
         text = get(spec.variables, iri, nothing)
         text === nothing && error(
             "rule <$(spec.iri)>: minted variable <$iri> has a gistp:iriTemplate but no " *
-            "gistp:variableText, so there is no SPARQL variable to bind it to.")
+            "gistp:variableText, so there is no SPARQL variable to bind it to.",
+        )
 
         occursin(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", m.template) || error(
             "rule <$(spec.iri)>: iriTemplate $(repr(m.template)) on <$iri> is relative. A " *
             "template expands to an absolute IRI; a bare local part leaves the minting " *
             "namespace implicit, which silently mints into whichever namespace the rule " *
-            "document's empty prefix happens to name.")
+            "document's empty prefix happens to name.",
+        )
 
         wanted_now = template_slots(m.template)
         isempty(wanted_now) && error(
@@ -688,7 +916,8 @@ function check_mints(spec::RuleSpec)
             "so it expands to the same IRI for every match and collapses every solution " *
             "onto one node. If a single fixed node is what you want, write that IRI " *
             "directly in the construct pattern -- a template with nothing to substitute " *
-            "buys nothing and reads as a mistake.")
+            "buys nothing and reads as a mistake.",
+        )
 
         amb = ambiguous_separators(m.template)
         isempty(amb) || error(
@@ -700,19 +929,22 @@ function check_mints(spec::RuleSpec)
             "two different things into one node. Separate slots with a character the " *
             "encoder escapes: ':' is the one that stays legal unescaped in a Turtle local " *
             "name, so the minted IRI still abbreviates; '/' also works but forces every " *
-            "serialiser back to <angle brackets>.")
+            "serialiser back to <angle brackets>.",
+        )
 
         wanted = Set(template_slots(m.template))
-        given  = Set(keys(m.slots))
+        given = Set(keys(m.slots))
         missing_slots = setdiff(wanted, given)
         isempty(missing_slots) || error(
             "rule <$(spec.iri)>: iriTemplate $(repr(m.template)) on <$iri> has no binding " *
             "for $(join(("{$s}" for s in sort(collect(missing_slots))), ", ")). Add a " *
-            "gistp:hasSlot with that gistp:slotName.")
+            "gistp:hasSlot with that gistp:slotName.",
+        )
         extra = setdiff(given, wanted)
         isempty(extra) || error(
             "rule <$(spec.iri)>: <$iri> binds slot(s) $(join(sort(collect(extra)), ", ")) " *
-            "that iriTemplate $(repr(m.template)) does not contain.")
+            "that iriTemplate $(repr(m.template)) does not contain.",
+        )
 
         for name in sort(collect(wanted))
             v = var_of(m.slots[name], spec)
@@ -722,24 +954,30 @@ function check_mints(spec::RuleSpec)
                 "must be an IRI naming a declared gistp:SparqlVariable -- for a value read " *
                 "from a literal position, a gistp:LiteralVariable. The literal form " *
                 "\"?x\"^^gistp:var was withdrawn once literal-position variables could be " *
-                "declared.")
+                "declared.",
+            )
             v in bound || error(
                 "rule <$(spec.iri)>: slot {$name} of <$iri> is bound to $v, which the match " *
-                "pattern never binds. Minting from another minted variable is not supported.")
+                "pattern never binds. Minting from another minted variable is not supported.",
+            )
         end
 
         text in bound && error(
             "rule <$(spec.iri)>: <$iri> carries a gistp:iriTemplate, which declares it " *
             "minted, but the match pattern also binds $text. A variable is either " *
             "constructed or matched, not both -- if L already binds it, R reuses the " *
-            "matched IRI and the template is dead. Remove one.")
+            "matched IRI and the template is dead. Remove one.",
+        )
     end
-    spec
+    return spec
 end
 
 "The SPARQL variable names produced by minting."
-minted_vars(spec::RuleSpec) =
-    Set(spec.variables[iri] for iri in keys(spec.mints) if haskey(spec.variables, iri))
+function minted_vars(spec::RuleSpec)
+    return Set(
+        spec.variables[iri] for iri in keys(spec.mints) if haskey(spec.variables, iri)
+    )
+end
 
 """
     bind_text(m::MintSpec, spec) -> String
@@ -760,14 +998,14 @@ function bind_text(m::MintSpec, spec::RuleSpec)
             push!(pieces, "ENCODE_FOR_URI(STR($(var_of(m.slots[val], spec))))")
         end
     end
-    "  BIND(IRI(CONCAT($(join(pieces, ", ")))) AS $(spec.variables[m.variable]))"
+    return "  BIND(IRI(CONCAT($(join(pieces, ", ")))) AS $(spec.variables[m.variable]))"
 end
 
 "Every BIND a rule needs, ordered by variable name so output stays byte-stable."
 function binds_text(spec::RuleSpec)
     isempty(spec.mints) && return ""
     lines = [bind_text(spec.mints[iri], spec) for iri in sort(collect(keys(spec.mints)))]
-    "\n" * join(lines, "\n")
+    return "\n" * join(lines, "\n")
 end
 
 """
@@ -785,13 +1023,14 @@ function nacs_text(spec::RuleSpec)
         isempty(n.triples) && continue
         # A scoped condition wraps its own triples, *inside* its own filter. It must not be
         # nested in L's GRAPH group -- see `where_body`.
-        body = n.scope === nothing ?
-            bgp_text(n.triples, spec; indent = "    ") :
-            graph_wrap(bgp_text(n.triples, spec; indent = "      "),
-                       n.scope, spec; indent = "    ")
+        body = if n.scope === nothing
+            bgp_text(n.triples, spec; indent="    ")
+        else
+            graph_wrap(bgp_text(n.triples, spec; indent="      "), n.scope, spec; indent="    ")
+        end
         push!(blocks, "  # NOT <$(n.graph)>\n  FILTER NOT EXISTS {\n" * body * "\n  }")
     end
-    isempty(blocks) ? "" : "\n" * join(blocks, "\n")
+    return isempty(blocks) ? "" : "\n" * join(blocks, "\n")
 end
 
 """
@@ -810,7 +1049,7 @@ Filters are conjunctive, so sorting changes no result.
 """
 function filters_text(spec::RuleSpec)
     isempty(spec.filters) && return ""
-    "\n" * join(("  FILTER($f)" for f in sort(spec.filters)), "\n")
+    return "\n" * join(("  FILTER($f)" for f in sort(spec.filters)), "\n")
 end
 
 """
@@ -837,34 +1076,40 @@ Nothing here interprets them: `fx:csv.headers`, `fx:null-string` and the rest ar
 Anything's business, and a vocabulary of its options in `gistp:` would go stale the moment
 that project added one.
 """
-function load_services(scopes::AbstractVector; ep::SparqlEndpoint = endpoint())
+function load_services(scopes::AbstractVector; ep::SparqlEndpoint=endpoint())
     out = Dict{String,Vector{Pair{String,String}}}()
     for s in unique(scopes)
-        rows = select("""
-            SELECT ?p ?o WHERE {
-              <$(check_iri(s))> a <$C_TABULARSOURCE> ; ?p ?o .
-              FILTER(STRSTARTS(STR(?p), "$FX_NS"))
-            }"""; ep = ep)
+        rows = select(
+            """
+  SELECT ?p ?o WHERE {
+    <$(check_iri(s))> a <$C_TABULARSOURCE> ; ?p ?o .
+    FILTER(STRSTARTS(STR(?p), "$FX_NS"))
+  }""";
+            ep=ep,
+        )
         isempty(rows) && continue
         props = Pair{String,String}[]
         for r in rows
             p, o = _iri(r["p"]), r["o"]
             o isa RDFLiteral || error(
                 "data source <$s>: <$p> is $(sparql_text(o)), which is not a literal. " *
-                "SPARQL Anything's fx: options take literal values.")
+                "SPARQL Anything's fx: options take literal values.",
+            )
             is_var_literal(o) && error(
                 "data source <$s>: <$p> is the variable $(repr(o.lexical)), which nothing " *
                 "in a rule binds. A location is fixed when the rule is authored; supplying " *
-                "one at invocation is a parameter mechanism this engine does not have.")
+                "one at invocation is a parameter mechanism this engine does not have.",
+            )
             push!(props, p => o.lexical)
         end
-        sort!(props; by = first)
+        sort!(props; by=first)
         any(((p, _),) -> p == P_FX_LOCATION, props) || error(
             "data source <$s> is a gistp:TabularDataSource with no fx:location, so there " *
-            "is no file for the SERVICE to read.")
+            "is no file for the SERVICE to read.",
+        )
         out[s] = props
     end
-    out
+    return out
 end
 
 """
@@ -874,11 +1119,17 @@ end
 Every `gistp:inGraph` a rule declares, and the subset of those that name a graph rather than
 a data source. The split matters because only the latter belong in a dataset clause.
 """
-all_scopes(spec::RuleSpec) =
-    String[s for s in (spec.match_scope, spec.construct_scope,
-                       (n.scope for n in spec.nacs)...) if s !== nothing]
+function all_scopes(spec::RuleSpec)
+    return String[
+        s for
+        s in (spec.match_scope, spec.construct_scope, (n.scope for n in spec.nacs)...) if
+        s !== nothing
+    ]
+end
 
-graph_scopes(spec::RuleSpec) = String[s for s in all_scopes(spec) if !haskey(spec.services, s)]
+function graph_scopes(spec::RuleSpec)
+    return String[s for s in all_scopes(spec) if !haskey(spec.services, s)]
+end
 
 """
     is_scoped(spec) -> Bool
@@ -907,7 +1158,9 @@ nothing, and `USING <g>` alone leaves `GRAPH <g>` invisible. Measured both ways 
 Fuseki. Emitting both lets the unscoped half read the union while the scoped half addresses
 graphs individually; verified to join correctly across the two.
 """
-function dataset_lines(spec::RuleSpec, from::AbstractVector; keyword::AbstractString = "USING")
+function dataset_lines(
+    spec::RuleSpec, from::AbstractVector; keyword::AbstractString="USING"
+)
     if isempty(from)
         # `run_rule` refuses this too, and used to be the only thing that did -- but the
         # hazard lives in the query, not in the driver. `apply_rule`, `dry_run`,
@@ -921,12 +1174,16 @@ function dataset_lines(spec::RuleSpec, from::AbstractVector; keyword::AbstractSt
             "dataset clause a graph variable ranges over every named graph in the store -- " *
             "the provenance graph, every firing, every tombstone, and the rule catalogue's " *
             "own pattern graphs. An empty graph set is not 'the default graph' here, it is " *
-            "everything. Pass `source`/`from` naming the graphs to read.")
+            "everything. Pass `source`/`from` naming the graphs to read.",
+        )
         return ""
     end
     plain = join(("$keyword <$(check_iri(g))>" for g in from), "\n")
     is_scoped(spec) || return plain * "\n"
-    plain * "\n" * join(("$keyword NAMED <$(check_iri(g))>" for g in from), "\n") * "\n"
+    return plain *
+           "\n" *
+           join(("$keyword NAMED <$(check_iri(g))>" for g in from), "\n") *
+           "\n"
 end
 
 """
@@ -957,9 +1214,15 @@ Measured against Fuseki, not reasoned from the spec.
 So only `bgp_text` is wrapped. VALUES and BIND stay outside the group, where `?g` is bound
 and a template may mint from it; each condition wraps its own triples inside its own filter.
 """
-where_body(spec::RuleSpec) =
-    string(match_text(spec), values_text(spec), binds_text(spec), nacs_text(spec),
-           filters_text(spec))
+function where_body(spec::RuleSpec)
+    return string(
+        match_text(spec),
+        values_text(spec),
+        binds_text(spec),
+        nacs_text(spec),
+        filters_text(spec),
+    )
+end
 
 """
     match_text(spec; indent = "  ") -> String
@@ -977,11 +1240,18 @@ whose R mentions the graph they matched in. Measured against Fuseki before and a
 An unscoped rule renders byte-identically to the old `bgp_text` call, which is what keeps
 the golden snapshot honest.
 """
-match_text(spec::RuleSpec; indent::AbstractString = "  ") =
-    spec.match_scope === nothing ?
-        bgp_text(spec.match, spec; indent = indent) :
-        graph_wrap(bgp_text(spec.match, spec; indent = indent * "  "),
-                   spec.match_scope, spec; indent = indent)
+function match_text(spec::RuleSpec; indent::AbstractString="  ")
+    return if spec.match_scope === nothing
+        bgp_text(spec.match, spec; indent=indent)
+    else
+        graph_wrap(
+        bgp_text(spec.match, spec; indent=indent * "  "),
+        spec.match_scope,
+        spec;
+        indent=indent,
+    )
+    end
+end
 
 """
     graph_wrap(body, scope, spec; indent = "  ") -> String
@@ -1003,19 +1273,21 @@ The service form emits absolute IRIs throughout, including for `fx:properties` i
 is the engine's standing rule rather than an aesthetic choice: it never calls `makeqname`, so
 there is no prefix registry for a concurrent session to corrupt.
 """
-function graph_wrap(body::AbstractString, scope::AbstractString, spec::RuleSpec;
-                    indent::AbstractString = "  ")
+function graph_wrap(
+    body::AbstractString, scope::AbstractString, spec::RuleSpec; indent::AbstractString="  "
+)
     props = get(spec.services, scope, nothing)
     if props !== nothing
-        opts = join(("$(indent)      <$k> \"$(escape_literal(v))\"" for (k, v) in props),
-                    " ;\n")
+        opts = join(
+            ("$(indent)      <$k> \"$(escape_literal(v))\"" for (k, v) in props), " ;\n"
+        )
         return "$(indent)SERVICE <$SA_SERVICE> {\n" *
                "$(indent)  <$(FX_NS)properties>\n$opts .\n" *
                "$body\n$indent}"
     end
     v = get(spec.variables, scope, nothing)
     g = v === nothing ? "<$(check_iri(scope))>" : v
-    "$(indent)GRAPH $g {\n$body\n$indent}"
+    return "$(indent)GRAPH $g {\n$body\n$indent}"
 end
 
 """
@@ -1039,15 +1311,20 @@ function values_text(spec::RuleSpec)
     # sparql_text alone wraps an IRI in <> and checks nothing, so a member containing '>'
     # would close the clause and open another -- the variableText hole, in a new place.
     member(t) = (t isa IRIRef && check_iri(t.value); sparql_text(t))
-    lines = ("  VALUES $(spec.variables[iri]) " *
-             "{ $(join(sort(member.(spec.enums[iri])), " ")) }"
-             for iri in sort(collect(keys(spec.enums))))
-    string("\n", join(lines, "\n"))
+    lines = (
+        "  VALUES $(spec.variables[iri]) " *
+        "{ $(join(sort(member.(spec.enums[iri])), " ")) }" for
+        iri in sort(collect(keys(spec.enums)))
+    )
+    return string("\n", join(lines, "\n"))
 end
 
 "The SPARQL variable names a `gistp:oneOf` enumeration binds."
-enum_vars(spec::RuleSpec) =
-    Set(spec.variables[iri] for iri in keys(spec.enums) if haskey(spec.variables, iri))
+function enum_vars(spec::RuleSpec)
+    return Set(
+        spec.variables[iri] for iri in keys(spec.enums) if haskey(spec.variables, iri)
+    )
+end
 
 """
     check_enums(spec)
@@ -1065,17 +1342,20 @@ function check_enums(spec::RuleSpec)
     for iri in sort(collect(keys(spec.enums)))
         haskey(spec.variables, iri) || error(
             "rule <$(spec.iri)>: <$iri> has gistp:oneOf but no gistp:variableText, so there " *
-            "is no SPARQL variable for its VALUES clause to bind.")
+            "is no SPARQL variable for its VALUES clause to bind.",
+        )
         isempty(spec.enums[iri]) && error(
             "rule <$(spec.iri)>: gistp:oneOf on <$iri> lists no values. That compiles to " *
             "VALUES $(spec.variables[iri]) { }, which yields no solutions, so the rule could " *
-            "never fire.")
+            "never fire.",
+        )
         haskey(spec.mints, iri) && error(
             "rule <$(spec.iri)>: <$iri> carries both gistp:oneOf and gistp:iriTemplate. " *
             "Enumerating and constructing are contradictory: oneOf says the value is one of " *
-            "these, the template says it is computed from other bindings. Choose one.")
+            "these, the template says it is computed from other bindings. Choose one.",
+        )
     end
-    spec
+    return spec
 end
 
 """
@@ -1105,9 +1385,11 @@ rule would silently never fire. In R the right answer already exists and is bett
 deterministic, which is what makes an `Assert` fixpoint converge.
 """
 function check_no_blanks(spec::RuleSpec)
-    graphs = [("match pattern", spec.match_graph, spec.match),
-              ("construct pattern", spec.construct_graph, spec.construct),
-              (("negative condition", n.graph, n.triples) for n in spec.nacs)...]
+    graphs = [
+        ("match pattern", spec.match_graph, spec.match),
+        ("construct pattern", spec.construct_graph, spec.construct),
+        (("negative condition", n.graph, n.triples) for n in spec.nacs)...,
+    ]
     for (role, graph, triples) in graphs
         labels = String[]
         for t in triples, pos in (t.subject, t.predicate, t.object)
@@ -1117,23 +1399,30 @@ function check_no_blanks(spec::RuleSpec)
 
         # A precise fix beats a diagnosis. Emit the declarations to paste, and name the
         # substitution to make, rather than leaving the author to work it out.
-        decls = join(("    :_b$i a gistp:SparqlVariable ; gistp:variableText \"?_b$i\" ." *
-                      "      # was _:$(labels[i+1])" for i in 0:length(labels)-1), "\n")
-        subs = join(("_:$(labels[i+1]) -> :_b$i" for i in 0:length(labels)-1), ", ")
-        error("""
-              rule <$(spec.iri)>: $role <$graph> contains $(length(labels)) blank node(s). A \
-              blank node is an undeclared variable -- it cannot be validated, cannot carry \
-              gistp:oneOf or gistp:iriTemplate, does not connect L to R (SPARQL will not \
-              carry it from WHERE into CONSTRUCT), and is illegal outright in the DELETE \
-              template a gistp:Rewrite emits.
+        decls = join(
+            (
+                "    :_b$i a gistp:SparqlVariable ; gistp:variableText \"?_b$i\" ." *
+                "      # was _:$(labels[i+1])" for i in 0:(length(labels) - 1)
+            ),
+            "\n",
+        )
+        subs = join(("_:$(labels[i+1]) -> :_b$i" for i in 0:(length(labels) - 1)), ", ")
+        error(
+            """
+            rule <$(spec.iri)>: $role <$graph> contains $(length(labels)) blank node(s). A \
+            blank node is an undeclared variable -- it cannot be validated, cannot carry \
+            gistp:oneOf or gistp:iriTemplate, does not connect L to R (SPARQL will not \
+            carry it from WHERE into CONSTRUCT), and is illegal outright in the DELETE \
+            template a gistp:Rewrite emits.
 
-              Declare each one in the default graph:
+            Declare each one in the default graph:
 
-              $decls
+            $decls
 
-              then substitute in <$graph>: $subs""")
+            then substitute in <$graph>: $subs"""
+        )
     end
-    spec
+    return spec
 end
 
 """
@@ -1148,20 +1437,24 @@ contain such a triple -- RDF forbids it too -- but a hand-built `RuleSpec` can, 
 client hands specs in.
 """
 function check_positions(spec::RuleSpec)
-    graphs = [("match pattern", spec.match_graph, spec.match),
-              ("construct pattern", spec.construct_graph, spec.construct),
-              (("negative condition", n.graph, n.triples) for n in spec.nacs)...]
+    graphs = [
+        ("match pattern", spec.match_graph, spec.match),
+        ("construct pattern", spec.construct_graph, spec.construct),
+        (("negative condition", n.graph, n.triples) for n in spec.nacs)...,
+    ]
     for (role, graph, triples) in graphs, t in triples
         t.subject isa RDFLiteral && error(
             "rule <$(spec.iri)>: $role <$graph> has the literal $(sparql_text(t.subject)) " *
             "as a subject. RDF has no literal subjects, so this cannot be matched or " *
-            "constructed.")
+            "constructed.",
+        )
         t.predicate isa IRIRef || error(
             "rule <$(spec.iri)>: $role <$graph> has $(sparql_text(t.predicate)) as a " *
             "predicate. Only an IRI can be a predicate -- including a variable, which is " *
-            "an IRI at pattern level.")
+            "an IRI at pattern level.",
+        )
     end
-    spec
+    return spec
 end
 
 """
@@ -1200,16 +1493,18 @@ function check_variables(spec::RuleSpec)
             "rule <$(spec.iri)>: <$iri> and <$(seen[text])> both declare " *
             "gistp:variableText $(repr(text)). They are distinct variables that would " *
             "compile to one, quietly forcing every occurrence of either to the same " *
-            "binding. Give them different names.")
+            "binding. Give them different names.",
+        )
         seen[text] = iri
         occursin(VARIABLE_RE, text) || error(
             "rule <$(spec.iri)>: <$iri> has gistp:variableText $(repr(text)), which is not " *
             "a legal SPARQL variable (must match $(VARIABLE_RE.pattern)). The text is " *
             "substituted into the emitted query as-is, so it has to be a variable and " *
             "nothing else -- this is the same rule a literal-position \"?x\"^^gistp:var " *
-            "already has to obey.")
+            "already has to obey.",
+        )
     end
-    spec
+    return spec
 end
 
 # ---------------------------------------------------------------------------
@@ -1219,8 +1514,9 @@ end
 # Identity of a pattern triple, for set arithmetic. `sparql_text` renders the term as
 # authored -- a variable's own IRI, not the SPARQL variable it will become -- which is
 # exactly the identity the intersection is over.
-_ptkey(t::PatternTriple) =
-    (sparql_text(t.subject), sparql_text(t.predicate), sparql_text(t.object))
+function _ptkey(t::PatternTriple)
+    return (sparql_text(t.subject), sparql_text(t.predicate), sparql_text(t.object))
+end
 
 """
     interface(spec) -> Vector{PatternTriple}
@@ -1235,16 +1531,28 @@ alpha-equivalence. Literal-position variables intersect correctly too, because
 
 I is authored by repetition: whatever is to be preserved is written into both graphs.
 """
-interface(spec::RuleSpec) =
-    (ks = Set(_ptkey(t) for t in spec.construct); [t for t in spec.match if _ptkey(t) in ks])
+function interface(spec::RuleSpec)
+    return (
+        ks=Set(_ptkey(t) for t in spec.construct);
+        [t for t in spec.match if _ptkey(t) in ks]
+    )
+end
 
 "L ∖ I -- the triples a `Rewrite` deletes."
-match_only(spec::RuleSpec) =
-    (ks = Set(_ptkey(t) for t in spec.construct); [t for t in spec.match if !(_ptkey(t) in ks)])
+function match_only(spec::RuleSpec)
+    return (
+        ks=Set(_ptkey(t) for t in spec.construct);
+        [t for t in spec.match if !(_ptkey(t) in ks)]
+    )
+end
 
 "R ∖ I -- the triples a `Rewrite` adds."
-construct_only(spec::RuleSpec) =
-    (ks = Set(_ptkey(t) for t in spec.match); [t for t in spec.construct if !(_ptkey(t) in ks)])
+function construct_only(spec::RuleSpec)
+    return (
+        ks=Set(_ptkey(t) for t in spec.match);
+        [t for t in spec.construct if !(_ptkey(t) in ks)]
+    )
+end
 
 """
     dangling_risks(spec) -> Vector{String}
@@ -1263,18 +1571,19 @@ it would delete `:_ID_1`'s every triple while nothing in R mentions it.
 """
 function dangling_risks(spec::RuleSpec)
     deleted = match_only(spec)
-    kept    = Set(_ptkey(t) for t in interface(spec))
-    inR     = vars_in(spec.construct, spec)
-    risks   = String[]
+    kept = Set(_ptkey(t) for t in interface(spec))
+    inR = vars_in(spec.construct, spec)
+    risks = String[]
     for v in sort(collect(vars_in(spec.match, spec)))
         v in inR && continue
         # every triple of L mentioning v is being deleted?
-        mentions(t) = v in (var_of(t.subject, spec), var_of(t.predicate, spec), var_of(t.object, spec))
+        mentions(t) = v in
+        (var_of(t.subject, spec), var_of(t.predicate, spec), var_of(t.object, spec))
         any(mentions, deleted) || continue
         any(t -> mentions(t) && _ptkey(t) in kept, spec.match) && continue
         push!(risks, v)
     end
-    risks
+    return risks
 end
 
 """
@@ -1285,9 +1594,13 @@ The SPARQL variable a `gistp:inGraph` names, or an empty set if it names a const
 A one-element set rather than a `Union{String,Nothing}` so it composes with `vars_in`, which
 is what every binding question in the compiler is phrased against.
 """
-scope_vars(scope::Union{String,Nothing}, spec::RuleSpec) =
-    scope === nothing || !haskey(spec.variables, scope) ?
-        Set{String}() : Set([spec.variables[scope]])
+function scope_vars(scope::Union{String,Nothing}, spec::RuleSpec)
+    return if scope === nothing || !haskey(spec.variables, scope)
+        Set{String}()
+    else
+        Set([spec.variables[scope]])
+    end
+end
 
 """
     check_scopes(spec)
@@ -1308,11 +1621,13 @@ function check_scopes(spec::RuleSpec)
     # too, but it would explain it in terms of undo records and named graphs, which is not
     # why writing into a CSV is refused.
     spec.construct_scope === nothing ||
-        !haskey(spec.services, spec.construct_scope) || error(
-        "rule <$(spec.iri)>: gistp:inGraph on the construct pattern <$(spec.construct_graph)> " *
-        "names <$(spec.construct_scope)>, a gistp:TabularDataSource. A data source is a place " *
-        "to read FROM: it compiles to a SERVICE, and a SERVICE cannot be written to. Scope " *
-        "the match pattern to the source and let the results land in a firing graph.")
+        !haskey(spec.services, spec.construct_scope) ||
+        error(
+            "rule <$(spec.iri)>: gistp:inGraph on the construct pattern <$(spec.construct_graph)> " *
+            "names <$(spec.construct_scope)>, a gistp:TabularDataSource. A data source is a place " *
+            "to read FROM: it compiles to a SERVICE, and a SERVICE cannot be written to. Scope " *
+            "the match pattern to the source and let the results land in a firing graph.",
+        )
 
     spec.construct_scope === nothing || error(
         "rule <$(spec.iri)>: gistp:inGraph on the construct pattern <$(spec.construct_graph)> " *
@@ -1320,13 +1635,15 @@ function check_scopes(spec::RuleSpec)
         "graph each triple went to, or undo_firing! cannot reverse it -- and an " *
         "irreversible write is not something to get by default. Scope the match pattern to " *
         "read per graph; the results still land in a firing graph you can merge where you " *
-        "want them.")
+        "want them.",
+    )
 
     mode_symbol(spec) === :Rewrite && error(
         "rule <$(spec.iri)>: gistp:inGraph with gistp:Rewrite is not supported yet. A " *
         "rewrite deletes from exactly one target graph, and a scoped match can bind several " *
         "-- so the target, the tombstone and the undo record would each have to become a " *
-        "set. Use Construct or Assert, or drop the scope and name the graph in `source`.")
+        "set. Use Construct or Assert, or drop the scope and name the graph in `source`.",
+    )
 
     # A graph variable is spliced into query text like any other variable. `check_variables`
     # validates every entry of spec.variables, so a scope that resolves there is already
@@ -1335,7 +1652,7 @@ function check_scopes(spec::RuleSpec)
         haskey(spec.variables, s) && continue
         check_iri(s)
     end
-    spec
+    return spec
 end
 
 """
@@ -1367,9 +1684,9 @@ copied through.
 """
 function _filter_skeleton(expr::AbstractString)
     cs = collect(expr)
-    n  = length(cs)
+    n = length(cs)
     out = Char[]
-    i  = 1
+    i = 1
     # The IRIREF charset, by exclusion, as SPARQL 1.1 grammar rule [139] states it.
     iri_char(c) = !(c in ('<', '>', '"', '{', '}', '|', '^', '`', '\\')) && c > ' '
     while i <= n
@@ -1392,7 +1709,7 @@ function _filter_skeleton(expr::AbstractString)
             i += 1
             continue
         end
-        long  = i + 2 <= n && cs[i+1] == c && cs[i+2] == c
+        long = i + 2 <= n && cs[i + 1] == c && cs[i + 2] == c
         width = long ? 3 : 1
         i += width
         closed = false
@@ -1400,7 +1717,7 @@ function _filter_skeleton(expr::AbstractString)
             if cs[i] == '\\'
                 i += 2
                 continue
-            elseif cs[i] == c && (!long || (i + 2 <= n && cs[i+1] == c && cs[i+2] == c))
+            elseif cs[i] == c && (!long || (i + 2 <= n && cs[i + 1] == c && cs[i + 2] == c))
                 i += width
                 closed = true
                 break
@@ -1412,7 +1729,7 @@ function _filter_skeleton(expr::AbstractString)
         closed || return nothing
         push!(out, '0')                     # a literal reduces to one inert token
     end
-    String(out)
+    return String(out)
 end
 
 # A variable mention inside a filter expression. `$x` and `?x` name the same variable in
@@ -1472,32 +1789,45 @@ things a filter can do closed and small. Read what a rule declares before you ru
 """
 function check_filters(spec::RuleSpec)
     isempty(spec.filters) && return spec
-    bound = Set(_bare_var(v) for v in
-                union(vars_in(spec.match, spec), scope_vars(spec.match_scope, spec),
-                      minted_vars(spec), enum_vars(spec)))
+    bound = Set(
+        _bare_var(v) for v in union(
+            vars_in(spec.match, spec),
+            scope_vars(spec.match_scope, spec),
+            minted_vars(spec),
+            enum_vars(spec),
+        )
+    )
     for f in spec.filters
         isempty(strip(f)) && error(
             "rule <$(spec.iri)>: a gistp:FilterCondition has empty gistp:filterText. An " *
-            "expression that says nothing cannot constrain anything; drop the condition.")
+            "expression that says nothing cannot constrain anything; drop the condition.",
+        )
 
         skel = _filter_skeleton(f)
         skel === nothing && error(
             "rule <$(spec.iri)>: filter $(repr(f)) leaves a string literal unterminated, " *
-            "so where the expression ends is a guess. Close the quote.")
+            "so where the expression ends is a guess. Close the quote.",
+        )
 
-        for (ch, why) in ('{' => "could open a group -- a SERVICE, a subquery, or a second " *
-                                 "WHERE. For \"no such thing exists\" use " *
-                                 "gistp:hasNegativeCondition, which is a reviewable " *
-                                 "pattern rather than text",
-                          '}' => "could close the FILTER this compiler wraps the " *
-                                 "expression in, leaving whatever follows outside it",
-                          '#' => "starts a comment, which would swallow the closing " *
-                                 "parenthesis this compiler emits",
-                          ';' => "separates operations in an update request")
+        for (ch, why) in (
+            '{' =>
+                "could open a group -- a SERVICE, a subquery, or a second " *
+                "WHERE. For \"no such thing exists\" use " *
+                "gistp:hasNegativeCondition, which is a reviewable " *
+                "pattern rather than text",
+            '}' =>
+                "could close the FILTER this compiler wraps the " *
+                "expression in, leaving whatever follows outside it",
+            '#' =>
+                "starts a comment, which would swallow the closing " *
+                "parenthesis this compiler emits",
+            ';' => "separates operations in an update request",
+        )
             occursin(ch, skel) && error(
                 "rule <$(spec.iri)>: filter $(repr(f)) contains $(repr(ch)), which $why. " *
                 "A gistp:filterText is one SPARQL expression and nothing else. Inside a " *
-                "quoted string the character is fine -- this one is not in one.")
+                "quoted string the character is fine -- this one is not in one.",
+            )
         end
 
         # After the skeleton, the only thing a `:` can be is a prefixed name: strings and
@@ -1507,12 +1837,14 @@ function check_filters(spec::RuleSpec)
             "emits no PREFIX line -- it has no prefix registry, and every IRI it writes is " *
             "absolute. The store would reject the query with an opaque \"Unresolved " *
             "prefixed name\". Write the full IRI in angle brackets instead, as in " *
-            "\"?d > \\\"2020\\\"^^<http://www.w3.org/2001/XMLSchema#gYear>\".")
+            "\"?d > \\\"2020\\\"^^<http://www.w3.org/2001/XMLSchema#gYear>\".",
+        )
 
         occursin(r"^\s*FILTER\s*\("i, skel) && error(
             "rule <$(spec.iri)>: filter $(repr(f)) is a whole FILTER clause. The engine " *
             "supplies the keyword and the parentheses, so this would compile to " *
-            "FILTER(FILTER(...)), which no store will parse. Declare the expression alone.")
+            "FILTER(FILTER(...)), which no store will parse. Declare the expression alone.",
+        )
 
         depth = 0
         for c in skel
@@ -1520,23 +1852,32 @@ function check_filters(spec::RuleSpec)
             c == ')' && (depth -= 1)
             depth < 0 && error(
                 "rule <$(spec.iri)>: filter $(repr(f)) closes a parenthesis it never " *
-                "opened, which would close the FILTER this compiler wraps it in.")
+                "opened, which would close the FILTER this compiler wraps it in.",
+            )
         end
         depth == 0 || error(
             "rule <$(spec.iri)>: filter $(repr(f)) leaves $depth parenthesis/es open, so " *
-            "it would swallow whatever the compiler emits after it.")
+            "it would swallow whatever the compiler emits after it.",
+        )
 
         used = Set(m.captures[1] for m in eachmatch(_FILTER_VAR_RE, skel))
         free = sort([string("?", v) for v in setdiff(used, bound)])
         isempty(free) || error(
             "rule <$(spec.iri)>: filter $(repr(f)) tests $(join(free, ", ")), which the " *
             "match pattern never binds and nothing mints. Bound by L: " *
-            (isempty(bound) ? "(none)" :
-             join(sort([string("?", v) for v in bound]), ", ")) * ". SPARQL does not error " *
+            (
+                if isempty(bound)
+                    "(none)"
+                else
+                    join(sort([string("?", v) for v in bound]), ", ")
+                end
+            ) *
+            ". SPARQL does not error " *
             "on an unbound variable in a FILTER -- the expression errors, the solution is " *
-            "dropped, and the rule quietly matches nothing.")
+            "dropped, and the rule quietly matches nothing.",
+        )
     end
-    spec
+    return spec
 end
 
 """
@@ -1586,22 +1927,25 @@ function check_bound(spec::RuleSpec)
             "not: an unbound graph variable re-quantifies the whole condition, turning 'no " *
             "such thing in THIS graph' into 'no such thing in ANY graph', which drops " *
             "solutions with no error. Scope it to the graph variable L binds, or name a " *
-            "constant graph.")
+            "constant graph.",
+        )
     end
     # An enumerated variable is bound by its VALUES clause and a minted one by its BIND;
     # neither has to appear in a match triple to be available to R.
-    bound   = union(matched, minted_vars(spec), enum_vars(spec))
-    used    = vars_in(spec.construct, spec)
-    free    = setdiff(used, bound)
+    bound = union(matched, minted_vars(spec), enum_vars(spec))
+    used = vars_in(spec.construct, spec)
+    free = setdiff(used, bound)
     isempty(free) && return spec
 
-    error("""
-          rule <$(spec.iri)>: construct pattern uses $(join(sort(collect(free)), ", ")) \
-          which the match pattern never binds and nothing mints. Bound by L: \
-          $(isempty(matched) ? "(none)" : join(sort(collect(matched)), ", ")). \
-          A literal-position variable is matched across L and R by string equality of its \
-          lexical form, so check for a typo; if the variable is meant to be created rather \
-          than found, give it a gistp:iriTemplate and its slot bindings.""")
+    return error(
+        """
+        rule <$(spec.iri)>: construct pattern uses $(join(sort(collect(free)), ", ")) \
+        which the match pattern never binds and nothing mints. Bound by L: \
+        $(isempty(matched) ? "(none)" : join(sort(collect(matched)), ", ")). \
+        A literal-position variable is matched across L and R by string equality of its \
+        lexical form, so check for a typo; if the variable is meant to be created rather \
+        than found, give it a gistp:iriTemplate and its slot bindings."""
+    )
 end
 
 """
@@ -1625,13 +1969,15 @@ an unbounded `GRAPH ?g` while what actually ran was an `INSERT … USING … USI
 reviewer approving the text was approving a different query from the one the engine would
 execute.
 """
-function compile_rule(spec::RuleSpec; from::AbstractVector = String[])
+function compile_rule(spec::RuleSpec; from::AbstractVector=String[])
     check_bound(spec)
     m = mode_symbol(spec)
-    froms = dataset_lines(spec, from; keyword = "FROM")
+    froms = dataset_lines(spec, from; keyword="FROM")
 
-    isempty(spec.match) && error("rule <$(spec.iri)>: match pattern <$(spec.match_graph)> is empty.")
-    isempty(spec.construct) && error("rule <$(spec.iri)>: construct pattern <$(spec.construct_graph)> is empty.")
+    isempty(spec.match) &&
+        error("rule <$(spec.iri)>: match pattern <$(spec.match_graph)> is empty.")
+    isempty(spec.construct) &&
+        error("rule <$(spec.iri)>: construct pattern <$(spec.construct_graph)> is empty.")
 
     # BINDs go after every triple pattern: BIND sees only variables already bound earlier in
     # its group, and check_mints has guaranteed each slot value is bound by L.
@@ -1648,15 +1994,15 @@ function compile_rule(spec::RuleSpec; from::AbstractVector = String[])
     }
     """
 
-    """
-    # $(m) rule <$(spec.iri)>
-    CONSTRUCT {
-    $(bgp_text(spec.construct, spec))
-    }
-    $(froms)WHERE {
-    $(where_body(spec))
-    }
-    """
+    return """
+           # $(m) rule <$(spec.iri)>
+           CONSTRUCT {
+           $(bgp_text(spec.construct, spec))
+           }
+           $(froms)WHERE {
+           $(where_body(spec))
+           }
+           """
 end
 
 """
@@ -1669,21 +2015,25 @@ exactly what the rule *would* delete and add, computed from the live data, while
 graph stays untouched. `rewrite_query` is the same solutions with the same BINDs; only the
 templates differ.
 """
-function project_query(spec::RuleSpec; triples::Vector{PatternTriple},
-                       into::AbstractString, from::AbstractVector = String[])
+function project_query(
+    spec::RuleSpec;
+    triples::Vector{PatternTriple},
+    into::AbstractString,
+    from::AbstractVector=String[],
+)
     check_bound(spec)
     isempty(triples) && return ""
     using_lines = dataset_lines(spec, from)
-    """
-    INSERT {
-      GRAPH <$(check_iri(into))> {
-    $(bgp_text(triples, spec; indent = "    "))
-      }
-    }
-    $(using_lines)WHERE {
-    $(where_body(spec))
-    }
-    """
+    return """
+           INSERT {
+             GRAPH <$(check_iri(into))> {
+           $(bgp_text(triples, spec; indent = "    "))
+             }
+           }
+           $(using_lines)WHERE {
+           $(where_body(spec))
+           }
+           """
 end
 
 """
@@ -1700,18 +2050,27 @@ against the pre-update state with DELETE applied before INSERT, so the tombstone
 the triples as they were before removal. One request is one transaction, so a firing is
 never half-applied.
 """
-function rewrite_query(spec::RuleSpec; target::AbstractString, firing::AbstractString,
-                       tombstone::AbstractString, from::AbstractVector = String[])
+function rewrite_query(
+    spec::RuleSpec;
+    target::AbstractString,
+    firing::AbstractString,
+    tombstone::AbstractString,
+    from::AbstractVector=String[],
+)
     check_bound(spec)
     mode_symbol(spec) === :Rewrite || error(
         "rule <$(spec.iri)>: rewrite_query is only for gistp:Rewrite; this rule is " *
-        "$(mode_symbol(spec)). Use insert_query.")
+        "$(mode_symbol(spec)). Use insert_query.",
+    )
 
-    gone  = match_only(spec)
+    gone = match_only(spec)
     added = construct_only(spec)
-    isempty(gone) && isempty(added) && error(
-        "rule <$(spec.iri)>: L and R are identical, so the rewrite deletes nothing and " *
-        "adds nothing. I = L = R.")
+    isempty(gone) &&
+        isempty(added) &&
+        error(
+            "rule <$(spec.iri)>: L and R are identical, so the rewrite deletes nothing and " *
+            "adds nothing. I = L = R.",
+        )
 
     t, f, tomb = check_iri(target), check_iri(firing), check_iri(tombstone)
     using_lines = dataset_lines(spec, from)
@@ -1726,19 +2085,25 @@ function rewrite_query(spec::RuleSpec; target::AbstractString, firing::AbstractS
     # So the candidates are staged and pruned against the target FIRST, while the target is
     # still untouched, and only what survives is treated as this firing's contribution.
     if !isempty(added)
-        push!(ops, """
-        INSERT {
-          GRAPH <$f> {
-        $(bgp_text(added, spec; indent = "    "))
-          }
-        }
-        $(using_lines)WHERE {
-        $(where_body(spec))
-        }""")
+        push!(
+            ops,
+            """
+ INSERT {
+   GRAPH <$f> {
+ $(bgp_text(added, spec; indent = "    "))
+   }
+ }
+ $(using_lines)WHERE {
+ $(where_body(spec))
+ }""",
+        )
         # what the target already had is not something this rule added
-        push!(ops, """
-        DELETE { GRAPH <$f> { ?__s ?__p ?__o } }
-        WHERE  { GRAPH <$f> { ?__s ?__p ?__o } GRAPH <$t> { ?__s ?__p ?__o } }""")
+        push!(
+            ops,
+            """
+ DELETE { GRAPH <$f> { ?__s ?__p ?__o } }
+ WHERE  { GRAPH <$f> { ?__s ?__p ?__o } GRAPH <$t> { ?__s ?__p ?__o } }""",
+        )
         # NO dataset clause here, and none in the promotion op below. This is an invariant,
         # not an oversight: USING/USING NAMED *replace* the dataset, so a graph absent from
         # the clause is invisible even to a GRAPH <constant> in the WHERE -- verified, it
@@ -1751,34 +2116,43 @@ function rewrite_query(spec::RuleSpec; target::AbstractString, firing::AbstractS
     if !isempty(gone)
         # The tombstone is projected before the delete, from the same solutions: L matched,
         # so every triple in it genuinely exists right now.
-        push!(ops, """
-        INSERT {
-          GRAPH <$tomb> {
-        $(bgp_text(gone, spec; indent = "    "))
-          }
-        }
-        $(using_lines)WHERE {
-        $(where_body(spec))
-        }""")
-        push!(ops, """
-        DELETE {
-          GRAPH <$t> {
-        $(bgp_text(gone, spec; indent = "    "))
-          }
-        }
-        $(using_lines)WHERE {
-        $(where_body(spec))
-        }""")
+        push!(
+            ops,
+            """
+ INSERT {
+   GRAPH <$tomb> {
+ $(bgp_text(gone, spec; indent = "    "))
+   }
+ }
+ $(using_lines)WHERE {
+ $(where_body(spec))
+ }""",
+        )
+        push!(
+            ops,
+            """
+ DELETE {
+   GRAPH <$t> {
+ $(bgp_text(gone, spec; indent = "    "))
+   }
+ }
+ $(using_lines)WHERE {
+ $(where_body(spec))
+ }""",
+        )
     end
 
     # Applied last, and from the pruned firing graph rather than from the template, so the
     # target receives exactly what the firing graph claims -- which is what makes undo an
     # exact inverse.
-    isempty(added) || push!(ops, """
-        INSERT { GRAPH <$t> { ?__s ?__p ?__o } }
-        WHERE  { GRAPH <$f> { ?__s ?__p ?__o } }""")
+    isempty(added) || push!(
+        ops,
+        """
+INSERT { GRAPH <$t> { ?__s ?__p ?__o } }
+WHERE  { GRAPH <$f> { ?__s ?__p ?__o } }""",
+    )
 
-    join(ops, " ;\n") * "\n"
+    return join(ops, " ;\n") * "\n"
 end
 
 """
@@ -1797,28 +2171,36 @@ values and the minted IRI: group by the IRI, count distinct binding tuples, and 
 group above one. The tuple is keyed with a literal space between percent-encoded values --
 a space inside a value becomes `%20`, so a raw space unambiguously separates the parts.
 """
-function collision_queries(spec::RuleSpec; from::AbstractVector = String[])
+function collision_queries(spec::RuleSpec; from::AbstractVector=String[])
     out = Tuple{String,String}[]
     isempty(spec.mints) && return out
-    froms = dataset_lines(spec, from; keyword = "FROM")
+    froms = dataset_lines(spec, from; keyword="FROM")
 
     for iri in sort(collect(keys(spec.mints)))
         m = spec.mints[iri]
         v = spec.variables[iri]
-        key = join(("ENCODE_FOR_URI(STR($(var_of(m.slots[n], spec))))"
-                    for n in sort(collect(keys(m.slots)))), ", \" \", ")
-        push!(out, (iri, """
-        SELECT $v (COUNT(DISTINCT ?__key) AS ?n)
-        $(froms)WHERE {
-        $(match_text(spec))
-        $(bind_text(m, spec))$(nacs_text(spec))
-          BIND(CONCAT($key) AS ?__key)
-        }
-        GROUP BY $v
-        HAVING (COUNT(DISTINCT ?__key) > 1)
-        """))
+        key = join(
+            (
+                "ENCODE_FOR_URI(STR($(var_of(m.slots[n], spec))))" for
+                n in sort(collect(keys(m.slots)))
+            ),
+            ", \" \", ",
+        )
+        push!(out, (
+            iri,
+            """
+SELECT $v (COUNT(DISTINCT ?__key) AS ?n)
+$(froms)WHERE {
+$(match_text(spec))
+$(bind_text(m, spec))$(nacs_text(spec))
+  BIND(CONCAT($key) AS ?__key)
+}
+GROUP BY $v
+HAVING (COUNT(DISTINCT ?__key) > 1)
+""",
+        ))
     end
-    out
+    return out
 end
 
 """
@@ -1831,8 +2213,12 @@ This raises rather than warns. A collision is not a cosmetic problem: an IRI is 
 claim, so two people sharing a minted IRI *are* one person as far as every downstream query
 is concerned, and nothing else in the stack will ever notice.
 """
-function check_collisions(spec::RuleSpec; from::AbstractVector = String[],
-                          ep::SparqlEndpoint = endpoint(), limit::Integer = 5)
+function check_collisions(
+    spec::RuleSpec;
+    from::AbstractVector=String[],
+    ep::SparqlEndpoint=endpoint(),
+    limit::Integer=5,
+)
     # Validate before assembling anything. `apply_rule` calls this *before* `insert_query`,
     # so relying on that function's own `check_bound` to sanitise `variableText` left this
     # one shipping unvalidated text to the store: a poisoned variableText reached Fuseki and
@@ -1840,7 +2226,7 @@ function check_collisions(spec::RuleSpec; from::AbstractVector = String[],
     # updates -- a property of the store's endpoint separation, not of this code. Every
     # function that builds SPARQL validates its own inputs.
     check_variables(spec)
-    for (iri, q) in collision_queries(spec; from = from)
+    for (iri, q) in collision_queries(spec; from=from)
         # RFC 6570 Level 1 with a non-ambiguous separator is *injective*: ENCODE_FOR_URI is
         # injective, and a reserved separator cannot appear raw inside an encoded value --
         # even a literal "%2F" double-encodes to "%252F". So distinct slot tuples cannot
@@ -1851,21 +2237,29 @@ function check_collisions(spec::RuleSpec; from::AbstractVector = String[],
         # encoding exists: slugging deliberately maps many source values onto one string, and
         # that is exactly when two distinct bindings silently become one node.
         isempty(ambiguous_separators(spec.mints[iri].template)) && continue
-        rows = select(q; ep = ep)
+        rows = select(q; ep=ep)
         isempty(rows) && continue
         v = spec.variables[iri]
-        shown = [string("<", (r[v[2:end]]::IRIRef).value, "> from ",
-                        (r["n"]::RDFLiteral).lexical, " distinct bindings")
-                 for r in Iterators.take(rows, limit)]
-        error("""
-              rule <$(spec.iri)>: minting $v produces $(length(rows)) IRI(s) that more than \
-              one distinct binding would create, which would silently merge distinct things \
-              into one node:
-                $(join(shown, "\n  "))$(length(rows) > limit ? "\n  ... and $(length(rows) - limit) more" : "")
-              The template $(repr(spec.mints[iri].template)) does not discriminate its \
-              inputs. Add a slot, or use a slot whose values are unique.""")
+        shown = [
+            string(
+                "<",
+                (r[v[2:end]]::IRIRef).value,
+                "> from ",
+                (r["n"]::RDFLiteral).lexical,
+                " distinct bindings",
+            ) for r in Iterators.take(rows, limit)
+        ]
+        error(
+            """
+            rule <$(spec.iri)>: minting $v produces $(length(rows)) IRI(s) that more than \
+            one distinct binding would create, which would silently merge distinct things \
+            into one node:
+              $(join(shown, "\n  "))$(length(rows) > limit ? "\n  ... and $(length(rows) - limit) more" : "")
+            The template $(repr(spec.mints[iri].template)) does not discriminate its \
+            inputs. Add a slot, or use a slot whose values are unique.""",
+        )
     end
-    spec
+    return spec
 end
 
 """
@@ -1888,33 +2282,46 @@ run lets a human decide before anything is written.
 The key covers every variable the construct pattern uses apart from the minted one: those are
 the values that actually land on the minted node.
 """
-function mint_fanin(spec::RuleSpec; from::AbstractVector = String[],
-                    ep::SparqlEndpoint = endpoint(), limit::Integer = 5)
+function mint_fanin(
+    spec::RuleSpec;
+    from::AbstractVector=String[],
+    ep::SparqlEndpoint=endpoint(),
+    limit::Integer=5,
+)
     out = Tuple{String,Vector{Tuple{String,Int}}}[]
     isempty(spec.mints) && return out
     check_variables(spec)          # this builds SPARQL too; see check_collisions
-    froms = dataset_lines(spec, from; keyword = "FROM")
+    froms = dataset_lines(spec, from; keyword="FROM")
     others = sort(collect(setdiff(vars_in(spec.construct, spec), minted_vars(spec))))
     isempty(others) && return out
     key = join(("ENCODE_FOR_URI(STR($o))" for o in others), ", \" \", ")
 
     for iri in sort(collect(keys(spec.mints)))
         v = spec.variables[iri]
-        rows = select("""
-            SELECT $v (COUNT(DISTINCT ?__ctx) AS ?n)
-            $(froms)WHERE {
-            $(match_text(spec))
-            $(bind_text(spec.mints[iri], spec))$(nacs_text(spec))
-              BIND(CONCAT($key) AS ?__ctx)
-            }
-            GROUP BY $v
-            HAVING (COUNT(DISTINCT ?__ctx) > 1)
-            ORDER BY DESC(?n) LIMIT $(Int(limit))"""; ep = ep)
-        isempty(rows) || push!(out,
-            (iri, [((r[v[2:end]]::IRIRef).value, parse(Int, (r["n"]::RDFLiteral).lexical))
-                   for r in rows]))
+        rows = select(
+            """
+  SELECT $v (COUNT(DISTINCT ?__ctx) AS ?n)
+  $(froms)WHERE {
+  $(match_text(spec))
+  $(bind_text(spec.mints[iri], spec))$(nacs_text(spec))
+    BIND(CONCAT($key) AS ?__ctx)
+  }
+  GROUP BY $v
+  HAVING (COUNT(DISTINCT ?__ctx) > 1)
+  ORDER BY DESC(?n) LIMIT $(Int(limit))""";
+            ep=ep,
+        )
+        isempty(rows) || push!(
+            out,
+            (
+                iri,
+                [
+                    ((r[v[2:end]]::IRIRef).value, parse(Int, (r["n"]::RDFLiteral).lexical)) for r in rows
+                ],
+            ),
+        )
     end
-    out
+    return out
 end
 
 """
@@ -1931,22 +2338,23 @@ store's own default graph.
 The construct and match patterns are the *identical* text `compile_rule` emits; only the
 wrapper differs.
 """
-function insert_query(spec::RuleSpec; into::AbstractString, from::AbstractVector = String[])
+function insert_query(spec::RuleSpec; into::AbstractString, from::AbstractVector=String[])
     check_bound(spec)
     mode_symbol(spec) === :Rewrite && error(
         "rule <$(spec.iri)>: gistp:Rewrite mutates the data, so it cannot be run through " *
-        "insert_query, which only ever adds to a firing graph. Use rewrite_query.")
+        "insert_query, which only ever adds to a firing graph. Use rewrite_query.",
+    )
     using_lines = dataset_lines(spec, from)
-    """
-    INSERT {
-      GRAPH <$(check_iri(into))> {
-    $(bgp_text(spec.construct, spec; indent = "    "))
-      }
-    }
-    $(using_lines)WHERE {
-    $(where_body(spec))
-    }
-    """
+    return """
+           INSERT {
+             GRAPH <$(check_iri(into))> {
+           $(bgp_text(spec.construct, spec; indent = "    "))
+             }
+           }
+           $(using_lines)WHERE {
+           $(where_body(spec))
+           }
+           """
 end
 
 """
@@ -1957,21 +2365,23 @@ Fetch and compile in one step. See [`load_rule`](@ref) and [`compile_rule`](@ref
 `from` is forwarded to `compile_rule` and becomes the dataset clause. A scoped rule requires
 it; an unscoped one is unaffected.
 """
-compile_from_store(rule_iri::AbstractString; from::AbstractVector = String[],
-                   ep::SparqlEndpoint = endpoint()) =
-    compile_rule(load_rule(rule_iri; ep = ep); from = from)
+function compile_from_store(
+    rule_iri::AbstractString; from::AbstractVector=String[], ep::SparqlEndpoint=endpoint()
+)
+    return compile_rule(load_rule(rule_iri; ep=ep); from=from)
+end
 
 """
     list_rules(; ep = endpoint()) -> Vector{String}
 
 Every `gistp:Rule` IRI in the store, sorted.
 """
-function list_rules(; ep::SparqlEndpoint = endpoint())
-    rows = select("SELECT ?r WHERE { ?r a <$C_RULE> } ORDER BY ?r"; ep = ep)
-    sort!([_iri(r["r"]) for r in rows])
+function list_rules(; ep::SparqlEndpoint=endpoint())
+    rows = select("SELECT ?r WHERE { ?r a <$C_RULE> } ORDER BY ?r"; ep=ep)
+    return sort!([_iri(r["r"]) for r in rows])
 end
 
-const SKOS_LABEL      = "http://www.w3.org/2004/02/skos/core#prefLabel"
+const SKOS_LABEL = "http://www.w3.org/2004/02/skos/core#prefLabel"
 const SKOS_DEFINITION = "http://www.w3.org/2004/02/skos/core#definition"
 
 """
@@ -1986,19 +2396,34 @@ rather than raising: this is the *catalogue*, and it is the only route an agent 
 discovering any rule at all, so one malformed rule must not hide the rest of them. The rule
 still fails, loudly, at [`load_rule`](@ref) the moment anyone tries to use it.
 """
-function rule_catalogue(; ep::SparqlEndpoint = endpoint())
-    rows = select("""
-        SELECT ?r ?mode ?label ?def (COUNT(?n) AS ?guards) WHERE {
-          ?r a <$C_RULE> ; <$P_MODE> ?mode .
-          OPTIONAL { ?r <$SKOS_LABEL> ?label }
-          OPTIONAL { ?r <$SKOS_DEFINITION> ?def }
-          OPTIONAL { ?r <$P_NAC> ?n }
-        } GROUP BY ?r ?mode ?label ?def ORDER BY ?r"""; ep = ep)
+function rule_catalogue(; ep::SparqlEndpoint=endpoint())
+    rows = select(
+        """
+SELECT ?r ?mode ?label ?def (COUNT(?n) AS ?guards) WHERE {
+  ?r a <$C_RULE> ; <$P_MODE> ?mode .
+  OPTIONAL { ?r <$SKOS_LABEL> ?label }
+  OPTIONAL { ?r <$SKOS_DEFINITION> ?def }
+  OPTIONAL { ?r <$P_NAC> ?n }
+} GROUP BY ?r ?mode ?label ?def ORDER BY ?r""";
+        ep=ep,
+    )
     lex(r, k) = haskey(r, k) && r[k] isa RDFLiteral ? (r[k]::RDFLiteral).lexical : ""
-    mode_of(m) = try mode_symbol(m) catch; :Unrecognised end
-    [(iri = _iri(r["r"]), mode = mode_of(_iri(r["mode"])), mode_iri = _iri(r["mode"]),
-      label = lex(r, "label"), definition = lex(r, "def"),
-      guards = parse(Int, (r["guards"]::RDFLiteral).lexical)) for r in rows]
+    mode_of(m) =
+        try
+            mode_symbol(m)
+        catch
+            :Unrecognised
+        end
+    return [
+        (
+            iri=_iri(r["r"]),
+            mode=mode_of(_iri(r["mode"])),
+            mode_iri=_iri(r["mode"]),
+            label=lex(r, "label"),
+            definition=lex(r, "def"),
+            guards=parse(Int, (r["guards"]::RDFLiteral).lexical),
+        ) for r in rows
+    ]
 end
 
 #################################################################
@@ -2060,18 +2485,24 @@ would drop a member missing its `gist:sequence` or its `gist:providesOrderFor` a
 run a *shorter* set -- the same failure `load_filters` guards against, and worse here,
 because a missing rule in a cascade produces a plausible answer rather than an error.
 """
-function load_rule_set(set_iri::AbstractString; ep::SparqlEndpoint = endpoint())
+function load_rule_set(set_iri::AbstractString; ep::SparqlEndpoint=endpoint())
     s = check_iri(set_iri)
 
-    typed = select("SELECT ?t WHERE { <$s> a <$C_RULESET> BIND(1 AS ?t) }"; ep = ep)
+    typed = select("SELECT ?t WHERE { <$s> a <$C_RULESET> BIND(1 AS ?t) }"; ep=ep)
     isempty(typed) && error(
         "no rule set found at <$s>: it must be typed gistp:RuleSet in the default graph.",
     )
 
-    labels = select("SELECT ?label WHERE { <$s> <$SKOS_LABEL> ?label }"; ep = ep)
-    label =
-        isempty(labels) ? "" :
-        (labels[1]["label"] isa RDFLiteral ? (labels[1]["label"]::RDFLiteral).lexical : "")
+    labels = select("SELECT ?label WHERE { <$s> <$SKOS_LABEL> ?label }"; ep=ep)
+    label = if isempty(labels)
+        ""
+    else
+        (if labels[1]["label"] isa RDFLiteral
+            (labels[1]["label"]::RDFLiteral).lexical
+        else
+            ""
+        end)
+    end
 
     rows = select(
         """
@@ -2080,7 +2511,7 @@ SELECT ?m ?rule ?seq WHERE {
   OPTIONAL { ?m <$P_PROVIDESORDERFOR> ?rule }
   OPTIONAL { ?m <$P_SEQUENCE>         ?seq }
 }""";
-        ep = ep,
+        ep=ep,
     )
 
     isempty(rows) && error(
@@ -2104,7 +2535,7 @@ SELECT ?m ?rule ?seq WHERE {
             "read here -- give the member an integer.",
         )
         rule = _iri(r["rule"])
-        istyped = select("SELECT ?t WHERE { <$rule> a <$C_RULE> BIND(1 AS ?t) }"; ep = ep)
+        istyped = select("SELECT ?t WHERE { <$rule> a <$C_RULE> BIND(1 AS ?t) }"; ep=ep)
         isempty(istyped) && error(
             "rule set <$s>: member $member orders <$rule>, which is not typed " *
             "gistp:Rule. A set orders rules; ordering anything else would compile to " *
@@ -2112,11 +2543,7 @@ SELECT ?m ?rule ?seq WHERE {
         )
         push!(
             entries,
-            (
-                parse(Int, (r["seq"]::RDFLiteral).lexical),
-                -load_priority(rule; ep = ep),
-                rule,
-            ),
+            (parse(Int, (r["seq"]::RDFLiteral).lexical), -load_priority(rule; ep=ep), rule),
         )
     end
 
@@ -2135,7 +2562,7 @@ SELECT ?m ?rule ?seq WHERE {
     # worth failing on: whichever one the engine honoured, the other would be a lie.
     firsts = select(
         "SELECT ?m ?rule WHERE { ?m <$P_ISFIRSTMEMBEROF> <$s> ; <$P_PROVIDESORDERFOR> ?rule }";
-        ep = ep,
+        ep=ep,
     )
     for f in firsts
         declared = _iri(f["rule"])
@@ -2146,7 +2573,9 @@ SELECT ?m ?rule ?seq WHERE {
         )
     end
 
-    RuleSetSpec(s, label, rules, load_strategy(s; ep = ep), load_max_iterations(s; ep = ep))
+    return RuleSetSpec(
+        s, label, rules, load_strategy(s; ep=ep), load_max_iterations(s; ep=ep)
+    )
 end
 
 """
@@ -2154,7 +2583,7 @@ end
 
 Every `gistp:RuleSet` in the store, with its label and membership count, for a catalogue.
 """
-function list_rule_sets(; ep::SparqlEndpoint = endpoint())
+function list_rule_sets(; ep::SparqlEndpoint=endpoint())
     rows = select(
         """
 SELECT ?s ?label (COUNT(DISTINCT ?m) AS ?members) WHERE {
@@ -2162,19 +2591,20 @@ SELECT ?s ?label (COUNT(DISTINCT ?m) AS ?members) WHERE {
   OPTIONAL { ?s <$SKOS_LABEL> ?label }
   OPTIONAL { ?m <$P_ISMEMBEROF> ?s }
 } GROUP BY ?s ?label ORDER BY ?s""";
-        ep = ep,
+        ep=ep,
     )
     lex(r, k) = haskey(r, k) && r[k] isa RDFLiteral ? (r[k]::RDFLiteral).lexical : ""
     return [
         (
-            iri = _iri(r["s"]),
-            label = lex(r, "label"),
-            members = parse(Int, (r["members"]::RDFLiteral).lexical),
+            iri=_iri(r["s"]),
+            label=lex(r, "label"),
+            members=parse(Int, (r["members"]::RDFLiteral).lexical),
         ) for r in rows
     ]
 end
 
-export PatternTriple, RuleSpec, MintSpec, load_rule, load_pattern, load_variables, load_mints
+export PatternTriple,
+    RuleSpec, MintSpec, load_rule, load_pattern, load_variables, load_mints
 export rule_catalogue
 export compile_rule, compile_from_store, insert_query, rewrite_query, project_query
 export list_rules, mode_symbol
@@ -2189,4 +2619,13 @@ export STRATEGY_ONCE, STRATEGY_TOFIXPOINT
 export parse_template, template_slots, bind_text, minted_vars
 export ambiguous_separators, collision_queries, check_collisions, mint_fanin
 export GISTP_NS, MODE_CONSTRUCT, MODE_ASSERT, MODE_REWRITE
-export load_in_graph, load_services, is_scoped, all_scopes, graph_scopes, dataset_lines, graph_wrap, check_scopes, scope_vars, match_text
+export load_in_graph,
+    load_services,
+    is_scoped,
+    all_scopes,
+    graph_scopes,
+    dataset_lines,
+    graph_wrap,
+    check_scopes,
+    scope_vars,
+    match_text

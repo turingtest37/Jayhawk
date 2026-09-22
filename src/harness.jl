@@ -16,7 +16,7 @@
 using UUIDs
 
 const PROV_NS = "http://www.w3.org/ns/prov#"
-const JH_NS   = "http://www.semanticweb.org/doug/ontologies/jayhawk#"
+const JH_NS = "http://www.semanticweb.org/doug/ontologies/jayhawk#"
 
 "Named graph holding the record of every rule firing."
 const PROVENANCE_GRAPH = "urn:jayhawk:provenance"
@@ -46,9 +46,24 @@ end
 
 Firing(g, r, m, i, c, s) = Firing(g, r, m, i, c, s, "", "", 0)
 
-Base.show(io::IO, f::Firing) = print(io,
-    "Firing(", f.rule, " [", f.mode, "] iter ", f.iteration, " -> ",
-    f.count, " added", f.removed > 0 ? ", $(f.removed) removed" : "", " in <", f.graph, ">)")
+function Base.show(io::IO, f::Firing)
+    return print(
+        io,
+        "Firing(",
+        f.rule,
+        " [",
+        f.mode,
+        "] iter ",
+        f.iteration,
+        " -> ",
+        f.count,
+        " added",
+        f.removed > 0 ? ", $(f.removed) removed" : "",
+        " in <",
+        f.graph,
+        ">)",
+    )
+end
 
 new_firing_graph() = string("urn:jayhawk:firing:", UUIDs.uuid4())
 new_tombstone_graph() = string("urn:jayhawk:tombstone:", UUIDs.uuid4())
@@ -56,9 +71,11 @@ new_tombstone_graph() = string("urn:jayhawk:tombstone:", UUIDs.uuid4())
 _now_xsd() = string(Dates.format(Dates.now(Dates.UTC), "yyyy-mm-ddTHH:MM:SS"), "Z")
 
 "How many triples are in a named graph."
-function graph_size(g::AbstractString; ep::SparqlEndpoint = endpoint())
-    rows = select("SELECT (COUNT(*) AS ?n) WHERE { GRAPH <$(check_iri(g))> { ?s ?p ?o } }"; ep = ep)
-    isempty(rows) ? 0 : parse(Int, (rows[1]["n"]::RDFLiteral).lexical)
+function graph_size(g::AbstractString; ep::SparqlEndpoint=endpoint())
+    rows = select(
+        "SELECT (COUNT(*) AS ?n) WHERE { GRAPH <$(check_iri(g))> { ?s ?p ?o } }"; ep=ep
+    )
+    return isempty(rows) ? 0 : parse(Int, (rows[1]["n"]::RDFLiteral).lexical)
 end
 
 """
@@ -76,25 +93,43 @@ reporting facts the store already held -- directly contradicting `Firing`'s own 
 The bare `{ ?s ?p ?o }` alternative below reads the default graph because this update
 carries no `USING`.
 """
-function prune_known!(firing_graph::AbstractString, source::AbstractVector;
-                      ep::SparqlEndpoint = endpoint())
-    alternatives = isempty(source) ? "{ ?s ?p ?o }" :
+function prune_known!(
+    firing_graph::AbstractString, source::AbstractVector; ep::SparqlEndpoint=endpoint()
+)
+    alternatives = if isempty(source)
+        "{ ?s ?p ?o }"
+    else
         join(("{ GRAPH <$(check_iri(g))> { ?s ?p ?o } }" for g in source), "\n      UNION ")
-    update!("""
-        DELETE { GRAPH <$(check_iri(firing_graph))> { ?s ?p ?o } }
-        WHERE {
-          GRAPH <$(check_iri(firing_graph))> { ?s ?p ?o }
-          { $alternatives }
-        }"""; ep = ep)
-    nothing
+    end
+    update!(
+        """
+    DELETE { GRAPH <$(check_iri(firing_graph))> { ?s ?p ?o } }
+    WHERE {
+      GRAPH <$(check_iri(firing_graph))> { ?s ?p ?o }
+      { $alternatives }
+    }""";
+        ep=ep,
+    )
+    return nothing
 end
 
 "Write the provenance record for one firing."
-function record_firing!(f::Firing; actor::AbstractString, ep::SparqlEndpoint = endpoint())
-    srcs = isempty(f.source) ? "" :
-        join(("    <$(f.graph)> <$(JH_NS)sourceGraph> <$(check_iri(g))> ." for g in f.source), "\n") * "\n"
-    mode_iri = f.mode === :Construct ? MODE_CONSTRUCT :
-               f.mode === :Assert    ? MODE_ASSERT    : MODE_REWRITE
+function record_firing!(f::Firing; actor::AbstractString, ep::SparqlEndpoint=endpoint())
+    srcs = if isempty(f.source)
+        ""
+    else
+        join(
+        ("    <$(f.graph)> <$(JH_NS)sourceGraph> <$(check_iri(g))> ." for g in f.source),
+        "\n",
+    ) * "\n"
+    end
+    mode_iri = if f.mode === :Construct
+        MODE_CONSTRUCT
+    elseif f.mode === :Assert
+        MODE_ASSERT
+    else
+        MODE_REWRITE
+    end
     # A rewrite is only reversible if undo can find what it removed and where from, so both
     # are part of the record rather than reconstructed later.
     rw = isempty(f.tombstone) ? "" : """
@@ -102,17 +137,20 @@ function record_firing!(f::Firing; actor::AbstractString, ep::SparqlEndpoint = e
                 <$(JH_NS)targetGraph> <$(f.target)> ;
                 <$(JH_NS)removedCount> $(f.removed) .
     """
-    update!("""
-        INSERT DATA { GRAPH <$PROVENANCE_GRAPH> {
-            <$(f.graph)> a <$(PROV_NS)Entity> , <$(JH_NS)Firing> ;
-                <$(PROV_NS)generatedAtTime> "$(_now_xsd())"^^<http://www.w3.org/2001/XMLSchema#dateTime> ;
-                <$(JH_NS)appliedRule> <$(f.rule)> ;
-                <$(JH_NS)rewriteMode> <$mode_iri> ;
-                <$(JH_NS)actor> "$(escape_literal(actor))" ;
-                <$(JH_NS)iteration> $(f.iteration) ;
-                <$(JH_NS)tripleCount> $(f.count) .
-        $(srcs)$(rw)} }"""; ep = ep)
-    nothing
+    update!(
+        """
+    INSERT DATA { GRAPH <$PROVENANCE_GRAPH> {
+        <$(f.graph)> a <$(PROV_NS)Entity> , <$(JH_NS)Firing> ;
+            <$(PROV_NS)generatedAtTime> "$(_now_xsd())"^^<http://www.w3.org/2001/XMLSchema#dateTime> ;
+            <$(JH_NS)appliedRule> <$(f.rule)> ;
+            <$(JH_NS)rewriteMode> <$mode_iri> ;
+            <$(JH_NS)actor> "$(escape_literal(actor))" ;
+            <$(JH_NS)iteration> $(f.iteration) ;
+            <$(JH_NS)tripleCount> $(f.count) .
+    $(srcs)$(rw)} }""";
+        ep=ep,
+    )
+    return nothing
 end
 
 """
@@ -125,13 +163,16 @@ Refuse to write a firing into a graph that already holds something.
 `undo_firing!` later DROPs the caller's data along with the result. The default is a fresh
 UUID graph, so this only fires when somebody named one deliberately.
 """
-function check_target_empty(into::AbstractString; ep::SparqlEndpoint = endpoint())
-    n = graph_size(into; ep = ep)
-    n == 0 || throw(ArgumentError(
-        "target graph <$into> already holds $n triple(s). A firing graph must start empty: " *
-        "its size is reported as the facts this rule contributed, and undo_firing! drops " *
-        "the whole graph. Use a fresh graph, or omit `into` to get one."))
-    nothing
+function check_target_empty(into::AbstractString; ep::SparqlEndpoint=endpoint())
+    n = graph_size(into; ep=ep)
+    n == 0 || throw(
+        ArgumentError(
+            "target graph <$into> already holds $n triple(s). A firing graph must start empty: " *
+            "its size is reported as the facts this rule contributed, and undo_firing! drops " *
+            "the whole graph. Use a fresh graph, or omit `into` to get one.",
+        ),
+    )
+    return nothing
 end
 
 """
@@ -144,34 +185,40 @@ The result lands in `into`, is pruned of facts `source` already held, and is rec
 provenance graph. A firing that contributed nothing is dropped rather than left as an empty
 graph.
 """
-apply_rule(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint(), kw...) =
-    apply_rule(load_rule(rule_iri; ep = ep); ep = ep, kw...)
+function apply_rule(rule_iri::AbstractString; ep::SparqlEndpoint=endpoint(), kw...)
+    return apply_rule(load_rule(rule_iri; ep=ep); ep=ep, kw...)
+end
 
-function apply_rule(spec::RuleSpec; into::AbstractString = new_firing_graph(),
-                    source::AbstractVector = String[], actor::AbstractString = "jayhawk",
-                    iteration::Integer = 1, ep::SparqlEndpoint = endpoint())
+function apply_rule(
+    spec::RuleSpec;
+    into::AbstractString=new_firing_graph(),
+    source::AbstractVector=String[],
+    actor::AbstractString="jayhawk",
+    iteration::Integer=1,
+    ep::SparqlEndpoint=endpoint(),
+)
     # Before writing anything: would any minted IRI be reachable from more than one distinct
     # binding? An IRI is an identity claim, so a collision merges two things into one node
     # and nothing downstream ever notices. Static separator analysis happens in compile;
     # this catches what only the data can reveal.
-    check_collisions(spec; from = source, ep = ep)
-    check_target_empty(into; ep = ep)
+    check_collisions(spec; from=source, ep=ep)
+    check_target_empty(into; ep=ep)
 
-    mode_symbol(spec) === :Rewrite &&
-        return apply_rewrite!(spec; into = into, source = source, actor = actor,
-                              iteration = iteration, ep = ep)
+    mode_symbol(spec) === :Rewrite && return apply_rewrite!(
+        spec; into=into, source=source, actor=actor, iteration=iteration, ep=ep
+    )
 
-    update!(insert_query(spec; into = into, from = source); ep = ep)
-    prune_known!(into, source; ep = ep)
-    n = graph_size(into; ep = ep)
+    update!(insert_query(spec; into=into, from=source); ep=ep)
+    prune_known!(into, source; ep=ep)
+    n = graph_size(into; ep=ep)
 
     f = Firing(into, spec.iri, mode_symbol(spec), Int(iteration), n, String.(source))
     if n == 0
-        update!("DROP SILENT GRAPH <$into>"; ep = ep)   # contributed nothing; leave no litter
+        update!("DROP SILENT GRAPH <$into>"; ep=ep)   # contributed nothing; leave no litter
     else
-        record_firing!(f; actor = actor, ep = ep)
+        record_firing!(f; actor=actor, ep=ep)
     end
-    f
+    return f
 end
 
 """
@@ -188,38 +235,52 @@ The removed triples are captured into a tombstone graph by the same atomic updat
 removes them, because `DROP GRAPH` can undo an addition but nothing can undo a deletion
 that was never recorded.
 """
-function apply_rewrite!(spec::RuleSpec; into::AbstractString, source::AbstractVector,
-                        actor::AbstractString, iteration::Integer,
-                        ep::SparqlEndpoint = endpoint())
-    length(source) == 1 || throw(ArgumentError(
-        "rule <$(spec.iri)>: gistp:Rewrite needs exactly one source graph, which is the " *
-        "graph it edits; got $(length(source)). Construct and Assert read a union and " *
-        "write elsewhere, but a deletion has to name what it deletes from."))
+function apply_rewrite!(
+    spec::RuleSpec;
+    into::AbstractString,
+    source::AbstractVector,
+    actor::AbstractString,
+    iteration::Integer,
+    ep::SparqlEndpoint=endpoint(),
+)
+    length(source) == 1 || throw(
+        ArgumentError(
+            "rule <$(spec.iri)>: gistp:Rewrite needs exactly one source graph, which is the " *
+            "graph it edits; got $(length(source)). Construct and Assert read a union and " *
+            "write elsewhere, but a deletion has to name what it deletes from.",
+        ),
+    )
     target = String(source[1])
-    tomb   = new_tombstone_graph()
+    tomb = new_tombstone_graph()
 
     risks = dangling_risks(spec)
     isempty(risks) || @warn(
         "rule <$(spec.iri)> deletes every triple the pattern knows about for " *
-        "$(join(risks, ", ")), and the construct pattern never mentions them. SPARQL " *
-        "Update is single-pushout and performs no dangling check, so anything outside " *
-        "the pattern still referring to those nodes will be left pointing at nothing.",
-        rule = spec.iri, variables = risks)
+            "$(join(risks, ", ")), and the construct pattern never mentions them. SPARQL " *
+            "Update is single-pushout and performs no dangling check, so anything outside " *
+            "the pattern still referring to those nodes will be left pointing at nothing.",
+        rule = spec.iri,
+        variables = risks
+    )
 
-    update!(rewrite_query(spec; target = target, firing = into, tombstone = tomb,
-                          from = [target]); ep = ep)
+    update!(
+        rewrite_query(spec; target=target, firing=into, tombstone=tomb, from=[target]);
+        ep=ep,
+    )
 
-    added   = graph_size(into; ep = ep)
-    removed = graph_size(tomb; ep = ep)
-    f = Firing(into, spec.iri, :Rewrite, Int(iteration), added, [target], tomb, target, removed)
+    added = graph_size(into; ep=ep)
+    removed = graph_size(tomb; ep=ep)
+    f = Firing(
+        into, spec.iri, :Rewrite, Int(iteration), added, [target], tomb, target, removed
+    )
 
     if added == 0 && removed == 0
-        update!("DROP SILENT GRAPH <$into>"; ep = ep)
-        update!("DROP SILENT GRAPH <$tomb>"; ep = ep)
+        update!("DROP SILENT GRAPH <$into>"; ep=ep)
+        update!("DROP SILENT GRAPH <$tomb>"; ep=ep)
     else
-        record_firing!(f; actor = actor, ep = ep)
+        record_firing!(f; actor=actor, ep=ep)
     end
-    f
+    return f
 end
 
 "Fixpoint bound used when neither the rule nor the caller states one."
@@ -238,11 +299,13 @@ function and `Rewrite` deletes, so both default to `Once`.
 The rule-level setting is a default rather than a mandate: the same rule can reasonably be
 applied once during review and to a fixpoint in a batch.
 """
-function effective_strategy(spec::RuleSpec; strategy::Union{Symbol,Nothing} = nothing)
-    s = something(strategy, spec.strategy,
-                  mode_symbol(spec) === :Assert ? :ToFixpoint : :Once)
-    s in (:Once, :ToFixpoint) || throw(ArgumentError(
-        "unknown application strategy :$s; expected :Once or :ToFixpoint."))
+function effective_strategy(spec::RuleSpec; strategy::Union{Symbol,Nothing}=nothing)
+    s = something(
+        strategy, spec.strategy, mode_symbol(spec) === :Assert ? :ToFixpoint : :Once
+    )
+    s in (:Once, :ToFixpoint) || throw(
+        ArgumentError("unknown application strategy :$s; expected :Once or :ToFixpoint."),
+    )
     return s
 end
 
@@ -276,65 +339,88 @@ convergence. A silently incomplete fixpoint is the worst answer this function ca
 it now refuses instead. `Construct` is unaffected -- it applies once, and an empty source
 correctly means the default graph.
 """
-function run_rule(spec::RuleSpec; source::AbstractVector = String[],
-                  actor::AbstractString = "jayhawk",
-                  strategy::Union{Symbol,Nothing} = nothing,
-                  max_iterations::Union{Integer,Nothing} = nothing,
-                  ep::SparqlEndpoint = endpoint())
+function run_rule(
+    spec::RuleSpec;
+    source::AbstractVector=String[],
+    actor::AbstractString="jayhawk",
+    strategy::Union{Symbol,Nothing}=nothing,
+    max_iterations::Union{Integer,Nothing}=nothing,
+    ep::SparqlEndpoint=endpoint(),
+)
     mode = mode_symbol(spec)
-    strat = effective_strategy(spec; strategy = strategy)
+    strat = effective_strategy(spec; strategy=strategy)
     budget = something(max_iterations, spec.max_iterations, DEFAULT_MAX_ITERATIONS)
 
-    budget >= 1 || throw(ArgumentError(
-        "max_iterations must be at least 1, got $budget."))
+    budget >= 1 || throw(ArgumentError("max_iterations must be at least 1, got $budget."))
 
     # A scoped rule that names no graphs does not read "nothing"; it reads the whole store.
     # Without a dataset clause `GRAPH ?g` enumerates every named graph there is, which here
     # means <urn:jayhawk:provenance> and every firing and tombstone ever written. Refusing is
     # the only safe reading -- there is no sensible default set of graphs.
-    is_scoped(spec) && isempty(source) && throw(ArgumentError(
-        "rule <$(spec.iri)>: a rule with gistp:inGraph must name its graphs in `source`. " *
-        "With no dataset clause a graph variable ranges over every named graph in the " *
-        "store, including <$PROVENANCE_GRAPH> and every firing and tombstone -- so an " *
-        "empty `source` is not 'the default graph' here, it is everything."))
+    is_scoped(spec) &&
+        isempty(source) &&
+        throw(
+            ArgumentError(
+                "rule <$(spec.iri)>: a rule with gistp:inGraph must name its graphs in `source`. " *
+                "With no dataset clause a graph variable ranges over every named graph in the " *
+                "store, including <$PROVENANCE_GRAPH> and every firing and tombstone -- so an " *
+                "empty `source` is not 'the default graph' here, it is everything.",
+            ),
+        )
 
     # Each round appends its firing graph to the working set, and the working set becomes the
     # dataset clause -- so from round two a scoped rule would enumerate its own output as a
     # graph to match in, and write into it.
-    is_scoped(spec) && strat === :ToFixpoint && throw(ArgumentError(
-        "rule <$(spec.iri)>: gistp:inGraph with a ToFixpoint strategy is not supported yet. " *
-        "Each iteration adds its firing graph to the working set, so the next round would " *
-        "bind that firing as a graph to match in. Declare gistp:strategy gistp:Once, or " *
-        "pass strategy = :Once."))
-    strat === :ToFixpoint && isempty(source) && throw(ArgumentError(
-        "rule <$(spec.iri)>: running to a fixpoint needs an explicit `source`. Each round " *
-        "must see the previous round's output, and SPARQL's USING cannot name the store's " *
-        "default graph -- so the working set has to be named graphs. Load the data into " *
-        "one and pass it as source, or apply the rule once."))
+    is_scoped(spec) &&
+        strat === :ToFixpoint &&
+        throw(
+            ArgumentError(
+                "rule <$(spec.iri)>: gistp:inGraph with a ToFixpoint strategy is not supported yet. " *
+                "Each iteration adds its firing graph to the working set, so the next round would " *
+                "bind that firing as a graph to match in. Declare gistp:strategy gistp:Once, or " *
+                "pass strategy = :Once.",
+            ),
+        )
+    strat === :ToFixpoint &&
+        isempty(source) &&
+        throw(
+            ArgumentError(
+                "rule <$(spec.iri)>: running to a fixpoint needs an explicit `source`. Each round " *
+                "must see the previous round's output, and SPARQL's USING cannot name the store's " *
+                "default graph -- so the working set has to be named graphs. Load the data into " *
+                "one and pass it as source, or apply the rule once.",
+            ),
+        )
 
     # An unbounded destructive loop must never be the default. A Rewrite has no negative
     # condition to say when it is done, so iterating it is a guess unless somebody has
     # thought about how far it should go and said so.
-    if strat === :ToFixpoint && mode === :Rewrite && isempty(spec.nacs) &&
-       max_iterations === nothing && spec.max_iterations === nothing
-        throw(ArgumentError(
-            "rule <$(spec.iri)>: a gistp:Rewrite run to a fixpoint with no " *
-            "gistp:hasNegativeCondition must state a bound. Give the rule a negative " *
-            "condition saying when it has already fired, or set gistp:maxIterations -- " *
-            "falling back to a default of $DEFAULT_MAX_ITERATIONS destructive passes is " *
-            "not a decision this should make for you."))
+    if strat === :ToFixpoint &&
+        mode === :Rewrite &&
+        isempty(spec.nacs) &&
+        max_iterations === nothing &&
+        spec.max_iterations === nothing
+        throw(
+            ArgumentError(
+                "rule <$(spec.iri)>: a gistp:Rewrite run to a fixpoint with no " *
+                "gistp:hasNegativeCondition must state a bound. Give the rule a negative " *
+                "condition saying when it has already fired, or set gistp:maxIterations -- " *
+                "falling back to a default of $DEFAULT_MAX_ITERATIONS destructive passes is " *
+                "not a decision this should make for you.",
+            ),
+        )
     end
 
     firings = Firing[]
     working = String[String.(source)...]
 
     if strat === :Once
-        push!(firings, apply_rule(spec; source = working, actor = actor, iteration = 1, ep = ep))
+        push!(firings, apply_rule(spec; source=working, actor=actor, iteration=1, ep=ep))
         return firings
     end
 
     for i in 1:budget
-        f = apply_rule(spec; source = working, actor = actor, iteration = i, ep = ep)
+        f = apply_rule(spec; source=working, actor=actor, iteration=i, ep=ep)
         # A Rewrite changes the target in place, so its working set never grows; it has
         # converged when a pass neither adds nor removes anything.
         f.count == 0 && f.removed == 0 && return firings
@@ -342,11 +428,13 @@ function run_rule(spec::RuleSpec; source::AbstractVector = String[],
         mode === :Rewrite || push!(working, f.graph)   # the rule now sees its own output
     end
 
-    error("""
-          rule <$(spec.iri)>: still changing the graph after $budget iterations. Either \
-          raise the bound, add a gistp:hasNegativeCondition saying when the rule has \
-          already fired, or check for IRI minting via gistp:iriTemplate, which turns \
-          fixpoint evaluation into the chase and need not terminate.""")
+    return error(
+        """
+        rule <$(spec.iri)>: still changing the graph after $budget iterations. Either \
+        raise the bound, add a gistp:hasNegativeCondition saying when the rule has \
+        already fired, or check for IRI minting via gistp:iriTemplate, which turns \
+        fixpoint evaluation into the chase and need not terminate."""
+    )
 end
 
 """
@@ -382,41 +470,42 @@ happened to be no-ops.
 """
 function run_rules(
     set::RuleSetSpec;
-    source::AbstractVector = String[],
-    actor::AbstractString = "jayhawk",
-    strategy::Union{Symbol,Nothing} = nothing,
-    max_iterations::Union{Integer,Nothing} = nothing,
-    ep::SparqlEndpoint = endpoint(),
+    source::AbstractVector=String[],
+    actor::AbstractString="jayhawk",
+    strategy::Union{Symbol,Nothing}=nothing,
+    max_iterations::Union{Integer,Nothing}=nothing,
+    ep::SparqlEndpoint=endpoint(),
 )
-    specs = [load_rule(r; ep = ep) for r in set.rules]
+    specs = [load_rule(r; ep=ep) for r in set.rules]
     return _run_rule_sequence(
         specs,
         set.iri,
         something(strategy, set.strategy, :Once),
         something(max_iterations, set.max_iterations, DEFAULT_MAX_ITERATIONS);
-        source = source,
-        actor = actor,
-        ep = ep,
+        source=source,
+        actor=actor,
+        ep=ep,
     )
 end
 
-run_rules(set_iri::AbstractString; ep::SparqlEndpoint = endpoint(), kw...) =
-    run_rules(load_rule_set(set_iri; ep = ep); ep = ep, kw...)
+function run_rules(set_iri::AbstractString; ep::SparqlEndpoint=endpoint(), kw...)
+    return run_rules(load_rule_set(set_iri; ep=ep); ep=ep, kw...)
+end
 
 function run_rules(
     rule_iris::AbstractVector;
-    source::AbstractVector = String[],
-    actor::AbstractString = "jayhawk",
-    strategy::Union{Symbol,Nothing} = nothing,
-    max_iterations::Union{Integer,Nothing} = nothing,
-    ep::SparqlEndpoint = endpoint(),
+    source::AbstractVector=String[],
+    actor::AbstractString="jayhawk",
+    strategy::Union{Symbol,Nothing}=nothing,
+    max_iterations::Union{Integer,Nothing}=nothing,
+    ep::SparqlEndpoint=endpoint(),
 )
     isempty(rule_iris) && throw(
         ArgumentError(
-            "run_rules was given no rules. An empty run is a caller bug, not a no-op.",
+            "run_rules was given no rules. An empty run is a caller bug, not a no-op."
         ),
     )
-    specs = [load_rule(String(r); ep = ep) for r in rule_iris]
+    specs = [load_rule(String(r); ep=ep) for r in rule_iris]
     # Higher priority first; IRI breaks genuine ties so two runs of the same set agree.
     order = sortperm(collect(zip((-s.priority for s in specs), (s.iri for s in specs))))
     return _run_rule_sequence(
@@ -424,9 +513,9 @@ function run_rules(
         "(ad-hoc rule list)",
         something(strategy, :Once),
         something(max_iterations, DEFAULT_MAX_ITERATIONS);
-        source = source,
-        actor = actor,
-        ep = ep,
+        source=source,
+        actor=actor,
+        ep=ep,
     )
 end
 
@@ -438,7 +527,7 @@ function _run_rule_sequence(
     budget::Integer;
     source::AbstractVector,
     actor::AbstractString,
-    ep::SparqlEndpoint = endpoint(),
+    ep::SparqlEndpoint=endpoint(),
 )
     set_strategy in (:Once, :ToFixpoint) || throw(
         ArgumentError(
@@ -479,10 +568,10 @@ function _run_rule_sequence(
     firings = Firing[]
     working = String[String.(source)...]
 
-    for pass = 1:budget
+    for pass in 1:budget
         changed = false
         for spec in specs
-            for f in run_rule(spec; source = working, actor = actor, ep = ep)
+            for f in run_rule(spec; source=working, actor=actor, ep=ep)
                 # Nothing contributed: apply_rule already dropped the graph and wrote no
                 # provenance, so this firing is not undoable and must not be handed back.
                 (f.count == 0 && f.removed == 0) && continue
@@ -499,17 +588,18 @@ function _run_rule_sequence(
         changed || return firings
     end
 
-    error(
+    return error(
         """
         rule set $label: still changing the graph after $budget passes. Either raise the \
         bound, or find the rule pair that keeps re-deriving -- a set that will not settle \
         usually has two rules whose outputs feed each other, which is a confluence \
-        question the derived interface I cannot answer.""",
+        question the derived interface I cannot answer."""
     )
 end
 
-run_rule(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint(), kw...) =
-    run_rule(load_rule(rule_iri; ep = ep); ep = ep, kw...)
+function run_rule(rule_iri::AbstractString; ep::SparqlEndpoint=endpoint(), kw...)
+    return run_rule(load_rule(rule_iri; ep=ep); ep=ep, kw...)
+end
 
 """
     dry_run_rewrite(spec; source, limit, ep) -> (count, sample, removed, removed_sample)
@@ -520,28 +610,39 @@ Both halves are projected into scratch graphs from the *same* match solutions th
 rewrite would use, so this is a preview rather than an estimate. The target graph is only
 ever read. Both scratch graphs are dropped on every path out, including on error.
 """
-function dry_run_rewrite(spec::RuleSpec; source::AbstractVector, limit::Integer = 25,
-                         ep::SparqlEndpoint = endpoint())
-    length(source) == 1 || throw(ArgumentError(
-        "rule <$(spec.iri)>: gistp:Rewrite needs exactly one source graph; got $(length(source))."))
+function dry_run_rewrite(
+    spec::RuleSpec; source::AbstractVector, limit::Integer=25, ep::SparqlEndpoint=endpoint()
+)
+    length(source) == 1 || throw(
+        ArgumentError(
+            "rule <$(spec.iri)>: gistp:Rewrite needs exactly one source graph; got $(length(source)).",
+        ),
+    )
     gadd, gdel = new_firing_graph(), new_firing_graph()
-    peek(g) = select("""
-        SELECT ?s ?p ?o WHERE { GRAPH <$g> { ?s ?p ?o } }
-        ORDER BY ?s ?p ?o LIMIT $(Int(limit))"""; ep = ep)
+    peek(g) = select(
+        """
+SELECT ?s ?p ?o WHERE { GRAPH <$g> { ?s ?p ?o } }
+ORDER BY ?s ?p ?o LIMIT $(Int(limit))""";
+        ep=ep,
+    )
     try
         for (g, ts) in ((gadd, construct_only(spec)), (gdel, match_only(spec)))
-            q = project_query(spec; triples = ts, into = g, from = source)
-            isempty(q) || update!(q; ep = ep)
+            q = project_query(spec; triples=ts, into=g, from=source)
+            isempty(q) || update!(q; ep=ep)
         end
         # The preview has to prune exactly as the run does, or explain_rule shows a reviewer
         # a number the application will not match: an R \ I triple the target already holds
         # is not something this rule adds.
-        prune_known!(gadd, source; ep = ep)
-        (count = graph_size(gadd; ep = ep), sample = peek(gadd),
-         removed = graph_size(gdel; ep = ep), removed_sample = peek(gdel))
+        prune_known!(gadd, source; ep=ep)
+        (
+            count=graph_size(gadd; ep=ep),
+            sample=peek(gadd),
+            removed=graph_size(gdel; ep=ep),
+            removed_sample=peek(gdel),
+        )
     finally
-        update!("DROP SILENT GRAPH <$gadd>"; ep = ep)
-        update!("DROP SILENT GRAPH <$gdel>"; ep = ep)
+        update!("DROP SILENT GRAPH <$gadd>"; ep=ep)
+        update!("DROP SILENT GRAPH <$gdel>"; ep=ep)
     end
 end
 
@@ -558,26 +659,34 @@ happens in a scratch graph that is dropped on every path out, including on error
 The count is of genuinely new triples -- facts the working set already held are pruned
 first, exactly as in a real application.
 """
-function dry_run(spec::RuleSpec; source::AbstractVector = String[], limit::Integer = 25,
-                 ep::SparqlEndpoint = endpoint())
+function dry_run(
+    spec::RuleSpec;
+    source::AbstractVector=String[],
+    limit::Integer=25,
+    ep::SparqlEndpoint=endpoint(),
+)
     mode_symbol(spec) === :Rewrite &&
-        return dry_run_rewrite(spec; source = source, limit = limit, ep = ep)
+        return dry_run_rewrite(spec; source=source, limit=limit, ep=ep)
     g = new_firing_graph()
     try
-        update!(insert_query(spec; into = g, from = source); ep = ep)
-        prune_known!(g, source; ep = ep)
-        n = graph_size(g; ep = ep)
-        rows = select("""
-            SELECT ?s ?p ?o WHERE { GRAPH <$g> { ?s ?p ?o } }
-            ORDER BY ?s ?p ?o LIMIT $(Int(limit))"""; ep = ep)
-        (count = n, sample = rows)
+        update!(insert_query(spec; into=g, from=source); ep=ep)
+        prune_known!(g, source; ep=ep)
+        n = graph_size(g; ep=ep)
+        rows = select(
+            """
+  SELECT ?s ?p ?o WHERE { GRAPH <$g> { ?s ?p ?o } }
+  ORDER BY ?s ?p ?o LIMIT $(Int(limit))""";
+            ep=ep,
+        )
+        (count=n, sample=rows)
     finally
-        update!("DROP SILENT GRAPH <$g>"; ep = ep)
+        update!("DROP SILENT GRAPH <$g>"; ep=ep)
     end
 end
 
-dry_run(rule_iri::AbstractString; ep::SparqlEndpoint = endpoint(), kw...) =
-    dry_run(load_rule(rule_iri; ep = ep); ep = ep, kw...)
+function dry_run(rule_iri::AbstractString; ep::SparqlEndpoint=endpoint(), kw...)
+    return dry_run(load_rule(rule_iri; ep=ep); ep=ep, kw...)
+end
 
 """
     is_firing(graph; ep = endpoint()) -> Bool
@@ -590,9 +699,13 @@ decided by the provenance record rather than by the `urn:jayhawk:firing:` IRI pr
 because a prefix is a naming convention that anyone can imitate and a provenance record is
 something only `record_firing!` writes.
 """
-is_firing(graph::AbstractString; ep::SparqlEndpoint = endpoint()) =
-    ask("""ASK { GRAPH <$PROVENANCE_GRAPH> {
-             <$(check_iri(graph))> <$(JH_NS)appliedRule> ?r } }"""; ep = ep)
+function is_firing(graph::AbstractString; ep::SparqlEndpoint=endpoint())
+    return ask(
+        """ASK { GRAPH <$PROVENANCE_GRAPH> {
+             <$(check_iri(graph))> <$(JH_NS)appliedRule> ?r } }""";
+        ep=ep,
+    )
+end
 
 """
     undo_firing!(graph; force = false, ep = endpoint()) -> Nothing
@@ -612,36 +725,49 @@ gives that back.
 `force = true` skips the check, for cleaning up a firing graph whose provenance write did
 not land. It is deliberately *not* exposed through [`tool_undo_firing`](@ref).
 """
-function undo_firing!(graph::AbstractString; force::Bool = false,
-                      ep::SparqlEndpoint = endpoint())
+function undo_firing!(
+    graph::AbstractString; force::Bool=false, ep::SparqlEndpoint=endpoint()
+)
     g = check_iri(graph)
-    force || is_firing(g; ep = ep) || error(
-        "<$g> is not a recorded firing: <$PROVENANCE_GRAPH> holds no jayhawk:appliedRule " *
-        "for it. undo_firing! reverses graphs this engine created and nothing else -- it " *
-        "is not a general DROP GRAPH. Use `firings()` to list what can be undone, or pass " *
-        "force = true if you are cleaning up a firing whose provenance write failed.")
+    force ||
+        is_firing(g; ep=ep) ||
+        error(
+            "<$g> is not a recorded firing: <$PROVENANCE_GRAPH> holds no jayhawk:appliedRule " *
+            "for it. undo_firing! reverses graphs this engine created and nothing else -- it " *
+            "is not a general DROP GRAPH. Use `firings()` to list what can be undone, or pass " *
+            "force = true if you are cleaning up a firing whose provenance write failed.",
+        )
 
     # A Rewrite changed the data in place, so reversing it is not a DROP. Retract what the
     # rule added and restore what it removed, in that order and in one request, reading both
     # halves out of the record the firing itself wrote.
-    rw = select("""
-        SELECT ?target ?tomb WHERE { GRAPH <$PROVENANCE_GRAPH> {
-          <$g> <$(JH_NS)targetGraph> ?target ; <$(JH_NS)tombstoneGraph> ?tomb } }"""; ep = ep)
+    rw = select(
+        """
+SELECT ?target ?tomb WHERE { GRAPH <$PROVENANCE_GRAPH> {
+  <$g> <$(JH_NS)targetGraph> ?target ; <$(JH_NS)tombstoneGraph> ?tomb } }""";
+        ep=ep,
+    )
     if !isempty(rw)
         target = (rw[1]["target"]::IRIRef).value
-        tomb   = (rw[1]["tomb"]::IRIRef).value
-        update!("""
-            DELETE { GRAPH <$target> { ?s ?p ?o } }
-            WHERE  { GRAPH <$g> { ?s ?p ?o } } ;
-            INSERT { GRAPH <$target> { ?s ?p ?o } }
-            WHERE  { GRAPH <$tomb> { ?s ?p ?o } } ;
-            DROP SILENT GRAPH <$tomb>"""; ep = ep)
+        tomb = (rw[1]["tomb"]::IRIRef).value
+        update!(
+            """
+        DELETE { GRAPH <$target> { ?s ?p ?o } }
+        WHERE  { GRAPH <$g> { ?s ?p ?o } } ;
+        INSERT { GRAPH <$target> { ?s ?p ?o } }
+        WHERE  { GRAPH <$tomb> { ?s ?p ?o } } ;
+        DROP SILENT GRAPH <$tomb>""";
+            ep=ep,
+        )
     end
 
-    update!("DROP SILENT GRAPH <$g>"; ep = ep)
-    update!("""
-        DELETE WHERE { GRAPH <$PROVENANCE_GRAPH> { <$g> ?p ?o } }"""; ep = ep)
-    nothing
+    update!("DROP SILENT GRAPH <$g>"; ep=ep)
+    update!(
+        """
+    DELETE WHERE { GRAPH <$PROVENANCE_GRAPH> { <$g> ?p ?o } }""";
+        ep=ep,
+    )
+    return nothing
 end
 
 """
@@ -649,33 +775,52 @@ end
 
 The provenance log, newest first. Optionally filtered to one rule.
 """
-function firings(; rule::Union{AbstractString,Nothing} = nothing,
-                 ep::SparqlEndpoint = endpoint())
+function firings(;
+    rule::Union{AbstractString,Nothing}=nothing, ep::SparqlEndpoint=endpoint()
+)
     filt = rule === nothing ? "" : "FILTER(?rule = <$(check_iri(rule))>)"
-    rows = select("""
-        SELECT ?g ?rule ?at ?n ?actor ?iter ?rem ?tomb WHERE {
-          GRAPH <$PROVENANCE_GRAPH> {
-            ?g <$(JH_NS)appliedRule>       ?rule ;
-               <$(PROV_NS)generatedAtTime> ?at ;
-               <$(JH_NS)tripleCount>       ?n ;
-               <$(JH_NS)actor>             ?actor ;
-               <$(JH_NS)iteration>         ?iter .
-            OPTIONAL { ?g <$(JH_NS)removedCount>   ?rem }
-            OPTIONAL { ?g <$(JH_NS)tombstoneGraph> ?tomb }
-          } $filt
-        } ORDER BY DESC(?at) DESC(?iter)"""; ep = ep)
-    [(graph = (r["g"]::IRIRef).value,
-      rule  = (r["rule"]::IRIRef).value,
-      at    = (r["at"]::RDFLiteral).lexical,
-      count = parse(Int, (r["n"]::RDFLiteral).lexical),
-      actor = (r["actor"]::RDFLiteral).lexical,
-      iteration = parse(Int, (r["iter"]::RDFLiteral).lexical),
-      # A Rewrite took facts away. An audit log that reports only what was added is
-      # describing half the change.
-      removed = haskey(r, "rem") ? parse(Int, (r["rem"]::RDFLiteral).lexical) : 0,
-      tombstone = haskey(r, "tomb") ? (r["tomb"]::IRIRef).value : "") for r in rows]
+    rows = select(
+        """
+SELECT ?g ?rule ?at ?n ?actor ?iter ?rem ?tomb WHERE {
+  GRAPH <$PROVENANCE_GRAPH> {
+    ?g <$(JH_NS)appliedRule>       ?rule ;
+       <$(PROV_NS)generatedAtTime> ?at ;
+       <$(JH_NS)tripleCount>       ?n ;
+       <$(JH_NS)actor>             ?actor ;
+       <$(JH_NS)iteration>         ?iter .
+    OPTIONAL { ?g <$(JH_NS)removedCount>   ?rem }
+    OPTIONAL { ?g <$(JH_NS)tombstoneGraph> ?tomb }
+  } $filt
+} ORDER BY DESC(?at) DESC(?iter)""";
+        ep=ep,
+    )
+    return [
+        (
+            graph=(r["g"]::IRIRef).value,
+            rule=(r["rule"]::IRIRef).value,
+            at=(r["at"]::RDFLiteral).lexical,
+            count=parse(Int, (r["n"]::RDFLiteral).lexical),
+            actor=(r["actor"]::RDFLiteral).lexical,
+            iteration=parse(Int, (r["iter"]::RDFLiteral).lexical),
+            # A Rewrite took facts away. An audit log that reports only what was added is
+            # describing half the change.
+            removed=haskey(r, "rem") ? parse(Int, (r["rem"]::RDFLiteral).lexical) : 0,
+            tombstone=haskey(r, "tomb") ? (r["tomb"]::IRIRef).value : "",
+        ) for r in rows
+    ]
 end
 
-export Firing, apply_rule, apply_rewrite!, check_target_empty, run_rule, effective_strategy, dry_run, dry_run_rewrite, undo_firing!, is_firing, firings, graph_size
+export Firing,
+    apply_rule,
+    apply_rewrite!,
+    check_target_empty,
+    run_rule,
+    effective_strategy,
+    dry_run,
+    dry_run_rewrite,
+    undo_firing!,
+    is_firing,
+    firings,
+    graph_size
 export run_rules
 export PROVENANCE_GRAPH, new_firing_graph, new_tombstone_graph

@@ -48,23 +48,28 @@ end
 Build the Fuseki-shaped triple of URLs from one dataset base URL:
 `<base>` for query, `<base>/update` for update, `<base>/data` for the Graph Store Protocol.
 """
-SparqlEndpoint(base::AbstractString; timeout::Integer = 30) =
-    SparqlEndpoint(String(base), String(base) * "/update", String(base) * "/data", Int(timeout))
+function SparqlEndpoint(base::AbstractString; timeout::Integer=30)
+    return SparqlEndpoint(
+        String(base), String(base) * "/update", String(base) * "/data", Int(timeout)
+    )
+end
 
-const _DEFAULT_ENDPOINT =
-    Ref(SparqlEndpoint(spqservice, spqupdservice, spqservice * "/data", 30))
+const _DEFAULT_ENDPOINT = Ref(
+    SparqlEndpoint(spqservice, spqupdservice, spqservice * "/data", 30)
+)
 
 "The endpoint used when a call does not name one."
 endpoint() = _DEFAULT_ENDPOINT[]
 
 "Replace the default endpoint for this process. Returns the new endpoint."
 set_endpoint!(e::SparqlEndpoint) = (_DEFAULT_ENDPOINT[] = e)
-set_endpoint!(base::AbstractString; timeout::Integer = 30) =
-    set_endpoint!(SparqlEndpoint(base; timeout = timeout))
+function set_endpoint!(base::AbstractString; timeout::Integer=30)
+    return set_endpoint!(SparqlEndpoint(base; timeout=timeout))
+end
 
 QHEADERS = Dict(
-    "Content-Type" =>  "application/sparql-query",
-    "Accept" => "application/sparql-results+json, */*;q=0.1"
+    "Content-Type" => "application/sparql-query",
+    "Accept" => "application/sparql-results+json, */*;q=0.1",
 )
 
 # Headers for CONSTRUCT / DESCRIBE. No in-package caller since `qsparql` moved to
@@ -77,13 +82,13 @@ QHEADERS = Dict(
 # `qsparql` asked for the wrong thing and then fed the result to a parser that dropped the
 # datatype -- the exact loss this engine cannot afford.
 QHEADERSCONS = Dict(
-    "Content-Type" =>  "application/sparql-query",
-    "Accept" => "application/n-triples, */*;q=0.1"
+    "Content-Type" => "application/sparql-query",
+    "Accept" => "application/n-triples, */*;q=0.1",
 )
 
 UPDHEADERS = Dict(
-    "Content-Type" =>  "application/sparql-update",
-    "Accept" => "application/sparql-results+json, */*;q=0.1"
+    "Content-Type" => "application/sparql-update",
+    "Accept" => "application/sparql-results+json, */*;q=0.1",
 )
 
 spqparams() = Dict()
@@ -119,21 +124,26 @@ function render_query(content::AbstractString, bindings::AbstractDict)
             @warn "binding matches nothing in the query; check for a typo" key = String(k) token
         end
     end
-    out
+    return out
 end
 
-buildquerystr(content::String, m::Dict) = string("query=", URIs.escapeuri(render_query(content, m)))
+function buildquerystr(content::String, m::Dict)
+    return string("query=", URIs.escapeuri(render_query(content, m)))
+end
 
 buildpostbody(content::String, m::Dict) = render_query(content, m)
-
 
 "Raise a legible error instead of letting HTTP.jl's StatusError escape with the body buried."
 function _http_error(e, what::AbstractString, url::AbstractString)
     if e isa HTTP.StatusError
-        body = try String(e.response.body) catch; "<unreadable body>" end
+        body = try
+            String(e.response.body)
+        catch
+            "<unreadable body>"
+        end
         error("$what failed: HTTP $(e.status) from $url\n$(first(body, 2000))")
     end
-    rethrow(e)
+    return rethrow(e)
 end
 
 """
@@ -148,38 +158,44 @@ Prefer [`select`](@ref) / [`ask`](@ref) / [`update!`](@ref) in new code: they re
 `RDFTerm`s instead of raw JSON. This one keeps its untyped contract because the SPARQL
 regression suite asserts against it directly.
 """
-function runsparql(spq::String, update=false; m::Dict = Dict(), ep::SparqlEndpoint = endpoint(),
-                   qheaders=QHEADERS, updheaders=UPDHEADERS)
-  resp = nothing
-  if update
-    try
-      HTTP.post(ep.update, updheaders, buildpostbody(spq, m); readtimeout = ep.timeout)
-    catch e
-      _http_error(e, "SPARQL update", ep.update)
+function runsparql(
+    spq::String,
+    update=false;
+    m::Dict=Dict(),
+    ep::SparqlEndpoint=endpoint(),
+    qheaders=QHEADERS,
+    updheaders=UPDHEADERS,
+)
+    resp = nothing
+    if update
+        try
+            HTTP.post(ep.update, updheaders, buildpostbody(spq, m); readtimeout=ep.timeout)
+        catch e
+            _http_error(e, "SPARQL update", ep.update)
+        end
+        return nothing
     end
-    return nothing
-  end
 
-  resp = try
-    HTTP.get(ep.query, qheaders; query=buildquerystr(spq, m), readtimeout = ep.timeout)
-  catch e
-    _http_error(e, "SPARQL query", ep.query)
-  end
+    resp = try
+        HTTP.get(ep.query, qheaders; query=buildquerystr(spq, m), readtimeout=ep.timeout)
+    catch e
+        _http_error(e, "SPARQL query", ep.query)
+    end
 
-  h = Dict(resp.headers)
-  ct = get(h, "Content-Type", "")
-  if contains(ct, "sparql-results+json")
-    r = JSON.parse(resp.body |> String)
-    # ASK returns {"head":{}, "boolean":true} -- no "results" key at all, so the
-    # unconditional r["results"]["bindings"] threw KeyError on every ASK query.
-    resp = haskey(r, "boolean") ? r["boolean"] : r["results"]["bindings"]
-  elseif contains(ct, "application/rdf+xml")
-    resp = parsexml(resp.body |> String)
-  elseif contains(ct, "n-triples")
-    resp = resp.body |> String
-  end
-  @debug "resp" resp
-  return resp
+    h = Dict(resp.headers)
+    ct = get(h, "Content-Type", "")
+    if contains(ct, "sparql-results+json")
+        r = JSON.parse(String(resp.body))
+        # ASK returns {"head":{}, "boolean":true} -- no "results" key at all, so the
+        # unconditional r["results"]["bindings"] threw KeyError on every ASK query.
+        resp = haskey(r, "boolean") ? r["boolean"] : r["results"]["bindings"]
+    elseif contains(ct, "application/rdf+xml")
+        resp = parsexml(String(resp.body))
+    elseif contains(ct, "n-triples")
+        resp = String(resp.body)
+    end
+    @debug "resp" resp
+    return resp
 end
 
 # ---------------------------------------------------------------------------
@@ -199,19 +215,24 @@ table that was never defined anywhere in the package, so every typed literal rai
 
 Unbound variables are simply absent from a solution's dictionary, as in the JSON.
 """
-function select(q::AbstractString; ep::SparqlEndpoint = endpoint(), bindings::AbstractDict = Dict())
-    rows = runsparql(String(q); m = Dict(bindings), ep = ep)
+function select(
+    q::AbstractString; ep::SparqlEndpoint=endpoint(), bindings::AbstractDict=Dict()
+)
+    rows = runsparql(String(q); m=Dict(bindings), ep=ep)
     rows isa Bool && throw(ArgumentError("select() got an ASK response; use ask() instead"))
-    [Dict{String,RDFTerm}(k => term_from_json(v) for (k, v) in row) for row in rows]
+    return [Dict{String,RDFTerm}(k => term_from_json(v) for (k, v) in row) for row in rows]
 end
 
 """
     ask(q; ep=endpoint(), bindings=Dict()) -> Bool
 """
-function ask(q::AbstractString; ep::SparqlEndpoint = endpoint(), bindings::AbstractDict = Dict())
-    r = runsparql(String(q); m = Dict(bindings), ep = ep)
-    r isa Bool || throw(ArgumentError("ask() expected a boolean response, got $(typeof(r))"))
-    r
+function ask(
+    q::AbstractString; ep::SparqlEndpoint=endpoint(), bindings::AbstractDict=Dict()
+)
+    r = runsparql(String(q); m=Dict(bindings), ep=ep)
+    r isa Bool ||
+        throw(ArgumentError("ask() expected a boolean response, got $(typeof(r))"))
+    return r
 end
 
 """
@@ -219,8 +240,11 @@ end
 
 Run a SPARQL Update (INSERT / DELETE / DROP / LOAD).
 """
-update!(q::AbstractString; ep::SparqlEndpoint = endpoint(), bindings::AbstractDict = Dict()) =
-    runsparql(String(q), true; m = Dict(bindings), ep = ep)
+function update!(
+    q::AbstractString; ep::SparqlEndpoint=endpoint(), bindings::AbstractDict=Dict()
+)
+    return runsparql(String(q), true; m=Dict(bindings), ep=ep)
+end
 
 """
     load_graph!(content, graph_iri; ep=endpoint(), syntax="text/turtle") -> Nothing
@@ -231,20 +255,26 @@ there. This is how patterns get into the store: **Jena parses TriG, Julia does n
 For a TriG payload -- which names its own graphs -- POST to the *dataset* rather than to a
 single graph; see [`load_dataset!`](@ref).
 """
-function load_graph!(content::AbstractString, graph_iri::AbstractString;
-                     ep::SparqlEndpoint = endpoint(), syntax::AbstractString = "text/turtle",
-                     skolemize::Bool = false)
+function load_graph!(
+    content::AbstractString,
+    graph_iri::AbstractString;
+    ep::SparqlEndpoint=endpoint(),
+    syntax::AbstractString="text/turtle",
+    skolemize::Bool=false,
+)
     url = string(ep.gsp, "?graph=", URIs.escapeuri(graph_iri))
     try
-        HTTP.put(url, Dict("Content-Type" => syntax), String(content); readtimeout = ep.timeout)
+        HTTP.put(
+            url, Dict("Content-Type" => syntax), String(content); readtimeout=ep.timeout
+        )
     catch e
         _http_error(e, "Graph Store PUT", url)
     end
     # This targets one named graph, so the scope of the rewrite is exactly what was just
     # loaded. A TriG payload spans graphs and has no such scope, which is why
     # `load_dataset!` has no equivalent flag: call `skolemize!` on the graphs you meant.
-    skolemize && skolemize!(; graph = graph_iri, ep = ep)
-    nothing
+    skolemize && skolemize!(; graph=graph_iri, ep=ep)
+    return nothing
 end
 
 "Namespace for Skolem IRIs minted from incoming blank nodes."
@@ -286,9 +316,11 @@ Not for patterns. In a match pattern a Skolem IRI is a *constant*, so the patter
 one node that exists nowhere and the rule would silently never fire; in a construct pattern
 `gistp:iriTemplate` already does the job, deterministically. See `check_no_blanks`.
 """
-function skolemize!(; graph::Union{AbstractString,Nothing} = nothing,
-                    base::AbstractString = string(SKOLEM_BASE, UUIDs.uuid4(), ":"),
-                    ep::SparqlEndpoint = endpoint())
+function skolemize!(;
+    graph::Union{AbstractString,Nothing}=nothing,
+    base::AbstractString=string(SKOLEM_BASE, UUIDs.uuid4(), ":"),
+    ep::SparqlEndpoint=endpoint(),
+)
     scope = graph === nothing ? "?g" : "<$(check_iri(graph))>"
     b = check_iri(base)
     # STR() on a blank node is a type error in the SPARQL spec and lenient in Jena, where it
@@ -296,29 +328,37 @@ function skolemize!(; graph::Union{AbstractString,Nothing} = nothing,
     # a text rewrite and a reload -- there is no standard way to name a blank node from
     # inside a query. STRAFTER drops the "_:" so the Skolem IRI reads cleanly.
     skolem(v) = "IRI(CONCAT(\"$b\", ENCODE_FOR_URI(STRAFTER(STR($v), \"_:\"))))"
-    before = _count_blank(scope; ep = ep)
-    update!("""
-        DELETE { GRAPH $scope { ?s ?p ?o } }
-        INSERT { GRAPH $scope { ?s2 ?p ?o2 } }
-        WHERE {
-          GRAPH $scope { ?s ?p ?o }
-          FILTER(isBlank(?s) || isBlank(?o))
-          BIND(IF(isBlank(?s), $(skolem("?s")), ?s) AS ?s2)
-          BIND(IF(isBlank(?o), $(skolem("?o")), ?o) AS ?o2)
-        }"""; ep = ep)
-    remaining = _count_blank(scope; ep = ep)
+    before = _count_blank(scope; ep=ep)
+    update!(
+        """
+    DELETE { GRAPH $scope { ?s ?p ?o } }
+    INSERT { GRAPH $scope { ?s2 ?p ?o2 } }
+    WHERE {
+      GRAPH $scope { ?s ?p ?o }
+      FILTER(isBlank(?s) || isBlank(?o))
+      BIND(IF(isBlank(?s), $(skolem("?s")), ?s) AS ?s2)
+      BIND(IF(isBlank(?o), $(skolem("?o")), ?o) AS ?o2)
+    }""";
+        ep=ep,
+    )
+    remaining = _count_blank(scope; ep=ep)
     remaining == 0 || @warn(
         "skolemize!: $remaining triple(s) still carry a blank node. STR() on a blank node " *
-        "is non-standard, so a store stricter than Jena will not support this.",
-        graph = graph, remaining = remaining)
-    before - remaining
+            "is non-standard, so a store stricter than Jena will not support this.",
+        graph = graph,
+        remaining = remaining
+    )
+    return before - remaining
 end
 
-function _count_blank(scope::AbstractString; ep::SparqlEndpoint = endpoint())
-    rows = select("""
-        SELECT (COUNT(*) AS ?n) WHERE {
-          GRAPH $scope { ?s ?p ?o } FILTER(isBlank(?s) || isBlank(?o)) }"""; ep = ep)
-    isempty(rows) ? 0 : parse(Int, (rows[1]["n"]::RDFLiteral).lexical)
+function _count_blank(scope::AbstractString; ep::SparqlEndpoint=endpoint())
+    rows = select(
+        """
+SELECT (COUNT(*) AS ?n) WHERE {
+  GRAPH $scope { ?s ?p ?o } FILTER(isBlank(?s) || isBlank(?o)) }""";
+        ep=ep,
+    )
+    return isempty(rows) ? 0 : parse(Int, (rows[1]["n"]::RDFLiteral).lexical)
 end
 
 """
@@ -328,22 +368,33 @@ POST a quad-bearing document (TriG, N-Quads) to the dataset endpoint, letting th
 place its own triples into its own named graphs. Additive: existing graphs are merged with,
 not replaced.
 """
-function load_dataset!(content::AbstractString;
-                       ep::SparqlEndpoint = endpoint(), syntax::AbstractString = "application/trig")
+function load_dataset!(
+    content::AbstractString;
+    ep::SparqlEndpoint=endpoint(),
+    syntax::AbstractString="application/trig",
+)
     try
-        HTTP.post(ep.gsp, Dict("Content-Type" => syntax), String(content); readtimeout = ep.timeout)
+        HTTP.post(
+            ep.gsp, Dict("Content-Type" => syntax), String(content); readtimeout=ep.timeout
+        )
     catch e
         _http_error(e, "Graph Store POST", ep.gsp)
     end
-    nothing
+    return nothing
 end
 
 "Read a file and load it as a dataset. Syntax is inferred from the extension."
-function load_file!(path::AbstractString; ep::SparqlEndpoint = endpoint())
-    syntax = endswith(path, ".trig")  ? "application/trig" :
-             endswith(path, ".nq")    ? "application/n-quads" :
-             endswith(path, ".nt")    ? "application/n-triples" : "text/turtle"
-    load_dataset!(read(path, String); ep = ep, syntax = syntax)
+function load_file!(path::AbstractString; ep::SparqlEndpoint=endpoint())
+    syntax = if endswith(path, ".trig")
+        "application/trig"
+    elseif endswith(path, ".nq")
+        "application/n-quads"
+    elseif endswith(path, ".nt")
+        "application/n-triples"
+    else
+        "text/turtle"
+    end
+    return load_dataset!(read(path, String); ep=ep, syntax=syntax)
 end
 
 # `qsparql` used to live here: a CONSTRUCT whose result was parsed by Serd. It moved to
@@ -362,8 +413,8 @@ Run a SPARQL Update.
 accepts two, so every call to `usparql` died with a `MethodError` before reaching the
 server.
 """
-function usparql(upd::String; dict=Dict(), ep::SparqlEndpoint = endpoint())
-  runsparql(upd, true; m=dict, ep = ep)
+function usparql(upd::String; dict=Dict(), ep::SparqlEndpoint=endpoint())
+    return runsparql(upd, true; m=dict, ep=ep)
 end
 
 export SparqlEndpoint, endpoint, set_endpoint!

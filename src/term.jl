@@ -53,14 +53,20 @@ round-trips as `"007"`, not `7` -- lexical form is what SPARQL matches on.
     datatype::Union{String,Nothing}
     language::Union{String,Nothing}
 
-    function RDFLiteral(lexical::AbstractString,
-                        datatype::Union{AbstractString,Nothing} = nothing,
-                        language::Union{AbstractString,Nothing} = nothing)
+    function RDFLiteral(
+        lexical::AbstractString,
+        datatype::Union{AbstractString,Nothing}=nothing,
+        language::Union{AbstractString,Nothing}=nothing,
+    )
         lex = String(lexical)
         if language !== nothing && !isempty(language)
             return new(lex, nothing, String(language))
         end
-        dt = datatype === nothing || String(datatype) == XSD_STRING ? nothing : String(datatype)
+        dt = if datatype === nothing || String(datatype) == XSD_STRING
+            nothing
+        else
+            String(datatype)
+        end
         new(lex, dt, nothing)
     end
 end
@@ -107,15 +113,21 @@ end
 function escape_literal(s::AbstractString)
     io = IOBuffer()
     for c in s
-        if     c == '\\' ; write(io, "\\\\")
-        elseif c == '"'  ; write(io, "\\\"")
-        elseif c == '\n' ; write(io, "\\n")
-        elseif c == '\r' ; write(io, "\\r")
-        elseif c == '\t' ; write(io, "\\t")
-        else             ; write(io, c)
+        if c == '\\'
+            write(io, "\\\\")
+        elseif c == '"'
+            write(io, "\\\"")
+        elseif c == '\n'
+            write(io, "\\n")
+        elseif c == '\r'
+            write(io, "\\r")
+        elseif c == '\t'
+            write(io, "\\t")
+        else
+            write(io, c)
         end
     end
-    String(take!(io))
+    return String(take!(io))
 end
 
 """
@@ -128,12 +140,12 @@ IRIs are emitted absolute and unabbreviated, so emitted queries never depend on 
 declaration or on the global prefix registry.
 """
 sparql_text(t::IRIRef) = string('<', t.value, '>')
-sparql_text(t::BNode)  = string("_:", t.id)
+sparql_text(t::BNode) = string("_:", t.id)
 function sparql_text(t::RDFLiteral)
     s = string('"', escape_literal(t.lexical), '"')
     t.language !== nothing && return string(s, '@', t.language)
     t.datatype !== nothing && return string(s, "^^<", t.datatype, '>')
-    s
+    return s
 end
 
 "RFC 3986 §3.1: a scheme is a letter followed by letters, digits, `+`, `-` or `.`, then `:`."
@@ -151,14 +163,22 @@ nobody named. The engine works in absolute IRIs throughout, so the second is as 
 correctness problem as the first is a security one.
 """
 function check_iri(v::AbstractString)
-    bad = findfirst(c -> c in ('<', '>', '"', '{', '}', '|', '^', '`', '\\') || isspace(c), v)
-    bad === nothing || throw(ArgumentError(
-        "IRI contains a character illegal inside <>: $(repr(v[bad])) in $(repr(String(v)))"))
-    occursin(ABSOLUTE_IRI_RE, v) || throw(ArgumentError(
-        "$(repr(String(v))) is not an absolute IRI: it has no scheme. A relative reference " *
-        "resolves against whatever base the query carries, so it would address something " *
-        "nobody named. The engine works in absolute IRIs throughout."))
-    v
+    bad = findfirst(
+        c -> c in ('<', '>', '"', '{', '}', '|', '^', '`', '\\') || isspace(c), v
+    )
+    bad === nothing || throw(
+        ArgumentError(
+            "IRI contains a character illegal inside <>: $(repr(v[bad])) in $(repr(String(v)))",
+        ),
+    )
+    occursin(ABSOLUTE_IRI_RE, v) || throw(
+        ArgumentError(
+            "$(repr(String(v))) is not an absolute IRI: it has no scheme. A relative reference " *
+            "resolves against whatever base the query carries, so it would address something " *
+            "nobody named. The engine works in absolute IRIs throughout.",
+        ),
+    )
+    return v
 end
 
 # ---------------------------------------------------------------------------
@@ -193,10 +213,13 @@ The SPARQL variable text of a `^^gistp:var` literal, validated against `VARIABLE
 """
 function var_name(t::RDFLiteral)
     is_var_literal(t) || throw(ArgumentError("not a gistp:var literal: $(sparql_text(t))"))
-    occursin(VARIABLE_RE, t.lexical) || throw(ArgumentError(
-        "$(repr(t.lexical)) is typed gistp:var but is not a legal SPARQL variable " *
-        "(must match $(VARIABLE_RE.pattern))"))
-    t.lexical
+    occursin(VARIABLE_RE, t.lexical) || throw(
+        ArgumentError(
+            "$(repr(t.lexical)) is typed gistp:var but is not a legal SPARQL variable " *
+            "(must match $(VARIABLE_RE.pattern))",
+        ),
+    )
+    return t.lexical
 end
 
 export RDFTerm, IRIRef, BNode, RDFLiteral

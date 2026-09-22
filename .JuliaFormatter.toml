@@ -1,0 +1,21 @@
+# Blue Style — https://github.com/JuliaDiff/BlueStyle
+# Consumed by JuliaFormatter.jl when placed at a project root as `.JuliaFormatter.toml`.
+style = "blue"
+margin = 92
+indent = 4
+
+# Explicitly restated Blue defaults, so the intent survives a JuliaFormatter upgrade.
+always_for_in = true
+always_use_return = true
+import_to_using = true
+remove_extra_newlines = true
+separate_kwargs_with_semicolon = true
+short_to_long_function_def = true
+trailing_comma = true
+whitespace_in_kwargs = false
+whitespace_ops_in_indices = true
+whitespace_typedefs = false
+
+# Keep Markdown/docstring prose out of scope; format code only.
+format_markdown = false
+format_docstrings = false

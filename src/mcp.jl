@@ -15,25 +15,38 @@
 
 The catalogue: every rule, its mode, and what it is for.
 """
-function tool_list_rules(; ep::SparqlEndpoint = endpoint())
-    cat = rule_catalogue(; ep = ep)
+function tool_list_rules(; ep::SparqlEndpoint=endpoint())
+    cat = rule_catalogue(; ep=ep)
     isempty(cat) && return "No rules are loaded in this store."
     io = IOBuffer()
     println(io, "$(length(cat)) rule(s):\n")
     for r in cat
         println(io, "- <", r.iri, ">")
-        println(io, "    mode: ", r.mode,
-                r.mode === :Construct    ? "  (pure: the result is f(G))" :
-                r.mode === :Assert       ? "  (monotone: G union f(G), to a fixpoint)" :
-                r.mode === :Rewrite      ? "  (in-place rewrite: DELETES from live data)" :
+        println(
+            io,
+            "    mode: ",
+            r.mode,
+            if r.mode === :Construct
+                "  (pure: the result is f(G))"
+            elseif r.mode === :Assert
+                "  (monotone: G union f(G), to a fixpoint)"
+            elseif r.mode === :Rewrite
+                "  (in-place rewrite: DELETES from live data)"
+            else
                 "  <$(r.mode_iri)> is not a gistp:rewriteMode this engine knows -- " *
-                "THIS RULE CANNOT BE RUN")
-        r.guards == 0 || println(io, "    guarded by ", r.guards,
-                                 " negative condition(s) -- it will decline matches it has already served")
-        isempty(r.label)      || println(io, "    label: ", r.label)
+                "THIS RULE CANNOT BE RUN"
+            end,
+        )
+        r.guards == 0 || println(
+            io,
+            "    guarded by ",
+            r.guards,
+            " negative condition(s) -- it will decline matches it has already served",
+        )
+        isempty(r.label) || println(io, "    label: ", r.label)
         isempty(r.definition) || println(io, "    ", r.definition)
     end
-    String(take!(io))
+    return String(take!(io))
 end
 
 """
@@ -46,44 +59,87 @@ The dry run is the point. A reviewer should be reading the triples a rule create
 query text, and nothing is written or recorded -- the scratch graph is dropped on every path
 out.
 """
-function tool_explain_rule(rule::AbstractString; source::AbstractVector = String[],
-                           limit::Integer = 25, ep::SparqlEndpoint = endpoint())
-    spec = load_rule(rule; ep = ep)
+function tool_explain_rule(
+    rule::AbstractString;
+    source::AbstractVector=String[],
+    limit::Integer=25,
+    ep::SparqlEndpoint=endpoint(),
+)
+    spec = load_rule(rule; ep=ep)
     io = IOBuffer()
     println(io, "Rule <", spec.iri, ">")
     println(io, "  mode              : ", mode_symbol(spec))
     # A pattern's graph scope changes what it matches as much as its triples do, so a
     # reviewer shown only the triple count is reviewing a different rule from the one that
     # will run.
-    scope_of(s) = s === nothing ? "" :
-        haskey(spec.variables, s) ? "  in graph $(spec.variables[s])" : "  in graph <$s>"
-    println(io, "  match pattern L   : <", spec.match_graph, "> (", length(spec.match),
-            " triples)", scope_of(spec.match_scope))
-    println(io, "  construct pattern R: <", spec.construct_graph, "> (",
-            length(spec.construct), " triples)", scope_of(spec.construct_scope))
+    scope_of(s) =
+        if s === nothing
+            ""
+        elseif haskey(spec.variables, s)
+            "  in graph $(spec.variables[s])"
+        else
+            "  in graph <$s>"
+        end
+    println(
+        io,
+        "  match pattern L   : <",
+        spec.match_graph,
+        "> (",
+        length(spec.match),
+        " triples)",
+        scope_of(spec.match_scope),
+    )
+    println(
+        io,
+        "  construct pattern R: <",
+        spec.construct_graph,
+        "> (",
+        length(spec.construct),
+        " triples)",
+        scope_of(spec.construct_scope),
+    )
     # A scoped L binds its graph variable through the GRAPH clause rather than through any
     # triple, so `vars_in` alone under-reports what R may use.
-    bound = sort(collect(union(vars_in(spec.match, spec),
-                               scope_vars(spec.match_scope, spec))))
+    bound = sort(
+        collect(union(vars_in(spec.match, spec), scope_vars(spec.match_scope, spec)))
+    )
     println(io, "  variables bound by L: ", isempty(bound) ? "(none)" : join(bound, ", "))
 
     # The control settings decide whether this runs once or repeatedly, and what stops it.
     # A reviewer reading only the patterns would not see any of that.
     strat = effective_strategy(spec)
-    println(io, "  strategy          : ", strat,
-            spec.strategy === nothing ? "  (default for $(mode_symbol(spec)))" : "  (declared)")
-    strat === :ToFixpoint && println(io, "  iteration budget  : ",
-            something(spec.max_iterations, Jayhawk.DEFAULT_MAX_ITERATIONS),
-            spec.max_iterations === nothing ? "  (default)" : "  (declared)")
+    println(
+        io,
+        "  strategy          : ",
+        strat,
+        spec.strategy === nothing ? "  (default for $(mode_symbol(spec)))" : "  (declared)",
+    )
+    strat === :ToFixpoint && println(
+        io,
+        "  iteration budget  : ",
+        something(spec.max_iterations, Jayhawk.DEFAULT_MAX_ITERATIONS),
+        spec.max_iterations === nothing ? "  (default)" : "  (declared)",
+    )
     spec.priority == 0 || println(io, "  priority          : ", spec.priority)
     if isempty(spec.nacs)
         println(io, "  guards            : none -- this rule fires on every match")
     else
-        println(io, "  guards            : ", length(spec.nacs),
-                " negative condition(s); all must fail to match")
+        println(
+            io,
+            "  guards            : ",
+            length(spec.nacs),
+            " negative condition(s); all must fail to match",
+        )
         for n in spec.nacs
-            println(io, "      NOT <", n.graph, ">  (", length(n.triples), " triple(s))",
-                    scope_of(n.scope))
+            println(
+                io,
+                "      NOT <",
+                n.graph,
+                ">  (",
+                length(n.triples),
+                " triple(s))",
+                scope_of(n.scope),
+            )
         end
     end
     # Filters get their own line rather than being left for the reader to spot in the query
@@ -93,8 +149,12 @@ function tool_explain_rule(rule::AbstractString; source::AbstractVector = String
     if isempty(spec.filters)
         println(io, "  filters           : none")
     else
-        println(io, "  filters           : ", length(spec.filters),
-                " condition(s); all must hold to match")
+        println(
+            io,
+            "  filters           : ",
+            length(spec.filters),
+            " condition(s); all must hold to match",
+        )
         for f in sort(spec.filters)
             println(io, "      FILTER(", f, ")")
         end
@@ -102,50 +162,84 @@ function tool_explain_rule(rule::AbstractString; source::AbstractVector = String
     println(io, "\ncompiles to:\n")
     # `source` and not just `spec`: for a scoped rule the dataset clause is the difference
     # between the query shown and the query run. See `compile_rule`.
-    println(io, compile_rule(spec; from = source))
+    println(io, compile_rule(spec; from=source))
 
     if mode_symbol(spec) === :Rewrite
-        println(io, "  interface I = L n R : ", length(interface(spec)), " triple(s) preserved")
+        println(
+            io, "  interface I = L n R : ", length(interface(spec)), " triple(s) preserved"
+        )
         risks = dangling_risks(spec)
-        isempty(risks) || println(io,
+        isempty(risks) || println(
+            io,
             "\n  WARNING -- this rule deletes every triple the pattern knows about for ",
-            join(risks, ", "), ",\n  and never mentions them in R. SPARQL Update performs ",
+            join(risks, ", "),
+            ",\n  and never mentions them in R. SPARQL Update performs ",
             "no dangling check, so anything\n  outside the pattern still referring to those ",
-            "nodes will point at nothing.")
+            "nodes will point at nothing.",
+        )
     end
 
-    d = dry_run(spec; source = source, limit = limit, ep = ep)
+    d = dry_run(spec; source=source, limit=limit, ep=ep)
     against = isempty(source) ? "the default graph" : join(("<$g>" for g in source), " + ")
 
-    show_triples(rows) = for r in rows
-        println(io, "    ", sparql_text(r["s"]), " ", sparql_text(r["p"]), " ", sparql_text(r["o"]), " .")
-    end
+    show_triples(rows) =
+        for r in rows
+            println(
+                io,
+                "    ",
+                sparql_text(r["s"]),
+                " ",
+                sparql_text(r["p"]),
+                " ",
+                sparql_text(r["o"]),
+                " .",
+            )
+        end
 
     if hasproperty(d, :removed)
         # A rewrite is the one mode that takes facts away, so the removals lead: that is
         # what a reviewer needs to see before agreeing to it.
-        println(io, "\ndry run against ", against, " would REMOVE ", d.removed, " triple(s)",
-                d.removed == 0 ? "." : ":")
+        println(
+            io,
+            "\ndry run against ",
+            against,
+            " would REMOVE ",
+            d.removed,
+            " triple(s)",
+            d.removed == 0 ? "." : ":",
+        )
         show_triples(d.removed_sample)
         d.removed > length(d.removed_sample) &&
             println(io, "    ... and ", d.removed - length(d.removed_sample), " more")
         println(io, "\n  and ADD ", d.count, " triple(s)", d.count == 0 ? "." : ":")
         show_triples(d.sample)
-        d.count > length(d.sample) && println(io, "    ... and ", d.count - length(d.sample), " more")
+        d.count > length(d.sample) &&
+            println(io, "    ... and ", d.count - length(d.sample), " more")
     else
-        println(io, "\ndry run against ", against, " would add ", d.count, " new triple(s)",
-                d.count == 0 ? "." : ":")
+        println(
+            io,
+            "\ndry run against ",
+            against,
+            " would add ",
+            d.count,
+            " new triple(s)",
+            d.count == 0 ? "." : ":",
+        )
         show_triples(d.sample)
-        d.count > length(d.sample) && println(io, "    ... and ", d.count - length(d.sample), " more")
+        d.count > length(d.sample) &&
+            println(io, "    ... and ", d.count - length(d.sample), " more")
     end
 
     # Fan-in is reported, never refused: many-to-one minting is often exactly right, so
     # whether it is a bug depends on modelling intent the pattern cannot state.
-    fanin = mint_fanin(spec; from = source, ep = ep)
+    fanin = mint_fanin(spec; from=source, ep=ep)
     if !isempty(fanin)
-        println(io, "\nWARNING -- some minted IRIs are built from more than one distinct ",
-                "binding, so\none node will carry facts from several sources. Intended for a ",
-                "shared node\n(a department per name); a merge bug for a per-person one.")
+        println(
+            io,
+            "\nWARNING -- some minted IRIs are built from more than one distinct ",
+            "binding, so\none node will carry facts from several sources. Intended for a ",
+            "shared node\n(a department per name); a merge bug for a per-person one.",
+        )
         for (iri, rows) in fanin
             println(io, "  ", spec.variables[iri], ":")
             for (minted, n) in rows
@@ -155,7 +249,7 @@ function tool_explain_rule(rule::AbstractString; source::AbstractVector = String
     end
 
     println(io, "\nNothing was written. Use run_rule to apply it.")
-    String(take!(io))
+    return String(take!(io))
 end
 
 """
@@ -174,12 +268,16 @@ same atomic update -- but "reversible" and "reviewed" are different things, and 
 default is the wrong one to hand a model. The refusal names `explain_rule`, which shows the
 removals before any of this happens.
 """
-function tool_run_rule(rule::AbstractString; source::AbstractVector = String[],
-                       actor::AbstractString = "mcp",
-                       strategy::Union{Symbol,Nothing} = nothing,
-                       max_iterations::Union{Integer,Nothing} = nothing,
-                       confirm::Bool = false, ep::SparqlEndpoint = endpoint())
-    spec = load_rule(rule; ep = ep)
+function tool_run_rule(
+    rule::AbstractString;
+    source::AbstractVector=String[],
+    actor::AbstractString="mcp",
+    strategy::Union{Symbol,Nothing}=nothing,
+    max_iterations::Union{Integer,Nothing}=nothing,
+    confirm::Bool=false,
+    ep::SparqlEndpoint=endpoint(),
+)
+    spec = load_rule(rule; ep=ep)
     # A model reads text, not exceptions. Answer the foreseeable mistakes rather than
     # raising -- an agent can act on "a Rewrite needs exactly one source graph".
     if mode_symbol(spec) === :Rewrite && length(source) != 1
@@ -188,7 +286,7 @@ function tool_run_rule(rule::AbstractString; source::AbstractVector = String[],
                "A deletion has to say what it deletes from."
     end
     if mode_symbol(spec) === :Rewrite && !confirm
-        d = dry_run(spec; source = source, ep = ep)
+        d = dry_run(spec; source=source, ep=ep)
         return """
                Refused: <$rule> is a gistp:Rewrite, which DELETES from live data. Against \
                $(join(("<$g>" for g in source), " + ")) it would remove $(d.removed) \
@@ -201,23 +299,50 @@ function tool_run_rule(rule::AbstractString; source::AbstractVector = String[],
                """
     end
 
-    fs = run_rule(spec; source = source, actor = actor, strategy = strategy,
-                  max_iterations = max_iterations, ep = ep)
-    total   = isempty(fs) ? 0 : sum(f.count for f in fs)
+    fs = run_rule(
+        spec;
+        source=source,
+        actor=actor,
+        strategy=strategy,
+        max_iterations=max_iterations,
+        ep=ep,
+    )
+    total = isempty(fs) ? 0 : sum(f.count for f in fs)
     removed = isempty(fs) ? 0 : sum(f.removed for f in fs)
-    total == 0 && removed == 0 &&
+    total == 0 &&
+        removed == 0 &&
         return "Rule <$rule> applied and changed nothing. No graph was created."
 
     io = IOBuffer()
-    println(io, "Rule <", rule, "> added ", total, " triple(s)",
-            removed > 0 ? " and removed $removed" : "", " in ", length(fs), " iteration(s).\n")
+    println(
+        io,
+        "Rule <",
+        rule,
+        "> added ",
+        total,
+        " triple(s)",
+        removed > 0 ? " and removed $removed" : "",
+        " in ",
+        length(fs),
+        " iteration(s).\n",
+    )
     for f in fs
-        println(io, "  iteration ", f.iteration, ": +", f.count,
-                f.removed > 0 ? " / -$(f.removed)" : "", " -> <", f.graph, ">")
-        isempty(f.tombstone) || println(io, "      removed triples kept in <", f.tombstone, ">")
+        println(
+            io,
+            "  iteration ",
+            f.iteration,
+            ": +",
+            f.count,
+            f.removed > 0 ? " / -$(f.removed)" : "",
+            " -> <",
+            f.graph,
+            ">",
+        )
+        isempty(f.tombstone) ||
+            println(io, "      removed triples kept in <", f.tombstone, ">")
     end
     println(io, "\nUndo any of these with undo_firing on its graph IRI.")
-    String(take!(io))
+    return String(take!(io))
 end
 
 """
@@ -225,8 +350,8 @@ end
 
 The catalogue of rule sets: every `gistp:RuleSet`, its label, and how many rules it orders.
 """
-function tool_list_rule_sets(; ep::SparqlEndpoint = endpoint())
-    cat = list_rule_sets(; ep = ep)
+function tool_list_rule_sets(; ep::SparqlEndpoint=endpoint())
+    cat = list_rule_sets(; ep=ep)
     isempty(cat) && return "No rule sets are loaded in this store."
     io = IOBuffer()
     println(io, "$(length(cat)) rule set(s):\n")
@@ -238,7 +363,7 @@ function tool_list_rule_sets(; ep::SparqlEndpoint = endpoint())
             "    NOTE: this set has no members and cannot be run -- an unfinished set.",
         )
     end
-    String(take!(io))
+    return String(take!(io))
 end
 
 """
@@ -258,20 +383,20 @@ among others, so the prompt matters more, not less.
 """
 function tool_run_rules(
     set::AbstractString;
-    source::AbstractVector = String[],
-    actor::AbstractString = "mcp",
-    strategy::Union{Symbol,Nothing} = nothing,
-    max_iterations::Union{Integer,Nothing} = nothing,
-    confirm::Bool = false,
-    ep::SparqlEndpoint = endpoint(),
+    source::AbstractVector=String[],
+    actor::AbstractString="mcp",
+    strategy::Union{Symbol,Nothing}=nothing,
+    max_iterations::Union{Integer,Nothing}=nothing,
+    confirm::Bool=false,
+    ep::SparqlEndpoint=endpoint(),
 )
     spec = try
-        load_rule_set(set; ep = ep)
+        load_rule_set(set; ep=ep)
     catch e
         return "Refused: <$set> is not a runnable rule set.\n\n$(sprint(showerror, e))"
     end
 
-    specs = [load_rule(r; ep = ep) for r in spec.rules]
+    specs = [load_rule(r; ep=ep) for r in spec.rules]
     rewrites = [s.iri for s in specs if mode_symbol(s) === :Rewrite]
     listing = join(
         ("  $i. <$(specs[i].iri)>   [$(mode_symbol(specs[i]))]" for i in eachindex(specs)),
@@ -305,11 +430,11 @@ function tool_run_rules(
 
     fs = run_rules(
         spec;
-        source = source,
-        actor = actor,
-        strategy = strategy,
-        max_iterations = max_iterations,
-        ep = ep,
+        source=source,
+        actor=actor,
+        strategy=strategy,
+        max_iterations=max_iterations,
+        ep=ep,
     )
     io = IOBuffer()
     println(io, "Rule set <", set, ">", isempty(spec.label) ? "" : "  -- $(spec.label)")
@@ -359,7 +484,7 @@ function tool_run_rules(
         "\nUndo any of these with undo_firing on its graph IRI. Undo in reverse ",
         "order: a later rule may have read what an earlier one derived.",
     )
-    String(take!(io))
+    return String(take!(io))
 end
 
 """
@@ -380,19 +505,23 @@ would otherwise be refused rather than shrugged off -- while the case the guard 
 a graph that holds data and is *not* a firing, is still refused. An empty graph has nothing
 a `DROP` could destroy.
 """
-function tool_undo_firing(graph::AbstractString; ep::SparqlEndpoint = endpoint())
-    n = graph_size(graph; ep = ep)
-    if !is_firing(graph; ep = ep)
+function tool_undo_firing(graph::AbstractString; ep::SparqlEndpoint=endpoint())
+    n = graph_size(graph; ep=ep)
+    if !is_firing(graph; ep=ep)
         n == 0 && return "Graph <$graph> holds no triples; nothing to undo."
-        return(
+        return (
             "Refused: <$graph> holds $n triple(s) and is not a recorded firing, so " *
             "undo_firing will not touch it. This tool reverses rule applications this " *
             "engine made; it is not a way to delete a graph. Use list_firings to see " *
-            "what can be undone.")
+            "what can be undone."
+        )
     end
-    undo_firing!(graph; ep = ep)
-    n == 0 ? "Graph <$graph> was already empty; its provenance record was retracted." :
-             "Undid <$graph>: $n triple(s) removed and the provenance record retracted."
+    undo_firing!(graph; ep=ep)
+    return if n == 0
+        "Graph <$graph> was already empty; its provenance record was retracted."
+    else
+        "Undid <$graph>: $n triple(s) removed and the provenance record retracted."
+    end
 end
 
 """
@@ -400,9 +529,10 @@ end
 
 The provenance log, newest first.
 """
-function tool_firings(; rule::Union{AbstractString,Nothing} = nothing,
-                      ep::SparqlEndpoint = endpoint())
-    log = firings(; rule = rule, ep = ep)
+function tool_firings(;
+    rule::Union{AbstractString,Nothing}=nothing, ep::SparqlEndpoint=endpoint()
+)
+    log = firings(; rule=rule, ep=ep)
     isempty(log) && return "No firings recorded."
     io = IOBuffer()
     println(io, length(log), " firing(s), newest first:\n")
@@ -411,7 +541,7 @@ function tool_firings(; rule::Union{AbstractString,Nothing} = nothing,
         println(io, "      rule  <", f.rule, ">  (iteration ", f.iteration, ")")
         println(io, "      graph <", f.graph, ">")
     end
-    String(take!(io))
+    return String(take!(io))
 end
 
 export tool_list_rules, tool_explain_rule, tool_run_rule, tool_undo_firing, tool_firings
