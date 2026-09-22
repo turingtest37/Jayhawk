@@ -140,20 +140,35 @@ graphs this engine wrote are searched. Exposed as the `retractions` MCP tool, wh
 the one thing the query cannot distinguish: never-asserted and still-true both come back
 empty.
 
-The record is PROV-O proper. A firing *graph* is a `prov:Entity` (it holds triples and was
-generated at a time); the application is a separate `prov:Activity` with `prov:endedAtTime`,
-`prov:used` for the rule and each source, and `prov:wasAssociatedWith` an agent minted from
-the actor. `prov:used` and `prov:wasAssociatedWith` carry their typing in their ranges, so
-the rule and the agent get no type assertions of their own — better PROV practice, and it
-keeps every triple rooted at the firing, the activity or the tombstone, which is what lets
-`undo_firing!` retract the record completely instead of orphaning an activity that still
-claims a rule ran.
+**The record is carried by gist, not by PROV-O.** A firing is a `gist:Event` —
+"something that occurs over a period of time, often characterized as an activity being
+carried out by some person, organization, or software application", which is a rule firing
+exactly. Its rule and each source graph are `gist:isBasedOn` ("gave rise to or justifies the
+Subject"); the actor is a `gist:hasParticipant`; a tombstone is `gist:isProducedBy` the
+firing that carved it out. The engine's own `jayhawk:` terms stay alongside, and are what the
+driver actually reads.
 
-**Not `prov:wasInvalidatedBy`**, which an earlier note here promised. It relates an *entity*
-to the activity that ended it, and what ceased to hold are individual triples, which have no
-IRIs. Asserting it of the tombstone would say the tombstone ceased to exist — the opposite
-of true, since it was just created. Per-triple invalidation needs every retracted triple
-reified; the tombstone graph is that record already.
+Two things that choice buys. gist is already this project's upper ontology and already a
+dependency of the pattern vocabulary, so the record speaks the same language as the data it
+describes instead of a second one that has to be kept in step. And **being a historical event
+is inferred rather than asserted**: `gist:HistoricalEvent` is an *equivalent* class —
+`gist:Event` with exactly one `actualStartDateTime` and exactly one `actualEndDateTime` — so
+the record states the two datetimes and a reasoner reaches the classification. That is the
+difference between a machine-verifiable axiom and a label, and the suite asserts the class is
+never stated outright.
+
+`gist:hasParticipant` and not its subproperty `gist:comesFromAgent`, whose range is
+`gist:Organization ∪ gist:Person`: most actors here are software, and asserting that "mcp" is
+a person is a falsehood a reasoner would propagate. Start equals end because the engine does
+not measure how long an application took — claiming an unobserved duration would be worse
+than claiming none.
+
+**PROV-O was considered and dropped.** It fit the shape well, but it meant a second
+vocabulary to keep in step for no gain the record did not already have, and it is not
+required by anything: the NIH challenge this work is aimed at says only that solutions
+"should align with and leverage existing standards where possible", and names Biolink, not
+PROV. gist is an existing standard. Any downstream alignment — PROV-O, Biolink, OWL-Time —
+is a projection over this record and belongs to the project that needs it, not to the engine.
 
 Retention is deliberately coupled to the firing: undo restores the claim *and* forgets the
 retraction. A retraction outliving the firing that made it would assert a fact is no longer
