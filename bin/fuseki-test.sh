@@ -86,9 +86,10 @@ cmd_start() {
     # leave the server running. Keeping `cd` as its own statement means the only
     # backgrounded command is java itself.
     (
+            # org.apache.jena.fuseki.main.cmds.FusekiMainCmd \
         cd "$STATE" || exit 1
         nohup java -Xmx2G -cp "$FUSEKI_JAR" \
-            org.apache.jena.fuseki.main.cmds.FusekiMainCmd \
+            org.apache.jena.fuseki.main.cmds.FusekiServerCmd \
             --port "$PORT" --mem --update "/$DATASET" > "$LOGFILE" 2>&1 &
         echo $! > "$PIDFILE"
     )
