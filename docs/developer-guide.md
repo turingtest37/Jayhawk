@@ -68,8 +68,8 @@ engine inherits a mutable process-global that two concurrent MCP sessions can co
 
 `load_rule` does the I/O and nothing else; everything downstream of `RuleSpec` is pure. That
 split is what makes the interesting half testable against golden files with no server
-running: the hermetic suite is 221 assertions, and the 186 in its `compiler (pure)` testset
-cover the whole of compilation without a Fuseki anywhere.
+running: the hermetic suite is 368 assertions (as of `20d8f79`), and the 271 in its
+`compiler (pure)` testset cover the whole of compilation without a Fuseki anywhere.
 
 ### Why the compiler reads from the store
 
@@ -279,10 +279,13 @@ Four suites, each with a different job.
 
 | Suite | Needs a server | What it is for |
 |---|---|---|
-| `test/runtests.jl` | no | ~6s warm, hermetic, 221 assertions. Pure compiler behaviour, golden SPARQL, every refusal. |
-| `test/sparql_integration.jl` | yes | 223 + 13 assertions. Live behaviour: what the store actually does. Opt-in via `JAYHAWK_TEST_SPARQL=1`. Includes the `moneygraph` testset that every figure in the user guide is measured from. |
+| `test/runtests.jl` | no | ~6s warm, hermetic, 368 assertions. Pure compiler behaviour, golden SPARQL, every refusal. |
+| `test/sparql_integration.jl` | yes | 371 + 13 assertions. Live behaviour: what the store actually does. Opt-in via `JAYHAWK_TEST_SPARQL=1`. Includes the `moneygraph` testset that every figure in the user guide is measured from. |
 | `test/review_fixes.jl` (39), `review_round4.jl` (17) | optional | Independent verification of specific fixes, written from the *claims* rather than the implementation. |
 | `test/adversarial.jl` (36) | optional | Deliberately hostile, and not part of `runtests.jl` — run it on its own. It found the Rewrite data-loss bug. |
+
+Counts are as of `20d8f79`. The standalone figures are their hermetic parts; with
+`JAYHAWK_TEST_SPARQL=1` they add 68 (adversarial), 27 (review_fixes) and 13 (review_round4).
 
 The last three are **standalone**: `julia --project=. test/<file>.jl` runs their hermetic
 part with no server, and `JAYHAWK_TEST_SPARQL=1` adds the store-backed part. Because

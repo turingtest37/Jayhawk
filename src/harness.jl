@@ -608,13 +608,16 @@ Given a bare vector, order is `gistp:priority` descending then IRI -- the case t
 `gistp:priority` useful now that `gist:sequence` carries set-relative order. Note the
 directions disagree: priority is higher-first, `gist:sequence` is lower-first.
 
-**Mixed modes are refused.** An additive rule's output is a new named graph that must join
-the working set for later rules to see it, but a `gistp:Rewrite` needs exactly one source
-graph, which is also its target. Those requirements are contradictory the moment an additive
-rule has fired, so a set is either all-`Rewrite` -- mutating one graph in place, the working
-set never growing -- or contains none at all. Refusing is the only honest option: the
-alternative is handing the rewrite the original graph alone and quietly denying it everything
-the set derived.
+**Mixed modes need a destination.** An undirected additive rule's output is a new named
+graph that must join the working set for later rules to see it, but a `gistp:Rewrite` needs
+exactly one source graph, which is also its target. Those requirements are contradictory the
+moment such a rule has fired, so a set that mixes a `Rewrite` with an additive rule that has
+no write destination is refused. Give every additive member a destination with write-side
+`gistp:inGraph` and the set composes: its output is promoted into that graph rather than
+appended to the working set, so the `Rewrite` still has exactly one source and reads the
+derived triples from where they were written. Refusing the undirected case is the only
+honest option: the alternative is handing the rewrite the original graph alone and quietly
+denying it everything the set derived.
 
 A rule that contributes nothing yields no `Firing`. `apply_rule` drops such a graph without
 recording provenance, so returning it would hand back a firing that `undo_firing!` must
