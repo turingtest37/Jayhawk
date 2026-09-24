@@ -128,7 +128,7 @@ done
 ## Related
 
 - **Rule vocabulary** — [`~/dev/JayhawkPatterningDefinitions`](../JayhawkPatterningDefinitions)
-  ([github](https://github.com/turingtest37/JayhawkPatterning)): `jhp:Rule`, `RuleSet`, the
+  ([github](https://github.com/turingtest37/jayhawkpatterning)): `jhp:Rule`, `RuleSet`, the
   rewrite modes and strategies, their SHACL shapes, worked example rules and `verify.py`.
   Moves in lockstep with this repo.
 - **Pattern vocabulary** — [`~/dev/gistPatterns`](../gistPatterns): `gistPatterningDefinitions.ttl`

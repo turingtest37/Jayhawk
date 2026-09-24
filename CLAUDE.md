@@ -9,7 +9,7 @@ building that into a working computing architecture. The pattern language itself
 elsewhere — `gistPatterningDefinitions.ttl` in **`~/dev/gistPatterns`** (`gistp:`), and the
 rule layer this engine executes — `jhp:Rule`, `RuleSet`, modes, strategies, conditions — in
 `JayhawkPatterningDefinitions.ttl` in **`~/dev/JayhawkPatterningDefinitions`**
-([github](https://github.com/turingtest37/JayhawkPatterning)). This project is about
+([github](https://github.com/turingtest37/jayhawkpatterning)). This project is about
 **executing** those patterns: compiling, running, and reasoning over them.
 
 Organizing idea: a pattern can play the role of **I, L, or R** in a graph-rewrite span
