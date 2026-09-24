@@ -1361,11 +1361,12 @@ ex:s2 ex:p ex:plain .
                     # Not against what the rule read. Those differ the moment the destination is
                     # not itself a source, and reporting the wrong one would make a re-run of a
                     # converged rule look productive.
+                    recorded = length(firings())
                     again = run_rule(
                         "$(WSR)FileEmployee"; source=[DATA_GRAPH], actor="ws-test"
-                    )[1]
-                    @test again.count == 0
-                    @test !is_firing(again.graph)   # contributed nothing, so no record
+                    )
+                    @test isempty(again)                    # contributed nothing, so no firing
+                    @test length(firings()) == recorded     # and no record
                 end
 
                 @testset "undo retracts from the destination" begin
@@ -1867,10 +1868,14 @@ ex:s2 ex:p ex:plain .
             # Construct against an unchanged source is idempotent once its output is in the
             # working set -- prune_known! is what makes that visible.
             f1 = run_rule(rule; source=[DATA_GRAPH])
+            recorded = length(firings())
             f2 = run_rule(rule; source=[DATA_GRAPH, f1[1].graph])
             @test f1[1].count == 2
-            @test f2[1].count == 0
-            @test graph_size(f2[1].graph) == 0    # contributed nothing, so left no graph
+            @test all(is_firing(f.graph) for f in f1)   # every firing handed back is undoable
+            # A Once rule that changes nothing used to hand back a firing whose graph it had
+            # already dropped and never recorded, which undo_firing! then refused.
+            @test isempty(f2)
+            @test length(firings()) == recorded
             undo_firing!(f1[1].graph)
         end
 

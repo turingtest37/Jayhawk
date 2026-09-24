@@ -435,8 +435,12 @@ end
 
 Apply a rule according to its mode.
 
-`Construct` applies once and returns the single firing: the result is `f(G)`, referentially
+`Construct` applies once and returns its firing: the result is `f(G)`, referentially
 transparent and composable.
+
+Every firing returned was recorded and can be undone. A pass that changes nothing leaves no
+graph and no provenance, so it is not returned -- under any mode or strategy -- and a rule
+that matches nothing returns an empty vector.
 
 `Assert` iterates. Each round's output joins the working set for the next, so the rule sees
 its own consequences, and iteration stops when a round contributes no new triples -- the
@@ -562,7 +566,10 @@ function run_rule(
     working = String[String.(source)...]
 
     if strat === :Once
-        push!(firings, apply_rule(spec; source=working, actor=actor, iteration=1, ep=ep))
+        f = apply_rule(spec; source=working, actor=actor, iteration=1, ep=ep)
+        # A pass that changed nothing has already dropped its graph and recorded no provenance,
+        # so handing it back would give the caller a firing that undo_firing! must refuse.
+        (f.count > 0 || f.removed > 0) && push!(firings, f)
         return firings
     end
 
