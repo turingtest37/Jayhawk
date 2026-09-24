@@ -104,6 +104,27 @@ end
 NacSpec(graph, triples) = NacSpec(graph, triples, nothing)
 
 """
+One of several match patterns: its own named graph, its triples, and its own `jhp:inGraph`.
+
+A rule with a single match pattern has none of these -- it keeps the scalar `match_graph` /
+`match` / `match_scope` it always had, and compiles to exactly the bytes it always did. A
+rule with two or more carries one `MatchPart` each, and L is their **conjunction**: every
+part must match, and a variable shared between parts joins them.
+
+Why more than one: scope is a property of a *pattern*, and one pattern is evaluated in one
+graph. A rule pairing an entity in one graph with an entity in another therefore needs two.
+The workaround -- no scope, both graphs in `source` -- merges them into one default graph,
+where a trade and the holding it belongs to use the same predicates and so cannot be told
+apart: the rule pairs each entity with itself. Measured on `multi_match_rule.trig`: 6 pairs
+where 1 is true.
+"""
+struct MatchPart
+    graph::String
+    triples::Vector{PatternTriple}
+    scope::Union{String,Nothing}
+end
+
+"""
 One `gistp:SourceMap`: a column, the literal variable it feeds, and the value pipeline.
 
 `column` is the source's own spelling; [`fx_predicate`](@ref) turns it into an IRI. The four
@@ -169,7 +190,76 @@ struct RuleSpec
     # patterns inside the SERVICE plus a pipeline after the match. Empty for every rule that
     # names its own Facade-X predicates, which is what keeps those rules' output unchanged.
     source_maps::Vector{SourceMapSpec}
+    # Empty for a rule with one match pattern. With two or more: one MatchPart each, while
+    # `match` holds the union of their triples (so interface, check_bound and every other
+    # consumer that reasons about L's triples needs no change), `match_graph` the first
+    # part's IRI, and `match_scope` nothing -- every scope is read through `match_patterns`,
+    # never off the scalar field, because a multi-pattern rule has no single scope.
+    match_parts::Vector{MatchPart}
 end
+
+# Every call site written before multi-pattern L: one match pattern, no parts.
+function RuleSpec(
+    iri,
+    mode,
+    lg,
+    cg,
+    match,
+    construct,
+    variables,
+    mints,
+    enums,
+    nacs,
+    strategy,
+    priority,
+    maxit,
+    mscope,
+    cscope,
+    services,
+    filters,
+    source_maps,
+)
+    return RuleSpec(
+        iri,
+        mode,
+        lg,
+        cg,
+        match,
+        construct,
+        variables,
+        mints,
+        enums,
+        nacs,
+        strategy,
+        priority,
+        maxit,
+        mscope,
+        cscope,
+        services,
+        filters,
+        source_maps,
+        MatchPart[],
+    )
+end
+
+"""
+    match_patterns(spec) -> Vector{MatchPart}
+
+Every match pattern of a rule, as parts: the one pattern of an ordinary rule, or each part
+of a multi-pattern one. The single place that knows the two representations exist.
+"""
+function match_patterns(spec::RuleSpec)
+    isempty(spec.match_parts) || return spec.match_parts
+    return [MatchPart(spec.match_graph, spec.match, spec.match_scope)]
+end
+
+"Every `jhp:inGraph` on a match pattern, in pattern order."
+match_scopes(spec::RuleSpec) =
+    String[p.scope for p in match_patterns(spec) if p.scope !== nothing]
+
+"The variables L binds through `GRAPH ?g` rather than through any triple."
+match_scope_vars(spec::RuleSpec) =
+    reduce(union, (scope_vars(s, spec) for s in match_scopes(spec)); init=Set{String}())
 
 # The full spec minus `source_maps`, which is the arity everything written before source maps
 # existed uses. Same bargain as the constructors below: adding a field to the spec must not
@@ -434,15 +524,27 @@ SELECT ?mode ?l ?c WHERE {
         "no rule found at <$r>: it must carry jhp:hasMatchPattern, " *
         "jhp:hasConstructPattern and jhp:rewriteMode in the default graph.",
     )
-    length(rows) == 1 || error(
-        "<$r> has $(length(rows)) match/construct/mode combinations; exactly one is " *
-        "required. JayhawkPatternShapes.ttl RuleShape enforces this -- validate first.",
-    )
+    # Several match patterns are one rule: L is their conjunction. Several construct
+    # patterns or modes are not -- which R, under which mode, would be a guess.
+    for (key, what) in (("c", "jhp:hasConstructPattern"), ("mode", "jhp:rewriteMode"))
+        n = length(unique(_iri(row[key]) for row in rows))
+        n == 1 || error(
+            "<$r> declares $n $what values; exactly one is required. " *
+            "JayhawkPatternShapes.ttl RuleShape enforces this -- validate first.",
+        )
+    end
 
-    row = rows[1]
-    mode = _iri(row["mode"])
-    lg = _iri(row["l"])
-    cg = _iri(row["c"])
+    mode = _iri(rows[1]["mode"])
+    cg = _iri(rows[1]["c"])
+    # Sorted, so the first part -- which names the rule's L in messages -- and the order the
+    # parts render in are both reproducible.
+    lgs = sort!(unique(_iri(row["l"]) for row in rows))
+    lg = first(lgs)
+    parts = if length(lgs) == 1
+        MatchPart[]
+    else
+        [MatchPart(g, load_pattern(g; ep=ep), load_in_graph(g; ep=ep)) for g in lgs]
+    end
 
     nacs = [
         NacSpec(g, load_pattern(g; ep=ep), load_in_graph(g; ep=ep)) for
@@ -451,19 +553,34 @@ SELECT ?mode ?l ?c WHERE {
     # The negative conditions' graphs join the scoping set: a variable may appear ONLY
     # inside a condition -- that is the existentially-quantified case -- and without this it
     # would be loaded as no variable at all and emitted as a bare IRI.
-    graphs = String[lg, cg, (n.graph for n in nacs)...]
+    graphs = String[lgs..., cg, (n.graph for n in nacs)...]
 
     # Bound rather than inlined because `load_source_maps` needs both: a source map is found
     # from the variables the rule uses, and a mint slot is one of the places a rule uses one.
     vars = load_variables(graphs; ep=ep)
     mints = load_mints(graphs; ep=ep)
 
+    # One pattern: its scope is the scalar field, exactly as before parts existed. Several:
+    # the scalar is `nothing`, and each part carries its own.
+    mscope = isempty(parts) ? load_in_graph(lg; ep=ep) : nothing
+    match = if isempty(parts)
+        load_pattern(lg; ep=ep)
+    else
+        # A triple two parts share is one triple of L -- as a set, the way `interface`
+        # already treats it -- though each part still renders it in its own graph.
+        sort!(
+            unique(t -> _ptkey(t), reduce(vcat, (p.triples for p in parts)));
+            by=t -> (sparql_text(t.subject), sparql_text(t.predicate), sparql_text(t.object)),
+        )
+    end
+    mscopes = isempty(parts) ? [mscope] : [p.scope for p in parts]
+
     return RuleSpec(
         r,
         mode,
         lg,
         cg,
-        load_pattern(lg; ep=ep),
+        match,
         load_pattern(cg; ep=ep),
         vars,
         mints,
@@ -472,20 +589,18 @@ SELECT ?mode ?l ?c WHERE {
         load_strategy(r; ep=ep),
         load_priority(r; ep=ep),
         load_max_iterations(r; ep=ep),
-        load_in_graph(lg; ep=ep),
+        mscope,
         load_in_graph(cg; ep=ep),
         load_services(
             String[
-                s for s in (
-                    load_in_graph(lg; ep=ep),
-                    load_in_graph(cg; ep=ep),
-                    (n.scope for n in nacs)...,
-                ) if s !== nothing
+                s for s in (mscopes..., load_in_graph(cg; ep=ep), (n.scope for n in nacs)...)
+                if s !== nothing
             ];
             ep=ep,
         ),
         load_filters(r; ep=ep),
         load_source_maps(r, graphs; also=_slot_var_texts(vars, mints), ep=ep),
+        parts,
     )
 end
 
@@ -1000,7 +1115,7 @@ function check_mints(spec::RuleSpec)
     bound = union(
         vars_in(spec.match, spec),
         enum_vars(spec),
-        scope_vars(spec.match_scope, spec),
+        match_scope_vars(spec),
         Set(m.variable for m in spec.source_maps),
     )
     for (iri, m) in spec.mints
@@ -1229,7 +1344,7 @@ a data source. The split matters because only the latter belong in a dataset cla
 function all_scopes(spec::RuleSpec)
     return String[
         s for
-        s in (spec.match_scope, spec.construct_scope, (n.scope for n in spec.nacs)...) if
+        s in (match_scopes(spec)..., spec.construct_scope, (n.scope for n in spec.nacs)...) if
         s !== nothing
     ]
 end
@@ -1252,7 +1367,7 @@ was not already reading, so it needs no such guarantee.
 """
 function read_scopes(spec::RuleSpec)
     return String[
-        s for s in (spec.match_scope, (n.scope for n in spec.nacs)...) if
+        s for s in (match_scopes(spec)..., (n.scope for n in spec.nacs)...) if
         s !== nothing && !haskey(spec.services, s)
     ]
 end
@@ -1411,6 +1526,23 @@ An unscoped rule renders byte-identically to the old `bgp_text` call, which is w
 the golden snapshot honest.
 """
 function match_text(spec::RuleSpec; indent::AbstractString="  ")
+    # Several match patterns: each renders in its own graph and the groups simply follow one
+    # another, which in SPARQL is a join -- the conjunction L means. A part with no scope
+    # renders bare and so reads the default graph, which a scoped rule's dataset clause makes
+    # the merge of every source graph. Source maps are refused on this path by
+    # `check_match_parts`, so there is nothing generated to place.
+    isempty(spec.match_parts) || return join(
+        (
+            if p.scope === nothing
+                bgp_text(p.triples, spec; indent=indent)
+            else
+                graph_wrap(
+                    bgp_text(p.triples, spec; indent=indent * "  "), p.scope, spec; indent=indent
+                )
+            end for p in spec.match_parts
+        ),
+        "\n",
+    )
     return if spec.match_scope === nothing
         bgp_text(spec.match, spec; indent=indent)
     else
@@ -1567,7 +1699,7 @@ deterministic, which is what makes an `Assert` fixpoint converge.
 """
 function check_no_blanks(spec::RuleSpec)
     graphs = [
-        ("match pattern", spec.match_graph, spec.match),
+        (("match pattern", p.graph, p.triples) for p in match_patterns(spec))...,
         ("construct pattern", spec.construct_graph, spec.construct),
         (("negative condition", n.graph, n.triples) for n in spec.nacs)...,
     ]
@@ -1607,6 +1739,48 @@ function check_no_blanks(spec::RuleSpec)
 end
 
 """
+    check_match_parts(spec)
+
+Refuse what a multi-pattern L does not support yet, and a part that means nothing. A rule
+with one match pattern passes untouched.
+
+- **An empty part.** L is a conjunction, so an empty conjunct constrains nothing and is
+  almost certainly a pattern whose triples were never loaded -- a typo in its graph name.
+- **`Rewrite`.** Deletion is computed from `match_only(spec)`, the union of every part's
+  triples, but a rewrite deletes from its one target graph. A triple matched in a *second*
+  graph would be deleted from the target, where it may never have been. Making that correct
+  needs a target per part, which is the same change as write-side scope on a Rewrite.
+- **Source maps.** The pipeline is generated inside the one `SERVICE` a single scoped L
+  opens; with several parts there is no rule yet for which part owns the generated triples.
+  Scope a part to the data source and write the Facade-X predicates by hand, or split the
+  rule.
+"""
+function check_match_parts(spec::RuleSpec)
+    isempty(spec.match_parts) && return spec
+    for p in spec.match_parts
+        isempty(p.triples) && error(
+            "rule <$(spec.iri)>: match pattern <$(p.graph)> is empty. A rule's match patterns " *
+            "are a conjunction, so an empty one constrains nothing -- most likely its triples " *
+            "are in a graph with a different name.",
+        )
+    end
+    mode_symbol(spec) === :Rewrite && error(
+        "rule <$(spec.iri)>: jhp:_RewriteMode_rewrite with $(length(spec.match_parts)) match " *
+        "patterns is not supported yet. A rewrite deletes L∖I from its one target graph, and " *
+        "a triple matched by a second pattern -- in a second graph -- would be deleted from " *
+        "the target instead of from where it was found. Use Construct or Assert, or merge " *
+        "the patterns into one.",
+    )
+    isempty(spec.source_maps) || error(
+        "rule <$(spec.iri)>: gistp:SourceMap with several match patterns is not supported " *
+        "yet: the generated column triples belong inside one SERVICE, and with several " *
+        "patterns nothing says which. Scope one pattern to the gistp:TabularDataSource and " *
+        "name its Facade-X predicates by hand, or split the rule.",
+    )
+    return spec
+end
+
+"""
     check_positions(spec)
 
 Refuse a term in a position RDF does not allow it to occupy.
@@ -1619,7 +1793,7 @@ client hands specs in.
 """
 function check_positions(spec::RuleSpec)
     graphs = [
-        ("match pattern", spec.match_graph, spec.match),
+        (("match pattern", p.graph, p.triples) for p in match_patterns(spec))...,
         ("construct pattern", spec.construct_graph, spec.construct),
         (("negative condition", n.graph, n.triples) for n in spec.nacs)...,
     ]
@@ -1983,7 +2157,7 @@ function check_filters(spec::RuleSpec)
     bound = Set(
         _bare_var(v) for v in union(
             vars_in(spec.match, spec),
-            scope_vars(spec.match_scope, spec),
+            match_scope_vars(spec),
             minted_vars(spec),
             enum_vars(spec),
         )
@@ -2085,6 +2259,7 @@ A variable is available to R if the match pattern binds it, **or** if it is mint
 minted variable is bound by the `BIND` the compiler emits, not by a triple pattern.
 """
 function check_bound(spec::RuleSpec)
+    check_match_parts(spec)
     check_no_blanks(spec)
     check_positions(spec)
     check_variables(spec)
@@ -2099,7 +2274,7 @@ function check_bound(spec::RuleSpec)
     # use-before-def on the one variable L most definitely binds.
     matched = union(
         vars_in(spec.match, spec),
-        scope_vars(spec.match_scope, spec),
+        match_scope_vars(spec),
         # A source-mapped variable is bound by a triple pattern the COMPILER generates, so
         # `vars_in` -- which walks only the authored pattern -- cannot see it. Without this,
         # the whole point of a source map (letting R use a column the pattern never names) is

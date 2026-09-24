@@ -1699,6 +1699,79 @@ ex:s2 ex:p ex:plain .
         engine_cleanup()
     end
 
+    @testset "multi-pattern L: a join across graphs that share predicates" begin
+        # The red, kept as a test: one unscoped pattern over both graphs cannot tell a left
+        # owner from a right one, and pairs every owner with itself. The rule this round
+        # makes loadable pairs exactly the one true pair.
+        MR = "http://example.org/mmrules/"
+        MM = "http://example.org/mm/"
+        LEFT, RIGHT = "urn:jayhawk:mm-test:left", "urn:jayhawk:mm-test:right"
+        engine_cleanup()
+        Jayhawk.update!("DROP SILENT GRAPH <$LEFT> ; DROP SILENT GRAPH <$RIGHT>")
+        Jayhawk.load_file!(fixture("multi_match_rule.trig"))
+        derived(f) = Set(
+            (sparql_text(r["s"]), sparql_text(r["p"]), sparql_text(r["o"])) for
+            r in select("SELECT ?s ?p ?o WHERE { GRAPH <$(f.graph)> { ?s ?p ?o } }")
+        )
+        t(s, p, o) = ("<$MM$s>", "<$MM$p>", o isa String ? "<$MM$o>" : "<$(o[1])>")
+
+        @testset "the two patterns load as two parts of one L" begin
+            spec = load_rule("$(MR)Pair")
+            @test length(spec.match_parts) == 2
+            @test [p.scope for p in spec.match_parts] == [LEFT, RIGHT]
+            @test length(spec.match) == 2
+        end
+
+        @testset "merged into one default graph, the workaround pairs owners with themselves" begin
+            f = only(run_rule("$(MR)PairMerged"; source=[LEFT, RIGHT], actor="test"))
+            @test length(derived(f)) == 6
+            @test t("a1", "sharesWith", "a1") in derived(f)
+            undo_firing!(f.graph)
+        end
+
+        @testset "scoped per pattern, it pairs exactly the one true pair" begin
+            f = only(run_rule("$(MR)Pair"; source=[LEFT, RIGHT], actor="test"))
+            @test derived(f) == Set([t("a1", "sharesWith", "b1")])
+            undo_firing!(f.graph)
+            @test isempty(select("SELECT * WHERE { GRAPH <$(f.graph)> { ?s ?p ?o } }"))
+        end
+
+        @testset "a graph variable on one part ranges; the constant part stays pinned" begin
+            f = only(run_rule("$(MR)PairByGraph"; source=[LEFT, RIGHT], actor="test"))
+            @test derived(f) == Set([
+                t("a1", "sharesWith", "b1"),
+                t("a1", "sharesWith", "a1"),       # ?_g = left binds the left owner too
+                t("a2", "sharesWith", "a2"),
+                t("b1", "seenIn", (RIGHT,)),
+                t("a1", "seenIn", (LEFT,)),
+                t("a2", "seenIn", (LEFT,)),
+            ])
+            undo_firing!(f.graph)
+        end
+
+        @testset "explain_rule shows each part and the graph it reads" begin
+            out = tool_explain_rule("$(MR)Pair"; source=[LEFT, RIGHT])
+            @test occursin("Pair_Left> (1 triples)  in graph <$LEFT>", out)
+            @test occursin("Pair_Right> (1 triples)  in graph <$RIGHT>", out)
+            @test occursin("would add 1 new triple", out)
+        end
+
+        @testset "several construct patterns are still refused" begin
+            Jayhawk.update!("""
+                INSERT DATA { <$(MR)Pair> <$(Jayhawk.P_CONSTRUCT)> <$(MR)Pair_R2> }""")
+            err = try
+                load_rule("$(MR)Pair")
+                ""
+            catch e
+                sprint(showerror, e)
+            end
+            @test occursin("2 jhp:hasConstructPattern values", err)
+        end
+
+        Jayhawk.update!("DROP SILENT GRAPH <$LEFT> ; DROP SILENT GRAPH <$RIGHT>")
+        engine_cleanup()
+    end
+
     @testset "the moneygraph worked examples" begin
         # Every figure in docs/user-guide.md comes from here. The guide quotes measured
         # output, so if a rule changes behaviour the documentation fails with the code

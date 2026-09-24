@@ -1149,6 +1149,51 @@ Still refused: a scope on R with `Rewrite` (a rewrite's destination *is*
 the graph it reads; naming a second is a different operation), and a scope on R naming a
 `gistp:TabularDataSource` (a `SERVICE` cannot be written to).
 
+#### Joining across graphs: several match patterns
+
+One pattern reads one graph, so a rule that pairs something in one graph with something in
+another gives it **several match patterns**, each with its own `jhp:inGraph`. L is their
+conjunction: every one must match, and a variable they share joins them.
+
+```turtle
+:Pair jhp:hasMatchPattern :Pair_Left , :Pair_Right ; …
+:Pair_Left  jhp:inGraph <urn:left> .
+:Pair_Right jhp:inGraph <urn:right> .
+
+:Pair_Left  { :_A ex:owns :_X . }
+:Pair_Right { :_B ex:owns :_X . }
+```
+
+compiles to one `GRAPH` group per pattern:
+
+```sparql
+WHERE {
+  GRAPH <urn:left> {
+    ?_A <http://example.org/mm/owns> ?_X .
+  }
+  GRAPH <urn:right> {
+    ?_B <http://example.org/mm/owns> ?_X .
+  }
+}
+```
+
+The tempting shortcut, one unscoped pattern with both graphs in `source`, is wrong whenever
+the two sides use the same predicates. The graphs merge into one default graph and nothing
+tells a left owner from a right one. On `test/fixtures/multi_match_rule.trig` the shortcut
+derives **6** pairs where exactly **1** is true, because it pairs every owner with itself and
+the true pair both ways round.
+
+Each part may be scoped differently: a constant, a graph variable, or no scope at all, which
+reads the merge of every `source` graph. I is taken over the whole of L, so a triple from any
+match pattern that R repeats is preserved. `explain_rule` lists each pattern and the graph it
+reads.
+
+Refused for now:
+- **`Rewrite`.** It deletes from one target graph, so a match found in a second graph would
+  be deleted from the wrong place.
+- **`gistp:SourceMap`.** Its generated triples belong inside one `SERVICE`, and with several
+  patterns nothing says which.
+
 ### Rule sets: what runs, in what order, and how many times
 
 `run_rule` takes one rule. A `jhp:RuleSet` takes several, in a stated order:

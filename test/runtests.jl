@@ -2107,6 +2107,146 @@ end
     end
 end
 
+@testset "multi-pattern L (pure)" begin
+    # L as a conjunction of patterns, each read in its own graph. The need is a join across
+    # sources that share predicates: merged into one default graph they cannot be told apart
+    # (measured: 6 pairs where 1 is true, test/fixtures/multi_match_rule.trig).
+    EX = "http://example.org/mm/"
+    R = "http://example.org/mmrules/"
+    LEFT, RIGHT = "urn:jayhawk:mm-test:left", "urn:jayhawk:mm-test:right"
+    iri(s) = IRIRef(s)
+    owns(a, x) = PatternTriple(iri("$(R)$a"), iri("$(EX)owns"), iri("$(R)$x"))
+    vars = Dict("$(R)_A" => "?_A", "$(R)_B" => "?_B", "$(R)_X" => "?_X", "$(R)_g" => "?_g")
+
+    function pair(;
+        mode=Jayhawk.MODE_CONSTRUCT,
+        parts=[
+            Jayhawk.MatchPart("$(R)Pair_Left", [owns("_A", "_X")], LEFT),
+            Jayhawk.MatchPart("$(R)Pair_Right", [owns("_B", "_X")], RIGHT),
+        ],
+        construct=[PatternTriple(iri("$(R)_A"), iri("$(EX)sharesWith"), iri("$(R)_B"))],
+        maps=Jayhawk.SourceMapSpec[],
+    )
+        return RuleSpec(
+            "$(R)Pair",
+            mode,
+            first(parts).graph,
+            "$(R)Pair_R",
+            reduce(vcat, (p.triples for p in parts)),
+            construct,
+            copy(vars),   # copied: one test adds a variable, the rest must not see it
+            Dict{String,MintSpec}(),
+            Dict{String,Vector{RDFTerm}}(),
+            NacSpec[],
+            nothing,
+            0,
+            nothing,
+            nothing,
+            nothing,
+            Dict{String,Vector{Pair{String,String}}}(),
+            String[],
+            maps,
+            parts,
+        )
+    end
+
+    @testset "each part renders in its own graph, and the parts join" begin
+        expected = """
+        # Construct rule <http://example.org/mmrules/Pair>
+        CONSTRUCT {
+          ?_A <http://example.org/mm/sharesWith> ?_B .
+        }
+        FROM <urn:jayhawk:mm-test:left>
+        FROM <urn:jayhawk:mm-test:right>
+        FROM NAMED <urn:jayhawk:mm-test:left>
+        FROM NAMED <urn:jayhawk:mm-test:right>
+        WHERE {
+          GRAPH <urn:jayhawk:mm-test:left> {
+            ?_A <http://example.org/mm/owns> ?_X .
+          }
+          GRAPH <urn:jayhawk:mm-test:right> {
+            ?_B <http://example.org/mm/owns> ?_X .
+          }
+        }
+        """
+        @test compile_rule(pair(); from=[LEFT, RIGHT]) == expected
+        # both scopes are read scopes, so an empty dataset is refused exactly as for one
+        @test Set(Jayhawk.read_scopes(pair())) == Set([LEFT, RIGHT])
+        @test_throws ErrorException compile_rule(pair())
+    end
+
+    @testset "a single pattern is one part, and says so through one accessor" begin
+        one = Jayhawk.match_patterns(RuleSpec(
+            "$(R)One", Jayhawk.MODE_CONSTRUCT, "$(R)One_L", "$(R)One_R",
+            [owns("_A", "_X")],
+            [PatternTriple(iri("$(R)_A"), iri("$(EX)sharesWith"), iri("$(R)_X"))],
+            vars, Dict{String,MintSpec}(),
+        ))
+        @test length(one) == 1
+        @test one[1].graph == "$(R)One_L" && one[1].scope === nothing
+    end
+
+    @testset "a variable bound by any part is bound by L" begin
+        # ?_B occurs only in the second part; R using it is not use-before-def
+        @test compile_rule(pair(); from=[LEFT, RIGHT]) isa String
+        # a variable no part binds still is
+        stray = pair(;
+            construct=[PatternTriple(iri("$(R)_A"), iri("$(EX)sharesWith"), iri("$(R)_Z"))],
+        )
+        stray.variables["$(R)_Z"] = "?_Z"
+        @test_throws ErrorException compile_rule(stray; from=[LEFT, RIGHT])
+    end
+
+    @testset "a graph variable on one part is bound for R" begin
+        spec = pair(;
+            parts=[
+                Jayhawk.MatchPart("$(R)Pair_Left", [owns("_A", "_X")], LEFT),
+                Jayhawk.MatchPart("$(R)Pair_Any", [owns("_B", "_X")], "$(R)_g"),
+            ],
+            construct=[PatternTriple(iri("$(R)_B"), iri("$(EX)seenIn"), iri("$(R)_g"))],
+        )
+        q = compile_rule(spec; from=[LEFT, RIGHT])
+        @test occursin("GRAPH ?_g {\n    ?_B", q)
+        @test occursin("GRAPH <$LEFT> {\n    ?_A", q)
+        @test "?_g" in Jayhawk.match_scope_vars(spec)
+    end
+
+    @testset "the interface is taken over every part" begin
+        # R repeats the second part's triple, so it is preserved (I), not added
+        spec = pair(;
+            construct=[
+                owns("_B", "_X"),
+                PatternTriple(iri("$(R)_A"), iri("$(EX)sharesWith"), iri("$(R)_B")),
+            ],
+        )
+        @test length(interface(spec)) == 1
+        @test length(match_only(spec)) == 1
+        @test length(construct_only(spec)) == 1
+    end
+
+    @testset "what a multi-pattern L refuses" begin
+        err(spec) =
+            try
+                compile_rule(spec; from=[LEFT, RIGHT])
+                ""
+            catch e
+                sprint(showerror, e)
+            end
+        empty = pair(;
+            parts=[
+                Jayhawk.MatchPart("$(R)Pair_Left", [owns("_A", "_X")], LEFT),
+                Jayhawk.MatchPart("$(R)Pair_Typo", PatternTriple[], RIGHT),
+            ],
+            construct=[PatternTriple(iri("$(R)_A"), iri("$(EX)sharesWith"), iri("$(R)_X"))],
+        )
+        @test occursin("Pair_Typo> is empty", err(empty))
+        @test occursin("not supported yet", err(pair(; mode=Jayhawk.MODE_REWRITE)))
+        @test occursin("deleted from", err(pair(; mode=Jayhawk.MODE_REWRITE)))
+        m = Jayhawk.SourceMapSpec("$(R)m", "?x", "col", nothing, nothing, nothing, nothing)
+        @test occursin("gistp:SourceMap with several match patterns", err(pair(; maps=[m])))
+    end
+end
+
 @testset "source maps (pure)" begin
     # The parts of gistp:SourceMap that need no store: the two encoders, the emitted shape,
     # and the refusals. Loading a map out of a triplestore is exercised in

@@ -1,0 +1,107 @@
+#  A rule whose match is TWO patterns, each read in its own graph.
+#
+#  The need: two sources describe the same kind of thing with the same predicates, and a
+#  rule has to pair an entity from one with an entity from the other. One match pattern can
+#  be scoped to one graph at most, and the obvious workaround -- no scope, both graphs in
+#  `source` -- merges them into one default graph, where "a thing on the left" and "a thing
+#  on the right" are indistinguishable. The rule then pairs every entity with itself, and
+#  each true pair in both directions.
+#
+#  So L may be several patterns. Each is its own named graph with its own jhp:inGraph, and L
+#  is their conjunction: variables shared between the patterns join them.
+#
+#      <urn:jayhawk:mm-test:left>    a1 owns x1 ; a2 owns x2
+#      <urn:jayhawk:mm-test:right>   b1 owns x1 ; b3 owns x3
+#
+#  Exactly one pair shares a thing: a1 and b1.
+
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
+@prefix ex:    <http://example.org/mm/> .
+@prefix :      <http://example.org/mmrules/> .
+
+<urn:jayhawk:mm-test:left> {
+    ex:a1 ex:owns ex:x1 .
+    ex:a2 ex:owns ex:x2 .
+}
+
+<urn:jayhawk:mm-test:right> {
+    ex:b1 ex:owns ex:x1 .
+    ex:b3 ex:owns ex:x3 .
+}
+
+#################################################################
+#    Pair: one match pattern per graph, joined on the shared thing
+#################################################################
+
+:Pair
+    rdf:type jhp:Rule ;
+    skos:prefLabel "Pair owners across sources" ;
+    skos:definition "An owner on the left and an owner on the right who own the same thing." ;
+    jhp:hasMatchPattern     :Pair_Left , :Pair_Right ;
+    jhp:hasConstructPattern :Pair_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_construct ;
+    jhp:strategy            jhp:Once .
+
+:Pair_Left  rdf:type gistp:SparqlPattern ; jhp:inGraph <urn:jayhawk:mm-test:left> .
+:Pair_Right rdf:type gistp:SparqlPattern ; jhp:inGraph <urn:jayhawk:mm-test:right> .
+:Pair_R     rdf:type gistp:SparqlPattern .
+
+:_A rdf:type gistp:SparqlVariable ; gistp:variableText "?_A" .
+:_B rdf:type gistp:SparqlVariable ; gistp:variableText "?_B" .
+:_X rdf:type gistp:SparqlVariable ; gistp:variableText "?_X" .
+
+:Pair_Left  { :_A ex:owns :_X . }
+:Pair_Right { :_B ex:owns :_X . }
+:Pair_R     { :_A ex:sharesWith :_B . }
+
+#################################################################
+#    PairMerged: the workaround this replaces -- one unscoped pattern
+#################################################################
+
+:PairMerged
+    rdf:type jhp:Rule ;
+    skos:prefLabel "Pair owners, one pattern, merged sources" ;
+    jhp:hasMatchPattern     :PairMerged_L ;
+    jhp:hasConstructPattern :PairMerged_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_construct .
+
+:PairMerged_L rdf:type gistp:SparqlPattern .
+:PairMerged_R rdf:type gistp:SparqlPattern .
+
+:_MA rdf:type gistp:SparqlVariable ; gistp:variableText "?_MA" .
+:_MB rdf:type gistp:SparqlVariable ; gistp:variableText "?_MB" .
+:_MX rdf:type gistp:SparqlVariable ; gistp:variableText "?_MX" .
+
+:PairMerged_L { :_MA ex:owns :_MX . :_MB ex:owns :_MX . }
+:PairMerged_R { :_MA ex:sharesWith :_MB . }
+
+#################################################################
+#    PairByGraph: a graph VARIABLE on one side, a constant on the other
+#################################################################
+#
+#  The right-hand side may range over any graph in `source`; ?g records which one matched.
+#  The left side stays pinned to one constant graph.
+
+:PairByGraph
+    rdf:type jhp:Rule ;
+    skos:prefLabel "Pair, recording the right-hand graph" ;
+    jhp:hasMatchPattern     :PairByGraph_Left , :PairByGraph_Any ;
+    jhp:hasConstructPattern :PairByGraph_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_construct ;
+    jhp:strategy            jhp:Once .
+
+:PairByGraph_Left rdf:type gistp:SparqlPattern ; jhp:inGraph <urn:jayhawk:mm-test:left> .
+:PairByGraph_Any  rdf:type gistp:SparqlPattern ; jhp:inGraph :_g .
+:PairByGraph_R    rdf:type gistp:SparqlPattern .
+
+:_g  rdf:type gistp:SparqlVariable ; gistp:variableText "?_g" .
+:_GA rdf:type gistp:SparqlVariable ; gistp:variableText "?_GA" .
+:_GB rdf:type gistp:SparqlVariable ; gistp:variableText "?_GB" .
+:_GX rdf:type gistp:SparqlVariable ; gistp:variableText "?_GX" .
+
+:PairByGraph_Left { :_GA ex:owns :_GX . }
+:PairByGraph_Any  { :_GB ex:owns :_GX . }
+:PairByGraph_R    { :_GA ex:sharesWith :_GB . :_GB ex:seenIn :_g . }

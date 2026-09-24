@@ -75,9 +75,15 @@ graph matched, any other IRI is a constant -- or, third reading, to a
 dataset clause at all. A scoped rule emits **both** `USING` and
 `USING NAMED`, because default and named graphs are disjoint namespaces and either alone
 blinds half the rule. Only the triples are wrapped: inside `GRAPH ?g { ... }` the variable
-`?g` is not yet bound, so a guard nested there would silently mean "in *any* graph". Round
-5a is read-side only; scope on R, with `Rewrite`, with `ToFixpoint`, or with an empty
-`source` is refused.
+`?g` is not yet bound, so a guard nested there would silently mean "in *any* graph". A
+scoped read needs a non-empty `source` and cannot run `ToFixpoint`; a scope on R is a
+constant write destination (see CLAUDE.md); scope with `Rewrite` is refused.
+
+A rule may carry **several match patterns**, each with its own `jhp:inGraph`; L is their
+conjunction, rendered as one `GRAPH` group per pattern. Single-pattern rules keep the scalar
+`match_scope` and compile byte-identically; a multi-pattern rule carries `match_parts` and a
+`nothing` scalar scope -- so read scopes only through `match_patterns` / `match_scopes` /
+`match_scope_vars`, never off the field. Refused for now with `Rewrite` and with source maps.
 
 All seven WHERE-clause builders route through `where_body`, so a guard cannot be honoured by
 only some of them.

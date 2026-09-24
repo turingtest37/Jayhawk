@@ -257,9 +257,12 @@ enforced by the integration suite. See that directory's README for the cases and
 live store cannot serve as the oracle.
 
 Three engine gaps stand between it and a working rule set, taken in this order:
-1. **Multi-pattern L.** `jhp:hasMatchPattern` 1..n, each with its own `jhp:inGraph`, L
-   being their conjunction. Needed because trades and holdings share predicates, so the
-   merged-source workaround matches a trade against itself. Refused with `Rewrite` at first.
+1. **Multi-pattern L — built (Round 2).** `jhp:hasMatchPattern` is one or more, each with
+   its own `jhp:inGraph`; L is their conjunction. Needed because trades and holdings share
+   predicates: on `test/fixtures/multi_match_rule.trig` the merged-source workaround derives
+   6 pairs where 1 is true. Refused with `Rewrite` and with source maps; lifting either is
+   backlog, as is `ToFixpoint` for a scoped read whose output is promoted to a destination
+   (its working set never grows, so the refusal is stricter than the hazard).
 2. **`jhp:hasBinding`**: `jhp:bindText` (one SPARQL expression, held to `check_filters`'
    threat model) → a declared `gistp:LiteralVariable`, topologically ordered, usable as a
    mint slot. It covers slugging, symbol normalisation and the MD5 discriminator the query

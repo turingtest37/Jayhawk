@@ -80,15 +80,20 @@ function tool_explain_rule(
         else
             "  in graph <$s>"
         end
-    println(
-        io,
-        "  match pattern L   : <",
-        spec.match_graph,
-        "> (",
-        length(spec.match),
-        " triples)",
-        scope_of(spec.match_scope),
-    )
+    # One line per match pattern: with several, L is their conjunction, and which graph each
+    # reads is exactly what a reviewer needs to see before approving the join.
+    parts = match_patterns(spec)
+    for p in parts
+        println(
+            io,
+            length(parts) == 1 ? "  match pattern L   : <" : "  match pattern L∧  : <",
+            p.graph,
+            "> (",
+            length(p.triples),
+            " triples)",
+            scope_of(p.scope),
+        )
+    end
     println(
         io,
         "  construct pattern R: <",
@@ -101,7 +106,7 @@ function tool_explain_rule(
     # A scoped L binds its graph variable through the GRAPH clause rather than through any
     # triple, so `vars_in` alone under-reports what R may use.
     bound = sort(
-        collect(union(vars_in(spec.match, spec), scope_vars(spec.match_scope, spec)))
+        collect(union(vars_in(spec.match, spec), match_scope_vars(spec)))
     )
     println(io, "  variables bound by L: ", isempty(bound) ? "(none)" : join(bound, ", "))
 

@@ -198,6 +198,31 @@ what keeps the golden snapshot meaningful.
 > into those two and op 2 stops pruning while op 5 stops copying — after op 4 has already
 > deleted from the target. Silent data loss. There is a test asserting the absence.
 
+### Several match patterns: one L, many parts
+
+`jhp:hasMatchPattern` is one or more, and L is the conjunction of the patterns. The
+representation choice is worth knowing before touching anything that reads L:
+
+- A rule with **one** match pattern carries `match_parts = MatchPart[]` and uses the scalar
+  `match_graph` / `match` / `match_scope` exactly as before. So every single-pattern rule
+  compiles to the bytes it always did, and the golden snapshots still mean something.
+- A rule with **several** carries one `MatchPart(graph, triples, scope)` each. It also holds
+  `match` as the *union* of their triples, so `interface`, `vars_in`, `check_bound`,
+  `dangling_risks` and everything else that reasons about L's triples needed no change. Its
+  `match_scope` is `nothing`, because a multi-pattern rule has no single scope.
+
+That last point is the hazard. **Never read `spec.match_scope` directly.** Go through
+`match_patterns(spec)`, `match_scopes(spec)` or `match_scope_vars(spec)`. A direct read
+treats a multi-pattern rule as unscoped, which drops it from `read_scopes`, silently loses
+the dataset-clause guard, and renders its parts as one merged BGP. The only place parts
+become text is `match_text`: one `GRAPH` group per part.
+
+`check_match_parts` refuses three things:
+- **An empty part.** An empty conjunct is almost certainly a typo in a pattern graph's name.
+- **`Rewrite`.** Deletion runs from the union of the parts into one target graph, so a match
+  found in a second graph would be deleted from the wrong one.
+- **Source maps.** No rule yet says which part's `SERVICE` owns the generated triples.
+
 ### The interface, I = L ∩ R
 
 Plain set arithmetic:
