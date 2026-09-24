@@ -68,7 +68,7 @@ The deterministic compiler that used to head this file as "primary next task" is
 tested and documented**. Every term the vocabulary declares is supported except
 `gistp:instructionText`, which is an authoring hint the engine deliberately ignores.
 
-Implemented: the three modes; both variable mechanisms (declared `SparqlVariable` individuals
+Implemented: several match patterns forming one L; computed values (`jhp:hasBinding`); the three modes; both variable mechanisms (declared `SparqlVariable` individuals
 and `"?x"^^gistp:var` literals); `iriTemplate` minting with RFC 6570 Level 1 slots;
 `hasNegativeCondition` guards; `hasFilterCondition` comparisons; `strategy` / `maxIterations`;
 `oneOf` → `VALUES`; `inGraph` scoping; firing graphs, provenance and exact undo; ordered rule
@@ -263,11 +263,15 @@ Three engine gaps stand between it and a working rule set, taken in this order:
    6 pairs where 1 is true. Refused with `Rewrite` and with source maps; lifting either is
    backlog, as is `ToFixpoint` for a scoped read whose output is promoted to a destination
    (its working set never grows, so the refusal is stricter than the hazard).
-2. **`jhp:hasBinding`**: `jhp:bindText` (one SPARQL expression, held to `check_filters`'
-   threat model) → a declared `gistp:LiteralVariable`, topologically ordered, usable as a
-   mint slot. It covers slugging, symbol normalisation and the MD5 discriminator the query
-   mints from, and it closes chained minting for literals. A declarative pipeline was
-   rejected because it cannot express the MD5.
+2. **`jhp:hasBinding` — built (Round 3).** `jhp:bindText` (one SPARQL expression, held to
+   `check_filters`' threat model via the shared `_expression_vars`) → `jhp:bindsVariable`,
+   a declared `gistp:LiteralVariable`. Emitted after L and VALUES, before mints, in
+   dependency order; a mint slot, a filter, a guard and R may all read it. Covers slugging,
+   symbol normalisation and the MD5 discriminator, and closes chained minting for literals
+   (minting from a *minted* IRI is still refused). A declarative pipeline was rejected
+   because it cannot express the MD5. Two fixes fell out: the mint-safety queries now
+   evaluate VALUES and source maps (a `oneOf`-fed slot's fan-in was reported as none), and a
+   filter may test a source-mapped column (it was refused as unbound).
 3. **`rerun_rules!`**: undo a set's earlier firings, then run. This is the rule-set
    equivalent of the script's `DROP SILENT GRAPH`, and removes exactly what the set asserted.
 

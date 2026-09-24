@@ -2247,6 +2247,136 @@ end
     end
 end
 
+@testset "jhp:hasBinding (pure)" begin
+    # A binding computes a value and names it, so a mint, a filter or R can use it. The
+    # need: real identifiers are slugged, normalised and hashed before anything is minted
+    # from them (test/fixtures/binding_rule.trig; moneygraph's fix-missing-bond-data.rq).
+    EX = "http://example.org/bind/"
+    R = "http://example.org/bindrules/"
+    iri(s) = IRIRef(s)
+    lit(s) = RDFLiteral(s, Jayhawk.GISTP_VAR)
+    B(v, text) = Jayhawk.BindingSpec("_:$v", "$(R)_$v", text)
+    base_vars = Dict(
+        "$(R)_S" => "?_S", "$(R)_H" => "?_H", "$(R)_symNorm" => "?symNorm",
+        "$(R)_symKey" => "?symKey", "$(R)_disc" => "?disc", "$(R)_key" => "?key",
+    )
+    CHAIN = [
+        B("key", "CONCAT(?symKey, \"_\", ?disc)"),
+        B("symKey", "REPLACE(UCASE(STR(?symNorm)), \"\\\\W+\", \"-\")"),
+        B("symNorm", "IF(STRSTARTS(?sym, \".\"), STRAFTER(?sym, \".\"), ?sym)"),
+        B("disc", "MD5(STR(?amt))"),
+    ]
+    MINT = Dict(
+        "$(R)_H" => MintSpec(
+            "$(R)_H", "$(EX)holding/{key}", Dict{String,RDFTerm}("key" => iri("$(R)_key"))
+        ),
+    )
+
+    function holding(;
+        bindings=CHAIN,
+        mints=MINT,
+        construct=[
+            PatternTriple(iri("$(R)_H"), iri("$(EX)of"), iri("$(R)_S")),
+            PatternTriple(iri("$(R)_H"), iri("$(EX)symbolKey"), lit("?symKey")),
+        ],
+        filters=String[],
+        vars=base_vars,
+    )
+        return RuleSpec(
+            "$(R)MintHolding", Jayhawk.MODE_CONSTRUCT, "$(R)MintHolding_L", "$(R)MintHolding_R",
+            [
+                PatternTriple(iri("$(R)_S"), iri("$(EX)amount"), lit("?amt")),
+                PatternTriple(iri("$(R)_S"), iri("$(EX)symbol"), lit("?sym")),
+            ],
+            construct, copy(vars), mints,
+            Dict{String,Vector{RDFTerm}}(), NacSpec[], nothing, 0, nothing, nothing, nothing,
+            Dict{String,Vector{Pair{String,String}}}(), filters, Jayhawk.SourceMapSpec[],
+            Jayhawk.MatchPart[], bindings,
+        )
+    end
+    err(spec) =
+        try
+            compile_rule(spec)
+            ""
+        catch e
+            sprint(showerror, e)
+        end
+
+    @testset "bindings run after L, in dependency order, before the mint that reads them" begin
+        expected = """
+        # Construct rule <http://example.org/bindrules/MintHolding>
+        CONSTRUCT {
+          ?_H <http://example.org/bind/of> ?_S .
+          ?_H <http://example.org/bind/symbolKey> ?symKey .
+        }
+        WHERE {
+          ?_S <http://example.org/bind/amount> ?amt .
+          ?_S <http://example.org/bind/symbol> ?sym .
+          BIND((MD5(STR(?amt))) AS ?disc)
+          BIND((IF(STRSTARTS(?sym, "."), STRAFTER(?sym, "."), ?sym)) AS ?symNorm)
+          BIND((REPLACE(UCASE(STR(?symNorm)), "\\\\W+", "-")) AS ?symKey)
+          BIND((CONCAT(?symKey, "_", ?disc)) AS ?key)
+          BIND(IRI(CONCAT("http://example.org/bind/holding/", ENCODE_FOR_URI(STR(?key)))) AS ?_H)
+        }
+        """
+        @test compile_rule(holding()) == expected
+        # however the bindings arrive, the same rule compiles to the same bytes
+        @test compile_rule(holding(; bindings=reverse(CHAIN))) == expected
+    end
+
+    @testset "a bound value may be read by R, a filter, and a mint slot" begin
+        spec = holding(; filters=["STRLEN(?symKey) > 0"])
+        @test occursin("FILTER(STRLEN(?symKey) > 0)", compile_rule(spec))
+        # and explain shows each binding, in the order it runs
+        @test "?key" in Jayhawk.binding_vars(spec)
+    end
+
+    @testset "the mint-safety queries evaluate the bindings the mint reads" begin
+        (_, q) = only(collision_queries(holding(); from=["urn:g"]))
+        @test occursin("AS ?key)", q)
+        @test findfirst("AS ?key)", q).start < findfirst("AS ?_H)", q).start
+    end
+
+    @testset "what a binding refuses" begin
+        @test occursin("nothing binds before it", err(holding(;
+            bindings=[CHAIN[1:3]; B("disc", "MD5(STR(?amount))")])))
+        @test occursin("in a cycle", err(holding(; bindings=[
+            CHAIN[1]; B("symKey", "UCASE(?key)"); CHAIN[3:4]])))
+        @test occursin("the variable it binds", err(holding(; bindings=[
+            CHAIN[1:3]; B("disc", "MD5(?disc)")])))
+        @test occursin("bound by two bindings", err(holding(; bindings=[
+            CHAIN; B("disc", "STR(?amt)")])))
+        # its target must be fresh: SPARQL cannot BIND a variable already in scope
+        v = copy(base_vars); v["$(R)_sym"] = "?sym"
+        @test occursin("the match pattern matches it", err(holding(; vars=v,
+            bindings=[CHAIN; Jayhawk.BindingSpec("_:x", "$(R)_sym", "\"x\"")])))
+        @test occursin("a gistp:iriTemplate mints it", err(holding(; bindings=[
+            CHAIN; Jayhawk.BindingSpec("_:x", "$(R)_H", "\"x\"")])))
+        @test occursin("which a gistp:iriTemplate mints", err(holding(; bindings=[
+            CHAIN; B("symNorm2", "STR(?_H)")], vars=merge(base_vars,
+            Dict("$(R)_symNorm2" => "?symNorm2")))))
+        @test occursin("not a declared gistp:SparqlVariable", err(holding(; bindings=[
+            CHAIN; B("undeclared", "\"x\"")])))
+        # the text is held to exactly the filter checks
+        for (text, needle) in (
+            ("MD5(?amt) } INSERT { ?s ?p ?o", "contains '{'"),
+            ("MD5(?amt) }", "contains '}'"),
+            ("MD5(?amt) # hi", "contains '#'"),
+            ("MD5(?amt) ; DROP ALL", "contains ';'"),
+            ("xsd:string(?amt)", "prefixed name"),
+            ("BIND(MD5(?amt) AS ?disc)", "whole BIND clause"),
+            ("MD5(?amt) AS ?disc", "`AS ?…`"),
+            ("MD5((?amt)", "parenthesis/es open"),
+            ("MD5(?amt))", "never opened"),
+            ("", "empty jhp:bindText"),
+        )
+            @test occursin(needle, err(holding(; bindings=[CHAIN[1:3]; B("disc", text)])))
+        end
+        # a slot fed by nothing is still refused -- and now says what to do about it
+        @test occursin("declare a jhp:hasBinding", err(holding(; bindings=CHAIN[2:4])))
+    end
+end
+
 @testset "source maps (pure)" begin
     # The parts of gistp:SourceMap that need no store: the two encoders, the emitted shape,
     # and the refusals. Loading a map out of a triplestore is exercised in
@@ -2343,6 +2473,17 @@ end
         bgp = source_map_bgp(spec)
         @test bgp == "  $(Jayhawk.FX_ROW_VAR) <$(XYZ)given%20name> ?given .\n"
         @test source_map_pipeline(spec) == ""        # nothing to clean, nothing emitted
+    end
+
+    @testset "a filter may test a mapped column" begin
+        # The filter check used to list its bound variables by hand and left source maps
+        # out, so testing a column was refused as "never binds" -- about the one variable a
+        # CSV rule most obviously has. `pre_bound` now defines that set once.
+        m = SourceMapSpec("$(R)M", "?given", "given name", nothing, nothing, nothing, nothing)
+        base = smspec([m])
+        args = Any[getfield(base, f) for f in fieldnames(RuleSpec)]
+        args[findfirst(==(:filters), fieldnames(RuleSpec))] = ["STRLEN(?given) > 1"]
+        @test occursin("FILTER(STRLEN(?given) > 1)", compile_rule(RuleSpec(args...)))
     end
 
     @testset "a pipeline binds a raw variable first, because SPARQL cannot rebind" begin

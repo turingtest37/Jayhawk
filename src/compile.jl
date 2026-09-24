@@ -30,6 +30,9 @@ const P_NAC = JHP_NS * "hasNegativeCondition"
 const P_FILTER = JHP_NS * "hasFilterCondition"
 const P_FILTERTEXT = JHP_NS * "filterText"
 const P_INGRAPH = JHP_NS * "inGraph"
+const P_HASBINDING = JHP_NS * "hasBinding"
+const P_BINDTEXT = JHP_NS * "bindText"
+const P_BINDSVAR = JHP_NS * "bindsVariable"
 
 const RDF_FIRST = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first"
 const RDF_REST = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest"
@@ -125,6 +128,26 @@ struct MatchPart
 end
 
 """
+One `jhp:Binding`: a SPARQL expression, and the declared variable its value is bound to.
+
+The rule-level counterpart of a filter. A filter *tests* values L has bound; a binding
+*computes* one -- a slug, a normalised symbol, a date prefix, a hash -- and names it, so R,
+a filter, a guard or a `gistp:iriTemplate` slot can use it. Compiles to
+`BIND((text) AS ?v)`, placed after L and VALUES and before any mint, and ordered among the
+other bindings so each reads only what is already bound.
+
+Text rather than structure, for the reason `jhp:filterText` is text: an expression grammar
+in RDF would be a second language to learn and to keep in step with SPARQL's own. The
+bargain is the same too -- the text is spliced into the query, so it is held to exactly the
+checks `check_filters` applies.
+"""
+struct BindingSpec
+    iri::String
+    variable::String     # the IRI of the declared gistp:SparqlVariable it binds
+    text::String
+end
+
+"""
 One `gistp:SourceMap`: a column, the literal variable it feeds, and the value pipeline.
 
 `column` is the source's own spelling; [`fx_predicate`](@ref) turns it into an IRI. The four
@@ -196,6 +219,55 @@ struct RuleSpec
     # part's IRI, and `match_scope` nothing -- every scope is read through `match_patterns`,
     # never off the scalar field, because a multi-pattern rule has no single scope.
     match_parts::Vector{MatchPart}
+    # jhp:hasBinding, in no particular order: `ordered_bindings` decides the order they are
+    # emitted in. Empty for every rule written before bindings existed.
+    bindings::Vector{BindingSpec}
+end
+
+# Every call site written before jhp:hasBinding.
+function RuleSpec(
+    iri,
+    mode,
+    lg,
+    cg,
+    match,
+    construct,
+    variables,
+    mints,
+    enums,
+    nacs,
+    strategy,
+    priority,
+    maxit,
+    mscope,
+    cscope,
+    services,
+    filters,
+    source_maps,
+    parts,
+)
+    return RuleSpec(
+        iri,
+        mode,
+        lg,
+        cg,
+        match,
+        construct,
+        variables,
+        mints,
+        enums,
+        nacs,
+        strategy,
+        priority,
+        maxit,
+        mscope,
+        cscope,
+        services,
+        filters,
+        source_maps,
+        parts,
+        BindingSpec[],
+    )
 end
 
 # Every call site written before multi-pattern L: one match pattern, no parts.
@@ -557,7 +629,10 @@ SELECT ?mode ?l ?c WHERE {
 
     # Bound rather than inlined because `load_source_maps` needs both: a source map is found
     # from the variables the rule uses, and a mint slot is one of the places a rule uses one.
-    vars = load_variables(graphs; ep=ep)
+    # A bound variable need not occur in any pattern graph, so load_variables may not see it;
+    # the binding's own declaration is merged in instead.
+    bindings, bvars = load_bindings(r; ep=ep)
+    vars = merge(load_variables(graphs; ep=ep), bvars)
     mints = load_mints(graphs; ep=ep)
 
     # One pattern: its scope is the scalar field, exactly as before parts existed. Several:
@@ -601,6 +676,7 @@ SELECT ?mode ?l ?c WHERE {
         load_filters(r; ep=ep),
         load_source_maps(r, graphs; also=_slot_var_texts(vars, mints), ep=ep),
         parts,
+        bindings,
     )
 end
 
@@ -722,6 +798,81 @@ SELECT ?f ?t WHERE {
         push!(out, t.lexical)
     end
     return sort!(unique!(out))
+end
+
+"""
+    load_bindings(rule_iri; ep = endpoint()) -> (Vector{BindingSpec}, Dict{String,String})
+
+Every `jhp:hasBinding` of a rule, and the `gistp:variableText` of each variable they bind.
+
+The variables are returned separately because nothing else would find them: a bound
+variable need not occur in any pattern graph -- it may feed only a mint slot, or only R as a
+`"?x"^^gistp:var` literal -- so `load_variables` cannot be relied on to have seen it. The
+caller merges them into the spec's variables, where `check_variables` validates them like
+any other.
+
+Each field is fetched with `OPTIONAL` and then checked, for the reason `load_filters` does:
+a join would drop an incomplete binding silently, and a dropped binding leaves R using a
+variable nothing binds -- which `check_bound` would then blame on the wrong thing.
+"""
+function load_bindings(rule_iri::AbstractString; ep::SparqlEndpoint=endpoint())
+    rows = select(
+        """
+SELECT ?b ?t ?v ?vt WHERE {
+  <$(check_iri(rule_iri))> <$P_HASBINDING> ?b .
+  OPTIONAL { ?b <$P_BINDTEXT> ?t }
+  OPTIONAL { ?b <$P_BINDSVAR> ?v . OPTIONAL { ?v <$P_VARIABLETEXT> ?vt } }
+}""";
+        ep=ep,
+    )
+    out = BindingSpec[]
+    vars = Dict{String,String}()
+    for (b, rs) in _group_by(r -> sparql_text(r["b"]), rows)
+        texts = unique(r["t"] for r in rs if haskey(r, "t"))
+        targets = unique(r["v"] for r in rs if haskey(r, "v"))
+        length(texts) == 1 || error(
+            "rule <$rule_iri>: binding $b declares $(length(texts)) jhp:bindText values; " *
+            "exactly one is required. A binding with no expression binds nothing, and R " *
+            "would use a variable no clause produces.",
+        )
+        length(targets) == 1 || error(
+            "rule <$rule_iri>: binding $b names $(length(targets)) jhp:bindsVariable " *
+            "values; exactly one is required -- a BIND assigns one variable.",
+        )
+        t, v = only(texts), only(targets)
+        t isa RDFLiteral && !is_var_literal(t) || error(
+            "rule <$rule_iri>: binding $b has jhp:bindText $(sparql_text(t)), which is not " *
+            "an expression string. Write the SPARQL expression as a plain literal.",
+        )
+        v isa IRIRef || error(
+            "rule <$rule_iri>: binding $b binds $(sparql_text(v)), which is not a declared " *
+            "variable. Name a gistp:LiteralVariable individual, as gistp:slotValue does.",
+        )
+        vts = unique(r["vt"] for r in rs if haskey(r, "vt"))
+        length(vts) == 1 || error(
+            "rule <$rule_iri>: binding $b binds <$(v.value)>, which declares " *
+            "$(length(vts)) gistp:variableText values. Declare it as a gistp:SparqlVariable " *
+            "with exactly one.",
+        )
+        # Keyed by its SPARQL text: a binding is typically a blank node, as a filter
+        # condition is, and has no other identity to give.
+        push!(out, BindingSpec(b, v.value, t.lexical))
+        vars[v.value] = (only(vts)::RDFLiteral).lexical
+    end
+    return sort!(out; by=b -> (b.variable, b.iri)), vars
+end
+
+
+"Group rows by a key, preserving first-seen order, as `key => rows` pairs."
+function _group_by(f, rows)
+    order = String[]
+    groups = Dict{String,Vector{Any}}()
+    for r in rows
+        k = f(r)
+        haskey(groups, k) || push!(order, k)
+        push!(get!(groups, k, Any[]), r)
+    end
+    return [k => groups[k] for k in order]
 end
 
 "A rule's declared application strategy, or `nothing` if it states none."
@@ -1112,12 +1263,9 @@ function check_mints(spec::RuleSpec)
     # iriTemplate minting a node per row reads the id COLUMN, which the match pattern never
     # mentions. Without this, the obvious thing to want from a source map is refused with a
     # message about minting from another minted variable, which it is not.
-    bound = union(
-        vars_in(spec.match, spec),
-        enum_vars(spec),
-        match_scope_vars(spec),
-        Set(m.variable for m in spec.source_maps),
-    )
+    # A binding is emitted before the mints, so a slot may read one: that is how a template
+    # mints from a slug, a normalised key or a hash rather than from a raw value.
+    bound = union(pre_bound(spec), binding_vars(spec))
     for (iri, m) in spec.mints
         text = get(spec.variables, iri, nothing)
         text === nothing && error(
@@ -1180,11 +1328,15 @@ function check_mints(spec::RuleSpec)
             )
             v in bound || error(
                 "rule <$(spec.iri)>: slot {$name} of <$iri> is bound to $v, which the match " *
-                "pattern never binds. Minting from another minted variable is not supported.",
+                "pattern never binds and no jhp:hasBinding computes. Minting from another " *
+                "minted variable is not supported; to mint from a computed value -- a slug, " *
+                "a normalised key, a hash -- declare a jhp:hasBinding and name its variable.",
             )
         end
 
-        text in bound && error(
+        # Only what L (with VALUES, scopes and source maps) binds. A BINDING that targets a
+        # minted variable is a different mistake, and check_bindings names it as one.
+        text in pre_bound(spec) && error(
             "rule <$(spec.iri)>: <$iri> carries a gistp:iriTemplate, which declares it " *
             "minted, but the match pattern also binds $text. A variable is either " *
             "constructed or matched, not both -- if L already binds it, R reuses the " *
@@ -1501,12 +1653,28 @@ function where_body(spec::RuleSpec)
         # Before VALUES and BIND, both of which may read a mapped value: a minted IRI built
         # from a column has to see the cleaned string, not the raw cell. And after the match,
         # because `apf:strSplit` joins over values the SERVICE has already produced.
-        source_map_pipeline(spec),
-        values_text(spec),
+        pre_mint_text(spec),
         binds_text(spec),
         nacs_text(spec),
         filters_text(spec),
     )
+end
+
+"""
+    pre_mint_text(spec) -> String
+
+Everything a rule evaluates between its match and its mints: the source-map pipeline, the
+`VALUES` clauses, then the bindings -- in that order, because each may read the one before.
+
+**One text, three callers.** `where_body` is what runs; [`collision_queries`](@ref) and
+[`mint_fanin`](@ref) re-evaluate the mints to check them. Those two used to embed L and the
+mint `BIND` and nothing between, so a template slot fed by a `gistp:oneOf` value or a source
+map column was *unbound* in the check: its key yielded nothing, `COUNT(DISTINCT …)` was 0,
+and the collision gate passed by construction. A slot fed by a binding would have joined
+them. Built once, here, so the checks evaluate the rule that runs.
+"""
+function pre_mint_text(spec::RuleSpec)
+    return string(source_map_pipeline(spec), values_text(spec), bindings_text(spec))
 end
 
 """
@@ -2154,78 +2322,12 @@ things a filter can do closed and small. Read what a rule declares before you ru
 """
 function check_filters(spec::RuleSpec)
     isempty(spec.filters) && return spec
+    # A filter runs after every binding and every mint, so it may test any of them.
     bound = Set(
-        _bare_var(v) for v in union(
-            vars_in(spec.match, spec),
-            match_scope_vars(spec),
-            minted_vars(spec),
-            enum_vars(spec),
-        )
+        _bare_var(v) for v in union(pre_bound(spec), binding_vars(spec), minted_vars(spec))
     )
     for f in spec.filters
-        isempty(strip(f)) && error(
-            "rule <$(spec.iri)>: a jhp:FilterCondition has empty jhp:filterText. An " *
-            "expression that says nothing cannot constrain anything; drop the condition.",
-        )
-
-        skel = _filter_skeleton(f)
-        skel === nothing && error(
-            "rule <$(spec.iri)>: filter $(repr(f)) leaves a string literal unterminated, " *
-            "so where the expression ends is a guess. Close the quote.",
-        )
-
-        for (ch, why) in (
-            '{' =>
-                "could open a group -- a SERVICE, a subquery, or a second " *
-                "WHERE. For \"no such thing exists\" use " *
-                "jhp:hasNegativeCondition, which is a reviewable " *
-                "pattern rather than text",
-            '}' =>
-                "could close the FILTER this compiler wraps the " *
-                "expression in, leaving whatever follows outside it",
-            '#' =>
-                "starts a comment, which would swallow the closing " *
-                "parenthesis this compiler emits",
-            ';' => "separates operations in an update request",
-        )
-            occursin(ch, skel) && error(
-                "rule <$(spec.iri)>: filter $(repr(f)) contains $(repr(ch)), which $why. " *
-                "A jhp:filterText is one SPARQL expression and nothing else. Inside a " *
-                "quoted string the character is fine -- this one is not in one.",
-            )
-        end
-
-        # After the skeleton, the only thing a `:` can be is a prefixed name: strings and
-        # IRIs are gone, and a blank node label cannot appear in an expression.
-        occursin(':', skel) && error(
-            "rule <$(spec.iri)>: filter $(repr(f)) uses a prefixed name, but this compiler " *
-            "emits no PREFIX line -- it has no prefix registry, and every IRI it writes is " *
-            "absolute. The store would reject the query with an opaque \"Unresolved " *
-            "prefixed name\". Write the full IRI in angle brackets instead, as in " *
-            "\"?d > \\\"2020\\\"^^<http://www.w3.org/2001/XMLSchema#gYear>\".",
-        )
-
-        occursin(r"^\s*FILTER\s*\("i, skel) && error(
-            "rule <$(spec.iri)>: filter $(repr(f)) is a whole FILTER clause. The engine " *
-            "supplies the keyword and the parentheses, so this would compile to " *
-            "FILTER(FILTER(...)), which no store will parse. Declare the expression alone.",
-        )
-
-        depth = 0
-        for c in skel
-            c == '(' && (depth += 1)
-            c == ')' && (depth -= 1)
-            depth < 0 && error(
-                "rule <$(spec.iri)>: filter $(repr(f)) closes a parenthesis it never " *
-                "opened, which would close the FILTER this compiler wraps it in.",
-            )
-        end
-        depth == 0 || error(
-            "rule <$(spec.iri)>: filter $(repr(f)) leaves $depth parenthesis/es open, so " *
-            "it would swallow whatever the compiler emits after it.",
-        )
-
-        used = Set(m.captures[1] for m in eachmatch(_FILTER_VAR_RE, skel))
+        used = _expression_vars(spec, f, "filter", "FILTER")
         free = sort([string("?", v) for v in setdiff(used, bound)])
         isempty(free) || error(
             "rule <$(spec.iri)>: filter $(repr(f)) tests $(join(free, ", ")), which the " *
@@ -2243,6 +2345,251 @@ function check_filters(spec::RuleSpec)
         )
     end
     return spec
+end
+
+"""
+    _expression_vars(spec, text, what, clause) -> Set{String}
+
+Hold one author-supplied SPARQL expression to the checks `check_filters` documents, and
+return the (bare) names of the variables it mentions. `what` names the expression in
+messages ("filter", "binding"); `clause` is the keyword the engine wraps it in, which the
+author must therefore not write themselves.
+
+Shared, not copied, because `jhp:filterText` and `jhp:bindText` are the two places author
+text reaches a query, and a threat model applied to only one of them is not a threat model.
+"""
+function _expression_vars(
+    spec::RuleSpec, f::AbstractString, what::AbstractString, clause::AbstractString
+)
+    isempty(strip(f)) && error(
+        if what == "filter"
+            "rule <$(spec.iri)>: a jhp:FilterCondition has empty jhp:filterText. An " *
+            "expression that says nothing cannot constrain anything; drop the condition."
+        else
+            "rule <$(spec.iri)>: a jhp:Binding has empty jhp:bindText. An expression that " *
+            "says nothing binds nothing; drop the binding."
+        end,
+    )
+
+    skel = _filter_skeleton(f)
+    skel === nothing && error(
+        "rule <$(spec.iri)>: $what $(repr(f)) leaves a string literal unterminated, " *
+        "so where the expression ends is a guess. Close the quote.",
+    )
+
+    for (ch, why) in (
+        '{' =>
+            "could open a group -- a SERVICE, a subquery, or a second " *
+            "WHERE. For \"no such thing exists\" use " *
+            "jhp:hasNegativeCondition, which is a reviewable " *
+            "pattern rather than text",
+        '}' =>
+            "could close the $clause this compiler wraps the " *
+            "expression in, leaving whatever follows outside it",
+        '#' =>
+            "starts a comment, which would swallow the closing " *
+            "parenthesis this compiler emits",
+        ';' => "separates operations in an update request",
+    )
+        occursin(ch, skel) && error(
+            "rule <$(spec.iri)>: $what $(repr(f)) contains $(repr(ch)), which $why. " *
+            "A jhp:$(what == "filter" ? "filterText" : "bindText") is one SPARQL " *
+            "expression and nothing else. Inside a quoted string the character is fine -- " *
+            "this one is not in one.",
+        )
+    end
+
+    # After the skeleton, the only thing a `:` can be is a prefixed name: strings and
+    # IRIs are gone, and a blank node label cannot appear in an expression.
+    occursin(':', skel) && error(
+        "rule <$(spec.iri)>: $what $(repr(f)) uses a prefixed name, but this compiler " *
+        "emits no PREFIX line -- it has no prefix registry, and every IRI it writes is " *
+        "absolute. The store would reject the query with an opaque \"Unresolved " *
+        "prefixed name\". Write the full IRI in angle brackets instead, as in " *
+        "\"?d > \\\"2020\\\"^^<http://www.w3.org/2001/XMLSchema#gYear>\".",
+    )
+
+    occursin(Regex("^\\s*$clause\\s*\\(", "i"), skel) && error(
+        "rule <$(spec.iri)>: $what $(repr(f)) is a whole $clause clause. The engine " *
+        "supplies the keyword and the parentheses, so this would compile to " *
+        "$clause($clause(...)), which no store will parse. Declare the expression alone.",
+    )
+    # A binding names its variable with jhp:bindsVariable; `… AS ?x` inside the text would
+    # compile to BIND((… AS ?x) AS ?v), which parses as nothing.
+    clause == "BIND" && occursin(r"(?i)\bAS\s+[?$]", skel) && error(
+        "rule <$(spec.iri)>: $what $(repr(f)) contains `AS ?…`. Name the variable with " *
+        "jhp:bindsVariable; jhp:bindText is the expression alone.",
+    )
+
+    depth = 0
+    for c in skel
+        c == '(' && (depth += 1)
+        c == ')' && (depth -= 1)
+        depth < 0 && error(
+            "rule <$(spec.iri)>: $what $(repr(f)) closes a parenthesis it never " *
+            "opened, which would close the $clause this compiler wraps it in.",
+        )
+    end
+    depth == 0 || error(
+        "rule <$(spec.iri)>: $what $(repr(f)) leaves $depth parenthesis/es open, so " *
+        "it would swallow whatever the compiler emits after it.",
+    )
+
+    return Set(m.captures[1] for m in eachmatch(_FILTER_VAR_RE, skel))
+end
+
+"""
+    pre_bound(spec) -> Set{String}
+
+Every variable bound before the first `jhp:hasBinding` is evaluated: by L's triples, by L's
+graph scopes, by a source map's generated pattern, or by a `gistp:oneOf` VALUES clause.
+
+One definition, because four checks need it and each used to list the sources by hand -- and
+the filter check's list had quietly omitted source-mapped variables.
+"""
+function pre_bound(spec::RuleSpec)
+    return union(
+        vars_in(spec.match, spec),
+        match_scope_vars(spec),
+        Set(m.variable for m in spec.source_maps),
+        enum_vars(spec),
+    )
+end
+
+"The SPARQL variable names produced by `jhp:hasBinding`."
+binding_vars(spec::RuleSpec) =
+    Set(spec.variables[b.variable] for b in spec.bindings if haskey(spec.variables, b.variable))
+
+"""
+    ordered_bindings(spec) -> Vector{BindingSpec}
+
+The rule's bindings in an order where each reads only what is already bound.
+
+A `BIND` sees only variables bound earlier in its group, so a binding that reads another
+binding has to come after it. Kahn's algorithm, with ties broken by variable name so that
+the same rule compiles to the same bytes however its bindings arrived. Assumes
+`check_bindings` has run: an input bound by nothing, or a cycle, is refused there with a
+message; here it would only be an infinite loop or a silent drop.
+"""
+function ordered_bindings(spec::RuleSpec)
+    isempty(spec.bindings) && return BindingSpec[]
+    name(b) = _bare_var(spec.variables[b.variable])
+    produced = Set(name(b) for b in spec.bindings)
+    deps = Dict(
+        b.variable =>
+            intersect(Set(m.captures[1] for m in eachmatch(_FILTER_VAR_RE,
+                something(_filter_skeleton(b.text), ""))), produced) for b in spec.bindings
+    )
+    done = Set{String}()
+    out = BindingSpec[]
+    remaining = sort(spec.bindings; by=name)
+    while !isempty(remaining)
+        i = findfirst(b -> issubset(deps[b.variable], done), remaining)
+        i === nothing && error(
+            "rule <$(spec.iri)>: the bindings of " *
+            join(sort([spec.variables[b.variable] for b in remaining]), ", ") *
+            " depend on one another in a cycle, so none of them can be evaluated first.",
+        )
+        b = popat!(remaining, i)
+        push!(out, b)
+        push!(done, name(b))
+    end
+    return out
+end
+
+"""
+    check_bindings(spec)
+
+Refuse a `jhp:hasBinding` that is not one safe expression, that binds a variable something
+else already binds, or that reads a variable nothing has bound by the time it runs.
+
+  * **The text** is held to every check `check_filters` applies, and for the same reason:
+    it is spliced into the query.
+  * **The target** must be fresh. SPARQL refuses to `BIND` a variable already in scope, so a
+    target L also matches, a mint constructs, VALUES enumerates, a source map fills or a
+    second binding also assigns would fail at the store with an opaque parse error.
+  * **Every input** must be bound earlier: by L, VALUES, a source map, or another binding.
+    An unbound input does not error in SPARQL -- the expression does, the variable is left
+    unbound, and every R triple that mentions it is silently dropped. The same silent
+    weakening `check_filters` exists to prevent.
+  * **Not a minted variable.** Mints are emitted after bindings so a template slot can read
+    one; reading a mint from a binding would need the two interleaved, and nothing needs
+    it yet.
+  * **No cycle** -- see [`ordered_bindings`](@ref).
+
+What this cannot check is the expression's *meaning*. `STRBEFORE(?x, "T")` on a value with no
+"T" yields "" and the rule proceeds; an ill-typed argument leaves the variable unbound at run
+time. Both are ordinary SPARQL, and both are why `explain_rule` shows each binding.
+"""
+function check_bindings(spec::RuleSpec)
+    isempty(spec.bindings) && return spec
+    before = pre_bound(spec)
+    minted = minted_vars(spec)
+    seen = Dict{String,String}()
+    for b in spec.bindings
+        haskey(spec.variables, b.variable) || error(
+            "rule <$(spec.iri)>: binding $(b.iri) binds <$(b.variable)>, which is not a " *
+            "declared gistp:SparqlVariable with a gistp:variableText.",
+        )
+        v = spec.variables[b.variable]
+        haskey(seen, v) && error(
+            "rule <$(spec.iri)>: $v is bound by two bindings, $(seen[v]) and $(b.iri). " *
+            "A variable has one value per solution; SPARQL refuses a second BIND of it.",
+        )
+        seen[v] = b.iri
+        for (set, what) in (
+            (vars_in(spec.match, spec), "the match pattern matches it"),
+            (match_scope_vars(spec), "it names the graph a match pattern reads"),
+            (Set(m.variable for m in spec.source_maps), "a gistp:SourceMap fills it"),
+            (enum_vars(spec), "its gistp:oneOf enumerates it"),
+            (minted, "a gistp:iriTemplate mints it"),
+        )
+            v in set && error(
+                "rule <$(spec.iri)>: binding $(b.iri) binds $v, but $what. SPARQL cannot " *
+                "BIND a variable already in scope; bind a new variable and use that.",
+            )
+        end
+    end
+    produced = Set(_bare_var(v) for v in keys(seen))
+    available = Set(_bare_var(v) for v in before)
+    for b in spec.bindings
+        v = spec.variables[b.variable]
+        used = _expression_vars(spec, b.text, "binding", "BIND")
+        _bare_var(v) in used && error(
+            "rule <$(spec.iri)>: binding $(b.iri) reads $v, the variable it binds.",
+        )
+        mint_in = sort([string("?", u) for u in intersect(used, Set(_bare_var(m) for m in minted))])
+        isempty(mint_in) || error(
+            "rule <$(spec.iri)>: binding $(b.iri) reads $(join(mint_in, ", ")), which a " *
+            "gistp:iriTemplate mints. Mints are emitted after bindings, so that a template " *
+            "slot can read a binding; the other direction is not supported.",
+        )
+        free = sort([string("?", u) for u in setdiff(used, available, produced)])
+        isempty(free) || error(
+            "rule <$(spec.iri)>: binding $(b.iri) reads $(join(free, ", ")), which nothing " *
+            "binds before it: not the match pattern, VALUES, a source map, or another " *
+            "binding. SPARQL does not error on that -- the expression does, $v is left " *
+            "unbound, and every construct triple mentioning it is silently dropped.",
+        )
+    end
+    ordered_bindings(spec)          # refuses a cycle
+    return spec
+end
+
+"""
+    bindings_text(spec) -> String
+
+Every `jhp:hasBinding`, as `BIND((text) AS ?v)`, in dependency order.
+
+The expression is parenthesised so that the text is one operand whatever its operators --
+`?a || ?b AS ?v` is not what anyone means.
+"""
+function bindings_text(spec::RuleSpec)
+    isempty(spec.bindings) && return ""
+    return "\n" * join(
+        ("  BIND(($(b.text)) AS $(spec.variables[b.variable]))" for b in ordered_bindings(spec)),
+        "\n",
+    )
 end
 
 """
@@ -2267,6 +2614,7 @@ function check_bound(spec::RuleSpec)
     check_mints(spec)
     check_scopes(spec)
     check_filters(spec)
+    check_bindings(spec)
     check_source_maps(spec)
     # L's graph variable is bound by the GRAPH clause, not by any triple, so `vars_in` -- which
     # walks subject, predicate and object -- cannot see it. Without this a rule that records
@@ -2307,7 +2655,7 @@ function check_bound(spec::RuleSpec)
     end
     # An enumerated variable is bound by its VALUES clause and a minted one by its BIND;
     # neither has to appear in a match triple to be available to R.
-    bound = union(matched, minted_vars(spec), enum_vars(spec))
+    bound = union(matched, minted_vars(spec), enum_vars(spec), binding_vars(spec))
     used = vars_in(spec.construct, spec)
     free = setdiff(used, bound)
     isempty(free) && return spec
@@ -2577,7 +2925,7 @@ function collision_queries(spec::RuleSpec; from::AbstractVector=String[])
             """
 SELECT $v (COUNT(DISTINCT ?__key) AS ?n)
 $(froms)WHERE {
-$(match_text(spec))
+$(match_text(spec))$(pre_mint_text(spec))
 $(bind_text(m, spec))$(nacs_text(spec))
   BIND(CONCAT($key) AS ?__key)
 }
@@ -2688,7 +3036,7 @@ function mint_fanin(
             """
   SELECT $v (COUNT(DISTINCT ?__ctx) AS ?n)
   $(froms)WHERE {
-  $(match_text(spec))
+  $(match_text(spec))$(pre_mint_text(spec))
   $(bind_text(spec.mints[iri], spec))$(nacs_text(spec))
     BIND(CONCAT($key) AS ?__ctx)
   }

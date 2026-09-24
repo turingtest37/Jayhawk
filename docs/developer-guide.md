@@ -131,19 +131,49 @@ whose note says which case is still out of reach.
 ### `where_body` — one function, on purpose
 
 ```julia
-where_body(spec) = bgp_text(match) * values_text(spec) * binds_text(spec) * nacs_text(spec)
+where_body(spec) = match_text(spec) * pre_mint_text(spec) * binds_text(spec) *
+                   nacs_text(spec) * filters_text(spec)
+pre_mint_text(spec) = source_map_pipeline(spec) * values_text(spec) * bindings_text(spec)
 ```
 
 The order is load-bearing:
 
-1. **triple patterns** first;
-2. **`VALUES`** next, because a `BIND` may mint from an enumerated value;
-3. **`BIND`** next, because it sees only variables bound earlier in its group;
-4. **`FILTER NOT EXISTS`** last, because a guard may mention a *minted* variable.
+1. **triple patterns** first, one `GRAPH` group per match pattern;
+2. **the source-map pipeline**, because everything after reads the cleaned column;
+3. **`VALUES`** next, because a binding or a mint may read an enumerated value;
+4. **`jhp:hasBinding`** next, each `BIND((text) AS ?v)`, in dependency order
+   (`ordered_bindings`, Kahn's algorithm, ties by name), because a mint slot may read one;
+5. **mint `BIND`s** next, because a `BIND` sees only variables bound earlier in its group;
+6. **`FILTER NOT EXISTS`**, because a guard may mention a *minted* variable;
+7. **`FILTER`** last.
 
 There are **seven** places that assemble a WHERE clause. They all route through this one
 function, because a guard honoured by only some of them means the thing that executes is not
-the thing that was reviewed.
+the thing that was reviewed. Two more re-evaluate a rule's mints to *check* them —
+`collision_queries` and `mint_fanin` — and they embed `pre_mint_text` too. They used to embed
+L and the mint alone, so a slot fed by `VALUES` or a source map was unbound in the check and
+the fan-in report was empty by construction (measured: 0 fan-ins reported where there were 3).
+
+### Bindings: the second place author text is spliced
+
+`jhp:bindText` goes through `_expression_vars`, the same checks `jhp:filterText` does — no
+braces, comment, semicolon or prefixed name outside strings and IRIs, balanced parentheses,
+not a whole `BIND(` clause, no `AS ?x`. The two are deliberately one function: a threat model
+applied to one of two splice points is not a threat model.
+
+`check_bindings` adds what a filter does not need:
+- **The target must be fresh.** SPARQL refuses to `BIND` a variable already in scope, so a
+  target that L matches, VALUES enumerates, a source map fills, a template mints or a second
+  binding assigns is refused before it becomes an opaque parse error at the store.
+- **Every input must be bound before it**, by L, VALUES, a source map or an earlier
+  binding. An unbound input does not raise an error in SPARQL. The expression does, the
+  variable stays unbound, and every R triple mentioning it quietly disappears.
+- **It may not read a minted variable.** Mints come after bindings.
+- **No cycles.**
+
+`pre_bound(spec)` defines "bound before any binding" once. Four checks used to list it by
+hand, and the filter check's copy had left source-mapped variables out: a filter on a CSV
+column was refused as unbound.
 
 ### `jhp:inGraph` reads three ways
 
@@ -426,9 +456,12 @@ What is left is discovery: a literal variable that no slot names is reachable on
 deliberately does not do — that would be a second string-matching mechanism, and it should be
 added when something needs it rather than in advance.
 
-**Slugging**, as an opt-in with a stated algorithm. `ENCODE_FOR_URI` gives `E%209902%2FA`.
-The rule of thumb is already known: slug *controlled vocabulary terms*, never free-text data,
-because slugging is lossy and a collision merges two things into one node.
+**Slugging, as vocabulary.** It is already expressible: a `jhp:hasBinding` of
+`REPLACE(LCASE(?x), "\\W+", "-")` slugs, and the bondfix rules mint from exactly such keys.
+What remains is a declarative spelling of it, an opt-in with a stated algorithm, since
+`ENCODE_FOR_URI` alone gives `E%209902%2FA`. The rule of thumb is already known: slug
+*controlled vocabulary terms*, never free-text data, because slugging is lossy and a
+collision merges two things into one node.
 
 **Legacy migration** — R2RML/Ontop virtualisation, view harvesting, rule mining, differential
 testing against the running system. The enterprise adoption path, and the reason the engine
@@ -445,4 +478,7 @@ different solutions would go to different graphs and a firing graph is one flat 
 with nowhere to record which triple went where, so undo could not reverse it. Minting the
 graph IRI with `gistp:iriTemplate` and running once per graph is the workaround.
 
-**Chained minting** and **RFC 6570 Level 2**, both deliberately deferred and both small.
+**RFC 6570 Level 2**, deliberately deferred and small. **Chained minting** is half done:
+a template may mint from a *binding*, and a binding may read another binding, which covers
+every computed-key case met so far (the bondfix keys). Minting from a *minted IRI* is still
+refused. It needs a binding that reads a mint, and so needs the two interleaved.

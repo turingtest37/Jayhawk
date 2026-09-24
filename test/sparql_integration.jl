@@ -177,6 +177,8 @@ function engine_cleanup()
     return Jayhawk.update!("""
                DELETE WHERE { ?s <$(Jayhawk.P_MATCH)> ?o } ;
                DELETE WHERE { ?s <$(Jayhawk.P_CONSTRUCT)> ?o } ;
+               DELETE WHERE { ?r <$(Jayhawk.P_HASBINDING)> ?b . ?b ?p ?o } ;
+               DELETE WHERE { ?s <$(Jayhawk.P_HASBINDING)> ?o } ;
                DELETE WHERE { ?s <$(Jayhawk.P_MODE)> ?o } ;
                DELETE WHERE { ?s <$(Jayhawk.P_VARIABLETEXT)> ?o } ;
                DELETE WHERE { ?s <$(Jayhawk.P_IRITEMPLATE)> ?o } ;
@@ -1769,6 +1771,90 @@ ex:s2 ex:p ex:plain .
         end
 
         Jayhawk.update!("DROP SILENT GRAPH <$LEFT> ; DROP SILENT GRAPH <$RIGHT>")
+        engine_cleanup()
+    end
+
+    @testset "jhp:hasBinding: minting from a computed value" begin
+        BR = "http://example.org/bindrules/"
+        BD = "urn:jayhawk:bind-test"
+        HOLD = "http://example.org/bind/holding/"
+        engine_cleanup()
+        Jayhawk.update!("DROP SILENT GRAPH <$BD>")
+        Jayhawk.load_file!(fixture("binding_rule.trig"))
+
+        @testset "four bindings load, and the store evaluates them in order" begin
+            spec = load_rule("$(BR)MintHolding")
+            @test length(spec.bindings) == 4
+            @test [spec.variables[b.variable] for b in Jayhawk.ordered_bindings(spec)] ==
+                ["?disc", "?symNorm", "?symKey", "?key"]
+        end
+
+        @testset "the minted IRIs are byte-exact: normalised, slugged, hashed" begin
+            # MD5s computed outside SPARQL (`printf 10.5 | md5`), so this checks the store
+            # evaluated the expression the rule declares, not merely that it evaluated one.
+            f = only(run_rule("$(BR)MintHolding"; source=[BD], actor="test"))
+            got = Set(
+                (sparql_text(r["h"]), sparql_text(r["k"])) for r in select(
+                    "SELECT ?h ?k WHERE { GRAPH <$(f.graph)> " *
+                    "{ ?h <http://example.org/bind/symbolKey> ?k } }",
+                )
+            )
+            @test got == Set([
+                ("<$(HOLD)ABC_10b3adf4529649ecb009c579e7713c8e>", "\"ABC\""),
+                ("<$(HOLD)XYZ_8f14e45fceea167a5a36dedd4bea2543>", "\"XYZ\""),
+                ("<$(HOLD)Q-R_dd7f542392a4b31946826638316847cb>", "\"Q-R\""),
+            ])
+            undo_firing!(f.graph)
+        end
+
+        @testset "explain_rule shows each binding, in the order it runs" begin
+            out = tool_explain_rule("$(BR)MintHolding"; source=[BD])
+            @test occursin("bindings          : 4 computed value(s)", out)
+            @test findfirst("?disc = MD5", out).start < findfirst("?key = CONCAT", out).start
+        end
+
+        @testset "a binding with no expression is refused at load" begin
+            Jayhawk.update!("""
+                INSERT DATA { <$(BR)MintHolding> <$(Jayhawk.P_HASBINDING)> <$(BR)Empty> .
+                              <$(BR)Empty> <$(Jayhawk.P_BINDSVAR)> <$(BR)_key> . }""")
+            err = try
+                load_rule("$(BR)MintHolding")
+                ""
+            catch e
+                sprint(showerror, e)
+            end
+            @test occursin("declares 0 jhp:bindText values", err)
+        end
+
+        Jayhawk.update!("DROP SILENT GRAPH <$BD>")
+        engine_cleanup()
+    end
+
+    @testset "the fan-in report sees a slot fed by gistp:oneOf" begin
+        # mint_fanin and collision_queries used to embed L and the mint's BIND and nothing
+        # between, so a slot fed by VALUES was unbound in the check and the report was empty
+        # by construction. Minting the check from the regulation alone makes every IRI
+        # reachable from both widgets -- three real fan-ins, which HEAD reported as none.
+        engine_cleanup()
+        Jayhawk.load_file!(fixture("oneof_rule.trig"))
+        OF = "urn:jayhawk:oneof-fanin"
+        Jayhawk.update!("DROP SILENT GRAPH <$OF>")
+        Jayhawk.update!("""INSERT DATA { GRAPH <$OF> {
+          <urn:w1> a <http://example.org/ops/Widget> ; <http://example.org/ops/code> "W-1" .
+          <urn:w2> a <http://example.org/ops/Widget> ; <http://example.org/ops/code> "W-2" . } }""")
+        spec = load_rule("$(RULES)ComplianceChecks")
+        chk = only(keys(spec.mints))
+        m = spec.mints[chk]
+        args = Any[getfield(spec, f) for f in fieldnames(RuleSpec)]
+        args[findfirst(==(:mints), fieldnames(RuleSpec))] = Dict(
+            chk => MintSpec(chk, "http://example.org/ops/check/{reg}", Dict("reg" => m.slots["reg"])),
+        )
+        fan = mint_fanin(RuleSpec(args...); from=[OF])
+        @test length(fan) == 1
+        @test Set(last(only(fan))) == Set([
+            ("http://example.org/ops/check/$r", 2) for r in ("EU", "JP", "US")
+        ])
+        Jayhawk.update!("DROP SILENT GRAPH <$OF>")
         engine_cleanup()
     end
 

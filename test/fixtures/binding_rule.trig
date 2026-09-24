@@ -1,0 +1,85 @@
+#  jhp:hasBinding: a rule that COMPUTES a value, names it, and mints from it.
+#
+#  Minting alone takes a bound value and percent-encodes it. Real identifiers are rarely
+#  that clean: moneygraph mints its first-coupon events from a symbol with its venue suffix
+#  stripped, upper-cased and slugged, joined to an MD5 of the trade's amounts. None of that
+#  is a triple, so none of it could live in a rule -- until a rule could bind an expression.
+#
+#  Three bindings, deliberately chained, and deliberately declared out of order:
+#
+#    ?key      = CONCAT(?symKey, "_", ?disc)                       reads two bindings
+#    ?symKey   = REPLACE(UCASE(STR(?symNorm)), "\\W+", "-")        reads one binding
+#    ?symNorm  = IF(STRSTARTS(?sym, "."), STRAFTER(?sym, "."),     reads L
+#                  IF(CONTAINS(?sym, "."), STRBEFORE(?sym, "."), ?sym))
+#    ?disc     = MD5(STR(?amt))                                    reads L
+#
+#  The compiler orders them; the mint reads the last. ?key joins two values with "_",
+#  which a template cannot do between two slots (an unreserved separator is ambiguous) --
+#  computing the whole local part as one binding is the answer to that too.
+#
+#      <urn:jayhawk:bind-test>   .abc  10.5  |  xyz.TO  7  |  q r  3.25
+
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
+@prefix ex:    <http://example.org/bind/> .
+@prefix :      <http://example.org/bindrules/> .
+
+<urn:jayhawk:bind-test> {
+    ex:s1 ex:symbol ".abc"   ; ex:amount 10.5 .
+    ex:s2 ex:symbol "xyz.TO" ; ex:amount 7 .
+    ex:s3 ex:symbol "q r"    ; ex:amount 3.25 .
+}
+
+:MintHolding
+    rdf:type jhp:Rule ;
+    skos:prefLabel "Mint a holding from a normalised symbol and a discriminator" ;
+    jhp:hasMatchPattern     :MintHolding_L ;
+    jhp:hasConstructPattern :MintHolding_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_construct ;
+    jhp:strategy            jhp:Once ;
+    jhp:hasBinding
+        [ rdf:type jhp:Binding ;
+          jhp:bindsVariable :_key ;
+          jhp:bindText '''CONCAT(?symKey, "_", ?disc)''' ] ,
+        [ rdf:type jhp:Binding ;
+          jhp:bindsVariable :_symKey ;
+          jhp:bindText '''REPLACE(UCASE(STR(?symNorm)), "\\\\W+", "-")''' ] ,
+        [ rdf:type jhp:Binding ;
+          jhp:bindsVariable :_symNorm ;
+          jhp:bindText '''IF(STRSTARTS(?sym, "."), STRAFTER(?sym, "."), IF(CONTAINS(?sym, "."), STRBEFORE(?sym, "."), ?sym))''' ] ,
+        [ rdf:type jhp:Binding ;
+          jhp:bindsVariable :_disc ;
+          jhp:bindText '''MD5(STR(?amt))''' ] .
+
+:MintHolding_L rdf:type gistp:SparqlPattern .
+:MintHolding_R rdf:type gistp:SparqlPattern .
+
+:_S rdf:type gistp:SparqlVariable ; gistp:variableText "?_S" .
+
+:_symNorm rdf:type gistp:LiteralVariable , gistp:SparqlVariable ; gistp:variableText "?symNorm" ;
+    gistp:requiresDatatype xsd:string .
+:_symKey  rdf:type gistp:LiteralVariable , gistp:SparqlVariable ; gistp:variableText "?symKey" ;
+    gistp:requiresDatatype xsd:string .
+:_disc    rdf:type gistp:LiteralVariable , gistp:SparqlVariable ; gistp:variableText "?disc" ;
+    gistp:requiresDatatype xsd:string .
+:_key     rdf:type gistp:LiteralVariable , gistp:SparqlVariable ; gistp:variableText "?key" ;
+    gistp:requiresDatatype xsd:string .
+
+:_H rdf:type gistp:SparqlVariable ;
+    gistp:variableText "?_H" ;
+    gistp:iriTemplate  "http://example.org/bind/holding/{key}" ;
+    gistp:hasSlot [ rdf:type gistp:TemplateSlot ; gistp:slotName "key" ; gistp:slotValue :_key ] .
+
+:MintHolding_L {
+    :_S ex:symbol "?sym"^^gistp:var ;
+        ex:amount "?amt"^^gistp:var .
+}
+
+:MintHolding_R {
+    :_H rdf:type ex:Holding ;
+        ex:of :_S ;
+        ex:symbolKey "?symKey"^^gistp:var .
+}

@@ -1075,6 +1075,53 @@ and the rule matches nothing. A single typo turns a rule off with no diagnostic 
 the same failure `check_bound` exists to prevent on the construct side, and it earns the same
 refusal here.
 
+### Bindings: when a rule must compute
+
+A filter *tests* values L has bound. A **binding** *computes* one and gives it a name, so R,
+a filter, a guard or an `iriTemplate` slot can use it. That is how a rule mints from a
+cleaned identifier rather than a raw one. A template percent-encodes its slot value and does
+nothing else.
+
+```turtle
+:MintHolding jhp:hasBinding
+    [ jhp:bindsVariable :_symKey ;
+      jhp:bindText '''REPLACE(UCASE(STR(?symNorm)), "\\\\W+", "-")''' ] ,
+    [ jhp:bindsVariable :_symNorm ;
+      jhp:bindText '''IF(STRSTARTS(?sym, "."), STRAFTER(?sym, "."), ?sym)''' ] .
+
+:_symKey rdf:type gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?symKey" ; gistp:requiresDatatype xsd:string .
+```
+
+compiles to one `BIND` per binding, after L and `VALUES`, before any mint:
+
+```sparql
+  BIND((IF(STRSTARTS(?sym, "."), STRAFTER(?sym, "."), ?sym)) AS ?symNorm)
+  BIND((REPLACE(UCASE(STR(?symNorm)), "\\W+", "-")) AS ?symKey)
+```
+
+A binding may read another, as `?symKey` reads `?symNorm` above. The engine orders them by
+dependency however you wrote them, and refuses a cycle. `explain_rule` lists them in the
+order they run.
+
+A template slot joins values with a separator, and an unreserved one such as `_` is
+ambiguous between two slots, so it is refused. To mint `ABC_10b3…`, bind the whole local
+part (`CONCAT(?symKey, "_", ?disc)`) and give the template one slot.
+
+`jhp:bindText` is held to **exactly** the checks `jhp:filterText` is, since it is the other
+place your text is spliced into the query. Beyond those, a binding is refused when:
+
+| the binding | why |
+|---|---|
+| targets a variable L matches, VALUES enumerates, a map fills or a template mints | SPARQL cannot `BIND` a variable already in scope |
+| reads a variable nothing has bound before it | SPARQL does not error: the binding stays unbound and every R triple using it silently vanishes |
+| reads a minted variable | mints run after bindings, so that a mint can read a binding |
+| is a whole `BIND(…)` clause, or contains `AS ?x` | the engine supplies both, from `jhp:bindsVariable` |
+
+What no check can see is the expression's *meaning*. `STRBEFORE(?d, "T")` on a value with no
+`T` yields `""`, and a type error at run time leaves the variable unbound. Read the bindings
+in `explain_rule` before you run a rule that mints from them.
+
 ### How often a rule runs
 
 ```turtle

@@ -164,6 +164,19 @@ function tool_explain_rule(
             println(io, "      FILTER(", f, ")")
         end
     end
+    # Computed values are where a rule's IRIs usually come from, and where an expression
+    # quietly yielding "" or nothing changes what gets minted -- worth seeing before a run.
+    if !isempty(spec.bindings)
+        println(
+            io,
+            "  bindings          : ",
+            length(spec.bindings),
+            " computed value(s), in evaluation order",
+        )
+        for b in ordered_bindings(spec)
+            println(io, "      ", spec.variables[b.variable], " = ", b.text)
+        end
+    end
     println(io, "\ncompiles to:\n")
     # `source` and not just `spec`: for a scoped rule the dataset clause is the difference
     # between the query shown and the query run. See `compile_rule`.

@@ -85,6 +85,13 @@ conjunction, rendered as one `GRAPH` group per pattern. Single-pattern rules kee
 `nothing` scalar scope -- so read scopes only through `match_patterns` / `match_scopes` /
 `match_scope_vars`, never off the field. Refused for now with `Rewrite` and with source maps.
 
+`jhp:hasBinding` computes a value: `BIND((bindText) AS ?v)` for a declared
+`jhp:bindsVariable`, after L and VALUES and before the mints, ordered by dependency
+(`ordered_bindings`). `bindText` shares `filterText`'s checks through `_expression_vars`;
+`check_bindings` adds a fresh target and bound inputs. `pre_mint_text` (source-map pipeline,
+VALUES, bindings) is embedded by `where_body` *and* by the mint-safety queries, so those check
+the rule that runs.
+
 All seven WHERE-clause builders route through `where_body`, so a guard cannot be honoured by
 only some of them.
 
