@@ -179,6 +179,9 @@ function engine_cleanup()
                DELETE WHERE { ?s <$(Jayhawk.P_CONSTRUCT)> ?o } ;
                DELETE WHERE { ?r <$(Jayhawk.P_HASBINDING)> ?b . ?b ?p ?o } ;
                DELETE WHERE { ?s <$(Jayhawk.P_HASBINDING)> ?o } ;
+               DELETE WHERE { ?s <$(Jayhawk.P_ISMINTEDBY)> ?o } ;
+               DELETE WHERE { ?s <$(Jayhawk.P_NAMESPACE)> ?o } ;
+               DELETE WHERE { ?s <$(Jayhawk.P_LOCALTEMPLATE)> ?o } ;
                DELETE WHERE { ?s <$(Jayhawk.P_MODE)> ?o } ;
                DELETE WHERE { ?s <$(Jayhawk.P_VARIABLETEXT)> ?o } ;
                DELETE WHERE { ?s <$(Jayhawk.P_IRITEMPLATE)> ?o } ;
@@ -1827,6 +1830,77 @@ ex:s2 ex:p ex:plain .
         end
 
         Jayhawk.update!("DROP SILENT GRAPH <$BD>")
+        engine_cleanup()
+    end
+
+    @testset "gistp:isMintedBy: two rules minting through one MintingFunction" begin
+        MR = "http://example.org/mfrules/"
+        MD = "urn:jayhawk:mf-test"
+        FN = "http://example.org/mf/data/_MintingFunction_holding"
+        GP = Jayhawk.GISTP_NS
+        engine_cleanup()
+        Jayhawk.update!("DROP SILENT GRAPH <$MD>")
+        Jayhawk.load_file!(fixture("minting_function_rule.trig"))
+        objects(f) = Set(
+            sparql_text(r["s"]) for
+            r in select("SELECT DISTINCT ?s WHERE { GRAPH <$(f.graph)> { ?s ?p ?o } }")
+        )
+
+        @testset "the function's namespace + localTemplate is the template" begin
+            m = only(values(load_rule("$(MR)MintHolding").mints))
+            @test m.template == "http://example.org/mf/data/_Holding_{sym}"
+            @test m.minting_function == FN
+        end
+
+        @testset "both rules reach the same IRI for the same symbol" begin
+            want = Set(["<http://example.org/mf/data/_Holding_$k>" for k in ("ABC", "XYZ")])
+            a = only(run_rule("$(MR)MintHolding"; source=[MD], actor="test"))
+            b = only(run_rule("$(MR)LabelHolding"; source=[MD], actor="test"))
+            @test objects(a) == want && objects(b) == want
+            undo_firing!(a.graph)
+            undo_firing!(b.graph)
+        end
+
+        @testset "explain_rule says which function a template came from" begin
+            out = tool_explain_rule("$(MR)MintHolding"; source=[MD])
+            @test occursin("?_H = http://example.org/mf/data/_Holding_{sym}   (by <$FN>)", out)
+        end
+
+        refusal(rule) =
+            try
+                load_rule(rule)
+                ""
+            catch e
+                sprint(showerror, e)
+            end
+        H = "$(MR)_H"
+        @testset "what a minting function refuses" begin
+            # both spellings on one variable: which IRI would be a guess
+            Jayhawk.update!("INSERT DATA { <$H> <$(GP)iriTemplate> \"http://x/{sym}\" }")
+            @test occursin("both carries a gistp:iriTemplate", refusal("$(MR)MintHolding"))
+            Jayhawk.update!("DELETE DATA { <$H> <$(GP)iriTemplate> \"http://x/{sym}\" }")
+            # a function missing its local part
+            Jayhawk.update!("DELETE DATA { <$FN> <$(GP)localTemplate> \"_Holding_{sym}\" }")
+            @test occursin("0 gistp:localTemplate values", refusal("$(MR)MintHolding"))
+            Jayhawk.update!("INSERT DATA { <$FN> <$(GP)localTemplate> \"_Holding_{sym}\" }")
+            # two namespaces would mint two IRIs for one binding
+            Jayhawk.update!("INSERT DATA { <$FN> <$(GP)namespace> \"http://other/\" }")
+            @test occursin("2 gistp:namespace values", refusal("$(MR)MintHolding"))
+            Jayhawk.update!("DELETE DATA { <$FN> <$(GP)namespace> \"http://other/\" }")
+            @test refusal("$(MR)MintHolding") == ""
+        end
+
+        @testset "two iriTemplates on one variable are refused, not picked between" begin
+            # HEAD loaded this silently and minted from whichever template the store
+            # returned first -- measured: the added one, not the one the rule was written with.
+            Jayhawk.load_file!(example("02-mint-coupon-event.trig"))
+            ev = "https://w3id.org/moneygraph/ns/rules/_Event"
+            Jayhawk.update!("INSERT DATA { <$ev> <$(GP)iriTemplate> \"http://x/other/{bond}\" }")
+            @test occursin("2 gistp:iriTemplate values",
+                refusal("https://w3id.org/moneygraph/ns/rules/MintCouponEvent"))
+        end
+
+        Jayhawk.update!("DROP SILENT GRAPH <$MD>")
         engine_cleanup()
     end
 

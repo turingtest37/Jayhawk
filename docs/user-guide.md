@@ -982,6 +982,38 @@ BIND(IRI(CONCAT("https://…/coupon/", ENCODE_FOR_URI(STR(?ticker)))) AS ?_Event
 Because expansion is a pure function of the bindings, re-running mints **byte-identical
 IRIs**. That is what lets an `Assert` rule converge instead of growing forever.
 
+#### One convention, many rules: `gistp:MintingFunction`
+
+A store usually mints every IRI of a kind the same way: one namespace, a class-name midfix,
+then a key. Writing that into each variable's `iriTemplate` repeats it in every rule that
+mints one. Worse, two rules that write it slightly differently mint two IRIs for what is one
+thing. A **minting function** states the convention once:
+
+```turtle
+exd:_MintingFunction_holding a gistp:MintingFunction ;
+    gist:conformsTo exd:_IriMintingPolicy_mf ;
+    gistp:namespace "http://example.org/mf/data/"^^xsd:anyURI ;
+    gistp:localTemplate "_Holding_{sym}" .
+
+:_H rdf:type gistp:SparqlVariable ;
+    gistp:variableText "?_H" ;
+    gistp:isMintedBy exd:_MintingFunction_holding ;
+    gistp:hasSlot [ gistp:slotName "sym" ; gistp:slotValue :_sym ] .
+```
+
+To the engine this is **another spelling of `iriTemplate`**: the template is the namespace
+followed by the local template, verbatim. It then compiles, checks for collisions, reports
+fan-in and undoes exactly as an `iriTemplate` does, and `explain_rule` names the function each
+template came from. The slots stay on the variable, because what feeds a slot belongs to the
+rule while the function is shared. In `test/fixtures/minting_function_rule.trig` two rules
+bind `{sym}` from different variables and reach the same IRI for the same symbol.
+
+A variable names one function or carries one `iriTemplate`, never both, since which IRI it
+would mint would be a guess. A function has exactly one namespace, with no `{slot}` in it, and
+exactly one local template. The `gist:conformsTo` policy is recorded, not enforced.
+gistPatterns does not yet say how a policy lists its requirements, and none of them states an
+algorithm an engine could check.
+
 ### Guards: when a rule must not fire
 
 A rule with no guard fires on every match, every time. `jhp:hasNegativeCondition` names a

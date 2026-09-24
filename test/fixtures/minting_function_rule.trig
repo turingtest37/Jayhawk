@@ -1,0 +1,90 @@
+#  gistp:isMintedBy: minting through a shared gistp:MintingFunction.
+#
+#  gistp:iriTemplate writes a whole IRI into each variable that mints one, so a store whose
+#  IRIs all follow one convention -- a namespace, a class-name midfix, a key -- repeats that
+#  convention in every rule. A MintingFunction states it once: gistp:namespace plus
+#  gistp:localTemplate, and optionally gist:conformsTo an IriMintingPolicy. Variables point
+#  at it with gistp:isMintedBy and keep their own gistp:hasSlot, because what feeds a slot is
+#  a fact about the rule, not about the convention.
+#
+#  To the engine this is another spelling of iriTemplate: the template is namespace +
+#  localTemplate, and everything downstream -- the BIND, the collision gate, the fan-in
+#  report, undo -- is the machinery iriTemplate already has.
+#
+#  Two rules share one function here, which is the point of having one.
+#
+#      <urn:jayhawk:mf-test>   ex:s1 ex:symbol "ABC" ; ex:s2 ex:symbol "XYZ"
+
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
+@prefix ex:    <http://example.org/mf/> .
+@prefix exd:   <http://example.org/mf/data/> .
+@prefix :      <http://example.org/mfrules/> .
+
+<urn:jayhawk:mf-test> {
+    ex:s1 ex:symbol "ABC" .
+    ex:s2 ex:symbol "XYZ" .
+}
+
+# --- the convention, stated once ------------------------------------------------------------
+
+# The policy is descriptive: gistPatterns does not yet say how a policy names its gist:Requirements,
+# and the engine reads none of it. It is here because a real function would carry one.
+exd:_IriMintingPolicy_mf a gistp:IriMintingPolicy .
+
+exd:_MintingFunction_holding a gistp:MintingFunction ;
+    gist:conformsTo exd:_IriMintingPolicy_mf ;
+    gistp:namespace "http://example.org/mf/data/"^^xsd:anyURI ;
+    gistp:localTemplate "_Holding_{sym}" .
+
+# --- two rules minting through it -----------------------------------------------------------
+
+:MintHolding
+    rdf:type jhp:Rule ;
+    skos:prefLabel "Mint a holding" ;
+    jhp:hasMatchPattern     :MintHolding_L ;
+    jhp:hasConstructPattern :MintHolding_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_construct ;
+    jhp:strategy            jhp:Once .
+
+:MintHolding_L rdf:type gistp:SparqlPattern .
+:MintHolding_R rdf:type gistp:SparqlPattern .
+
+:_S rdf:type gistp:SparqlVariable ; gistp:variableText "?_S" .
+:_sym rdf:type gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?sym" ; gistp:requiresDatatype xsd:string .
+
+:_H rdf:type gistp:SparqlVariable ;
+    gistp:variableText "?_H" ;
+    gistp:isMintedBy exd:_MintingFunction_holding ;
+    gistp:hasSlot [ rdf:type gistp:TemplateSlot ; gistp:slotName "sym" ; gistp:slotValue :_sym ] .
+
+:MintHolding_L { :_S ex:symbol "?sym"^^gistp:var . }
+:MintHolding_R { :_H rdf:type ex:Holding ; ex:of :_S . }
+
+:LabelHolding
+    rdf:type jhp:Rule ;
+    skos:prefLabel "Label a holding, reaching it by the same convention" ;
+    jhp:hasMatchPattern     :LabelHolding_L ;
+    jhp:hasConstructPattern :LabelHolding_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_construct ;
+    jhp:strategy            jhp:Once .
+
+:LabelHolding_L rdf:type gistp:SparqlPattern .
+:LabelHolding_R rdf:type gistp:SparqlPattern .
+
+:_S2 rdf:type gistp:SparqlVariable ; gistp:variableText "?_S2" .
+:_sym2 rdf:type gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?sym2" ; gistp:requiresDatatype xsd:string .
+
+:_H2 rdf:type gistp:SparqlVariable ;
+    gistp:variableText "?_H2" ;
+    gistp:isMintedBy exd:_MintingFunction_holding ;
+    gistp:hasSlot [ rdf:type gistp:TemplateSlot ; gistp:slotName "sym" ; gistp:slotValue :_sym2 ] .
+
+:LabelHolding_L { :_S2 ex:symbol "?sym2"^^gistp:var . }
+:LabelHolding_R { :_H2 skos:prefLabel "?sym2"^^gistp:var . }

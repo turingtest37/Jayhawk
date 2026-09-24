@@ -68,7 +68,7 @@ The deterministic compiler that used to head this file as "primary next task" is
 tested and documented**. Every term the vocabulary declares is supported except
 `gistp:instructionText`, which is an authoring hint the engine deliberately ignores.
 
-Implemented: several match patterns forming one L; computed values (`jhp:hasBinding`); the three modes; both variable mechanisms (declared `SparqlVariable` individuals
+Implemented: several match patterns forming one L; computed values (`jhp:hasBinding`); shared minting functions (`gistp:isMintedBy`); the three modes; both variable mechanisms (declared `SparqlVariable` individuals
 and `"?x"^^gistp:var` literals); `iriTemplate` minting with RFC 6570 Level 1 slots;
 `hasNegativeCondition` guards; `hasFilterCondition` comparisons; `strategy` / `maxIterations`;
 `oneOf` → `VALUES`; `inGraph` scoping; firing graphs, provenance and exact undo; ordered rule
@@ -272,6 +272,13 @@ Three engine gaps stand between it and a working rule set, taken in this order:
    because it cannot express the MD5. Two fixes fell out: the mint-safety queries now
    evaluate VALUES and source maps (a `oneOf`-fed slot's fan-in was reported as none), and a
    filter may test a source-mapped column (it was refused as unbound).
+   **`gistp:MintingFunction` — built (Round 3b).** `gistp:isMintedBy` is compiled as
+   another spelling of `iriTemplate` (namespace + localTemplate), so the bondfix rules share
+   one function per class (`_Event_`, `_CouponPaymentSchedule_`, `_Magnitude_`) instead of
+   repeating `mg3:` in each template. Its `gist:conformsTo` policy is recorded, not enforced.
+   Known tension, left for Doug: `MintingFunction`'s equivalent-class axiom requires
+   `namespace someValuesFrom xsd:anyURI`, while `gistp:namespace` also ranges over
+   `xsd:string` -- a function with a string namespace is asserted but never inferred.
 3. **`rerun_rules!`**: undo a set's earlier firings, then run. This is the rule-set
    equivalent of the script's `DROP SILENT GRAPH`, and removes exactly what the set asserted.
 

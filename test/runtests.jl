@@ -2377,6 +2377,31 @@ end
     end
 end
 
+@testset "gistp:MintingFunction (pure)" begin
+    # A MintingFunction is another spelling of an iriTemplate: namespace + localTemplate.
+    mft = Jayhawk.minting_function_template
+    ns(s) = RDFLiteral(s, "http://www.w3.org/2001/XMLSchema#anyURI")
+    @test mft("urn:f", [ns("http://ex.org/data/")], [RDFLiteral("_Holding_{sym}")]) ==
+        "http://ex.org/data/_Holding_{sym}"
+    # a plain string, or an IRI, names the namespace just as well
+    @test mft("urn:f", [RDFLiteral("http://ex.org/d/")], [RDFLiteral("{x}")]) == "http://ex.org/d/{x}"
+    @test mft("urn:f", [IRIRef("http://ex.org/d/")], [RDFLiteral("{x}")]) == "http://ex.org/d/{x}"
+    err(f) =
+        try
+            f()
+            ""
+        catch e
+            sprint(showerror, e)
+        end
+    @test occursin("2 gistp:namespace values",
+        err(() -> mft("urn:f", [ns("http://a/"), ns("http://b/")], [RDFLiteral("{x}")])))
+    @test occursin("0 gistp:localTemplate values", err(() -> mft("urn:f", [ns("http://a/")], [])))
+    @test occursin("contains a brace",
+        err(() -> mft("urn:f", [ns("http://a/{x}/")], [RDFLiteral("{y}")])))
+    # MintSpec's three-field form, used by every spec written before functions, still works
+    @test MintSpec("urn:v", "http://a/{x}", Dict{String,RDFTerm}()).minting_function === nothing
+end
+
 @testset "source maps (pure)" begin
     # The parts of gistp:SourceMap that need no store: the two encoders, the emitted shape,
     # and the refusals. Loading a map out of a triplestore is exercised in

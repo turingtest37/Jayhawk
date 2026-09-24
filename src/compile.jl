@@ -22,6 +22,9 @@ const P_CONSTRUCT = JHP_NS * "hasConstructPattern"
 const P_MODE = JHP_NS * "rewriteMode"
 const P_VARIABLETEXT = GISTP_NS * "variableText"
 const P_IRITEMPLATE = GISTP_NS * "iriTemplate"
+const P_ISMINTEDBY = GISTP_NS * "isMintedBy"
+const P_NAMESPACE = GISTP_NS * "namespace"
+const P_LOCALTEMPLATE = GISTP_NS * "localTemplate"
 const P_HASSLOT = GISTP_NS * "hasSlot"
 const P_SLOTNAME = GISTP_NS * "slotName"
 const P_SLOTVALUE = GISTP_NS * "slotValue"
@@ -89,7 +92,13 @@ struct MintSpec
     variable::String                # IRI of the minted SparqlVariable
     template::String                # RFC 6570 Level 1, expanding to an absolute IRI
     slots::Dict{String,RDFTerm}     # slotName => the term naming the supplying variable
+    # The gistp:MintingFunction the template came from, or `nothing` when the variable
+    # carries its own gistp:iriTemplate. Provenance for a reviewer only: by the time a
+    # MintSpec exists the two spellings are one template, and nothing downstream branches.
+    minting_function::Union{String,Nothing}
 end
+
+MintSpec(variable, template, slots) = MintSpec(variable, template, slots, nothing)
 
 """
 A negative application condition: a pattern that must **not** match for the rule to fire.
@@ -1054,10 +1063,20 @@ default graph and its object occupies no position inside any pattern. [`_occurs_
 carries a fourth alternative for exactly that case.
 """
 function load_mints(graphs::AbstractVector; ep::SparqlEndpoint=endpoint())
+    # Two spellings of one thing. A variable carries its own gistp:iriTemplate, or it names a
+    # gistp:MintingFunction with gistp:isMintedBy, whose gistp:namespace + gistp:localTemplate
+    # IS the template. Both are read here and nowhere else, so every consumer downstream --
+    # the BIND, the collision gate, the fan-in report, undo -- sees one MintSpec and needs no
+    # second code path.
     rows = select(
         """
-SELECT DISTINCT ?v ?tmpl ?name ?value WHERE {
-  ?v a <$C_SPARQLVAR> ; <$P_IRITEMPLATE> ?tmpl .
+SELECT DISTINCT ?v ?tmpl ?fn ?ns ?local ?name ?value WHERE {
+  ?v a <$C_SPARQLVAR> .
+  { ?v <$P_IRITEMPLATE> ?tmpl }
+  UNION
+  { ?v <$P_ISMINTEDBY> ?fn .
+    OPTIONAL { ?fn <$P_NAMESPACE> ?ns }
+    OPTIONAL { ?fn <$P_LOCALTEMPLATE> ?local } }
   $(_occurs_in(graphs))
   OPTIONAL { ?v <$P_HASSLOT> ?slot .
              ?slot <$P_SLOTNAME> ?name ; <$P_SLOTVALUE> ?value . }
@@ -1065,16 +1084,82 @@ SELECT DISTINCT ?v ?tmpl ?name ?value WHERE {
         ep=ep,
     )
     out = Dict{String,MintSpec}()
-    for r in rows
-        v = _iri(r["v"])
-        m = get!(out, v) do
-            return MintSpec(v, (r["tmpl"]::RDFLiteral).lexical, Dict{String,RDFTerm}())
+    for (v, rs) in _group_by(r -> _iri(r["v"]), rows)
+        vals(k) = unique(r[k] for r in rs if haskey(r, k))
+        tmpls, fns = vals("tmpl"), vals("fn")
+        !isempty(tmpls) && !isempty(fns) && error(
+            "<$v> both carries a gistp:iriTemplate and names a gistp:MintingFunction with " *
+            "gistp:isMintedBy. They are two spellings of one template, so which IRI it mints " *
+            "would be a guess. Keep one.",
+        )
+        template, fn = if !isempty(tmpls)
+            length(tmpls) == 1 || error(
+                "<$v> carries $(length(tmpls)) gistp:iriTemplate values; exactly one is " *
+                "allowed. With several, which one it minted from would depend on the order " *
+                "the store returned them in.",
+            )
+            (only(tmpls)::RDFLiteral).lexical, nothing
+        else
+            length(fns) == 1 || error(
+                "<$v> names $(length(fns)) gistp:MintingFunction values with " *
+                "gistp:isMintedBy; exactly one is allowed.",
+            )
+            f = only(fns)
+            f isa IRIRef || error(
+                "<$v>: gistp:isMintedBy is $(sparql_text(f)), which is not a " *
+                "gistp:MintingFunction IRI.",
+            )
+            minting_function_template(f.value, vals("ns"), vals("local")), f.value
         end
-        haskey(r, "name") &&
-            haskey(r, "value") &&
-            (m.slots[(r["name"]::RDFLiteral).lexical] = r["value"])
+        m = MintSpec(v, template, Dict{String,RDFTerm}(), fn)
+        for r in rs
+            haskey(r, "name") && haskey(r, "value") &&
+                (m.slots[(r["name"]::RDFLiteral).lexical] = r["value"])
+        end
+        out[v] = m
     end
     return out
+end
+
+"""
+    minting_function_template(fn, namespaces, locals) -> String
+
+The RFC 6570 template a `gistp:MintingFunction` denotes: its `gistp:namespace` followed by
+its `gistp:localTemplate`, verbatim.
+
+Verbatim, and that is the whole contract. A namespace ending in neither `/` nor `#` is the
+author's business -- `http://ex/data_` + `{id}` is a legitimate convention -- and the result
+goes through every check an authored `iriTemplate` does, so an unusable one is refused there
+with the same message. What only a function can get wrong is refused here:
+
+  * **exactly one of each.** A function with two namespaces mints two different IRIs for one
+    binding, depending on which the store returns first.
+  * **a namespace with no slot.** The namespace is the fixed part; a `{` in it would make
+    the split between constant and template meaningless, and a reader would take the slot
+    for a typo in either half.
+  * **a literal of either form.** `gistp:namespace` ranges over `xsd:anyURI` or `xsd:string`;
+    a namespace given as an IRI rather than a literal is accepted too, as the obvious intent.
+"""
+function minting_function_template(fn::AbstractString, namespaces, locals)
+    length(namespaces) == 1 || error(
+        "gistp:MintingFunction <$fn> declares $(length(namespaces)) gistp:namespace values; " *
+        "exactly one is required -- it is the fixed part of every IRI the function mints.",
+    )
+    length(locals) == 1 || error(
+        "gistp:MintingFunction <$fn> declares $(length(locals)) gistp:localTemplate " *
+        "values; exactly one is required -- it is the part of the IRI the slots fill.",
+    )
+    ns, local_ = only(namespaces), only(locals)
+    nstext = ns isa IRIRef ? ns.value : (ns::RDFLiteral).lexical
+    local_ isa RDFLiteral || error(
+        "gistp:MintingFunction <$fn>: gistp:localTemplate is $(sparql_text(local_)), which " *
+        "is not a string.",
+    )
+    (occursin('{', nstext) || occursin('}', nstext)) && error(
+        "gistp:MintingFunction <$fn>: gistp:namespace $(repr(nstext)) contains a brace. The " *
+        "namespace is the constant part of the IRI; slots belong in gistp:localTemplate.",
+    )
+    return nstext * local_.lexical
 end
 
 # ---------------------------------------------------------------------------

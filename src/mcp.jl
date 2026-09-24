@@ -177,6 +177,24 @@ function tool_explain_rule(
             println(io, "      ", spec.variables[b.variable], " = ", b.text)
         end
     end
+    # Which IRIs the rule creates, and by what convention. A template that came from a
+    # shared gistp:MintingFunction says so: changing that function changes every rule
+    # minting through it, which is the point of it and worth knowing before a run.
+    if !isempty(spec.mints)
+        println(io, "  mints             : ", length(spec.mints), " minted variable(s)")
+        for iri in sort(collect(keys(spec.mints)))
+            m = spec.mints[iri]
+            println(
+                io,
+                "      ",
+                get(spec.variables, iri, "<$iri>"),
+                " = ",
+                m.template,
+                m.minting_function === nothing ? "" :
+                "   (by <$(m.minting_function)>)",
+            )
+        end
+    end
     println(io, "\ncompiles to:\n")
     # `source` and not just `spec`: for a scoped rule the dataset clause is the difference
     # between the query shown and the query run. See `compile_rule`.

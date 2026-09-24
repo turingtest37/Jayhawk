@@ -283,6 +283,18 @@ BIND(IRI(CONCAT("http://…/employee/", ENCODE_FOR_URI(STR(?idText)))) AS ?_Empl
 **That determinism is the termination argument** for an `Assert` fixpoint — a UUID-based
 Skolem would break it. Level 2 (`{+slot}`) is refused rather than approximated.
 
+### Two spellings of a template
+
+`load_mints` reads a variable's own `gistp:iriTemplate` *or* the `gistp:namespace` +
+`gistp:localTemplate` of the `gistp:MintingFunction` it names with `gistp:isMintedBy`
+(`minting_function_template`). It is the only place the two spellings differ. By the time a
+`MintSpec` exists they are one template, and `MintSpec.minting_function` records the source
+for `explain_rule` only. Nothing downstream branches on it, so a function-minted variable gets
+the collision gate, the fan-in report and undo without a second code path. Refused at load:
+both spellings on one variable, several of either, and a function whose namespace contains a
+brace or whose parts are missing. Two `iriTemplate`s on one variable used to load silently
+and mint from whichever the store returned first, which measured as the wrong one.
+
 ### Rewrite is five operations, not one
 
 The obvious shape — a single DELETE/INSERT writing target, firing and tombstone together —
