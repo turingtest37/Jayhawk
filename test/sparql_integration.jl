@@ -1806,6 +1806,45 @@ ex:s2 ex:p ex:plain .
         engine_cleanup()
     end
 
+    @testset "bondfix: the oracle reproduces its golden" begin
+        # examples/moneygraph/bondfix/ re-expresses moneygraph's fix-missing-bond-data.rq as
+        # a rule set. Before any rule exists, this pins down what "the same effect" means:
+        # the oracle (the committed query with its currency cross-product fixed) run over
+        # the fixture must write exactly expected.nq. The rule set will be held to the same
+        # golden by the same comparison.
+        MG3 = "https://w3id.org/moneygraph/ns/data/"
+        SEC, ACT = "$(MG3)__securities__extra", "$(MG3)__activities__extra"
+        XSEC = "urn:jayhawk:example:bondfix:expected:securities"
+        XACT = "urn:jayhawk:example:bondfix:expected:activities"
+        INPUTS = ["$(MG3)__trades-bonds__", "$(MG3)__current__", "$(MG3)__units__"]
+        drop_all() = Jayhawk.update!(
+            join(("DROP SILENT GRAPH <$g>" for g in [INPUTS; SEC; ACT; XSEC; XACT]), " ; "),
+        )
+        quads(g) = Set(
+            (sparql_text(r["s"]), sparql_text(r["p"]), sparql_text(r["o"])) for
+            r in select("SELECT ?s ?p ?o WHERE { GRAPH <$g> { ?s ?p ?o } }")
+        )
+
+        drop_all()
+        Jayhawk.load_file!(example("bondfix/data.trig"))
+        Jayhawk.load_file!(example("bondfix/expected.nq"))
+        Jayhawk.update!(read(example("bondfix/oracle.rq"), String))
+
+        # compared as two differences, so a failure names the offending triples only
+        @test isempty(setdiff(quads(SEC), quads(XSEC)))     # nothing the golden lacks
+        @test isempty(setdiff(quads(XSEC), quads(SEC)))     # nothing the golden has, missed
+        @test isempty(setdiff(quads(ACT), quads(XACT)))
+        @test isempty(setdiff(quads(XACT), quads(ACT)))
+        # and the golden is not vacuous: both decoys are absent, every real match is present
+        @test length(quads(XSEC)) == 43 && length(quads(XACT)) == 35
+        subjects = join(first.(collect(quads(SEC))), " ")
+        @test !occursin("5CQRSE4", subjects)    # C: gross off by a cent
+        @test !occursin("5DRBCF2", subjects)    # D: description never names the issuer
+        @test all(occursin(k, subjects) for k in ("5DDZBS0", "5CPNON8", "037833DX5"))
+
+        drop_all()
+    end
+
     @testset "the agent-facing tools" begin
         # These are the MCP surface, but they depend on nothing but the engine, so they are
         # exercised here rather than through the protocol. bin/mcp_server.jl is the adapter.

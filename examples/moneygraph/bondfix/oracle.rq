@@ -1,0 +1,269 @@
+# ORACLE for the bondfix rule set.
+#
+# This is ~/dev/moneygraph/queries/fix-missing-bond-data.rq with ONE deliberate fix and
+# nothing else changed (diff it to check). In the original,
+#     ?__currency_uom gist:symbol ?__currency .
+# is joined to nothing: against a union default graph it matches every gist:symbol in the
+# store -- live, seven exchange codes -- multiplying every row and minting first-coupon
+# events keyed by an exchange code instead of a currency. Here the unit is taken from the
+# trade's own net-amount magnitude and its code from the __units__ reference graph.
+#
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX mg3: <https://w3id.org/moneygraph/ns/data/>
+PREFIX gist: <https://w3id.org/semanticarts/ns/ontology/gist/>
+PREFIX gistd: <https://w3id.org/semanticarts/ns/data/gist/>
+PREFIX mg: <https://w3id.org/moneygraph/ns/ontology/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX mgx: <https://w3id.org/moneygraph/ns/taxonomy/>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+
+INSERT
+{
+GRAPH mg3:__securities__extra {
+    ?__bond_iri mg:isListedOn ?__exchange ;
+        mg:isIssuedBy ?__issuer_iri ;
+    .
+    ?__issuer_iri a gist:Organization ;
+        gist:name ?__issuer_str ;
+        skos:prefLabel ?__issuer_str ;
+    .
+    ?__repayment_terms mg:callable ?__callable .
+
+    ?__coupon_payment_terms a mg:CouponPaymentTerms; 
+        mg:specifies ?__coupon_payment_schedule ;
+        mg:couponPaymentMonthNumber ?__coupon_mo ;
+        mg:couponPaymentMonthDayNumber ?__mo_day_nbr ;
+    .
+    ?__1st_coupon_evt gist:isMemberOf ?__coupon_payment_schedule ;
+        a gist:ScheduledEvent ;
+        skos:prefLabel ?__next_cpn_label ;
+        mg:plannedOccursDate ?__next_cpn_dt ;
+        gist:isCategorizedBy mgx:_FinancialBusinessEventType_interestRemittance ;
+    .
+}
+GRAPH mg3:__activities__extra {
+    ?__activity_purchase_evt gist:hasMagnitude ?__int_days_magn, ?__ytm_magn .
+# Interest Days Paid 
+    ?__int_days_magn a gist:Magnitude ;
+        gist:hasUnitOfMeasure gistd:_UnitOfMeasure_day ;
+        gist:numericValue ?__int_days ;
+        gist:hasAspect mgx:_Aspect_daysOfInterestPaid ;
+    .
+    ?__ytm_magn a gist:Magnitude ;
+        gist:hasUnitOfMeasure mg:_RatioUnit_annualYield ;
+# Stored here as a fraction, not a percentage, e.g. 0.04 NOT 4.0
+        gist:numericValue ?__ytm_num ;
+        gist:hasAspect mgx:_Aspect_yieldToMaturity ;
+    .
+}
+}
+
+#SELECT DISTINCT ?__bond_iri ?desc ?__issuer_str ?__trade_maturity ?__maturity ?__activity_purchase_evt ?__int_days_magn ?__coupon_mo ?__mo_day_nbr ?__int_days ?__purch_dt ?__trade_purch_dt ?__net_amt ?__trade_net_amt ?__gross_amt ?__trade_gross_amt ?__repayment_terms ?__coupon_payment_terms ?__next_cpn_label ?__1st_coupon_evt
+#
+
+WHERE
+{
+    # Inner SELECT to retrieve all bond Trades     
+    {
+    SELECT DISTINCT ?__trade_security 
+    ?__trade_maturity
+    ?__trade_purch_dt 
+    ?__trade_purch_amt 
+    ?__trade_net_amt 
+    ?__trade_price_amt 
+    ?__trade_gross_amt 
+    ?__trade_commission_amt 
+    ?__ytm_num 
+    ?__exchange 
+    ?__issuer_iri 
+    ?__issuer_str 
+    ?__callable 
+    ?__int_days_magn
+    ?__currency_uom
+    ?__int_days
+    ?__coupon_mo
+    ?__mo_day_nbr
+    ?__next_cpn_label
+    ?__next_cpn_dt
+
+    {
+        GRAPH mg3:__trades-bonds__ {        
+            ?__trade_secacct gist:hasPositionIn ?__trade_security ;
+                gist:isAffectedBy ?__trade_purchase_evt ;
+            .
+        # Purchase Case
+            ?__trade_purchase_evt gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
+                mg:transactionDate ?__trade_purch_dt ;
+                gist:hasMagnitude [ gist:hasAspect mgx:_Aspect_securityShareCount ; gist:numericValue ?__trade_purch_amt ] ;
+                gist:hasMagnitude [ gist:hasAspect mgx:_Aspect_securityTradeNetAmount ; gist:numericValue ?__trade_net_amt ; gist:hasUnitOfMeasure ?__currency_uom ] ;
+                gist:hasMagnitude [ gist:hasAspect mgx:_Aspect_securityShareUnitPriceAmount ; gist:numericValue ?__trade_price_amt ] ;
+                gist:hasMagnitude [ gist:hasAspect mgx:_Aspect_securityTradeGrossAmount ; gist:numericValue ?__trade_gross_amt ] ;
+                gist:hasMagnitude [ gist:hasAspect mgx:_Aspect_securityTradeTransactionCommission ; gist:numericValue ?__trade_commission_amt ] ;
+                gist:hasMagnitude [ gist:hasAspect mgx:_Aspect_yieldToMaturity ; gist:numericValue ?__ytm_num ] ;
+            .
+            OPTIONAL { 
+                # Interest Days Paid 
+                ?__trade_purchase_evt gist:hasMagnitude ?__int_days_magn . 
+                ?__int_days_magn gist:hasAspect mgx:_Aspect_daysOfInterestPaid ; gist:numericValue ?__int_days .
+            }
+#                
+##purchase amount magn
+#            ?__trade_purch_magn gist:hasAspect mgx:_Aspect_securityShareCount ; gist:numericValue ?__trade_purch_amt .
+##trade net magn
+#            ?__trade_net_magn gist:hasAspect mgx:_Aspect_securityTradeNetAmount ; gist:numericValue ?__trade_net_amt .
+##trade price magn
+#            ?__trade_price_magn gist:hasAspect mgx:_Aspect_securityShareUnitPriceAmount ; gist:numericValue ?__trade_price_amt .
+## trade gross magn
+#            ?__trade_gross_magn gist:hasAspect mgx:_Aspect_securityTradeGrossAmount ; gist:numericValue ?__trade_gross_amt .
+## trade comm magn
+#            ?__trade_comm_magn gist:hasAspect mgx:_Aspect_securityTradeTransactionCommission ; gist:numericValue ?__trade_commission_amt .
+## trade ytm magn
+#            ?__trade_ytm_magn gist:hasAspect mgx:_Aspect_yieldToMaturity ; gist:numericValue ?__ytm_num .
+#
+             ?__trade_security mg:isListedOn ?__exchange ; 
+                mg:hasRepaymentTerms ?__bond_repayment_conditions_temp ;
+                mg:isIssuedBy ?__issuer_iri ;
+            .
+            ?__issuer_iri skos:prefLabel ?__issuer_str .
+#
+            ?__bond_repayment_conditions_temp 
+                mg:callable ?__callable ;
+                mg:specifies [ 
+                    gist:isCategorizedBy mgx:_FinancialBusinessEventType_debtPrincipalRepayment ;
+# HERE WE GET MATURITY DATE FROM THE OUTER QUERY
+                    mg:plannedOccursDate ?__trade_maturity ;
+                ] ;
+                a mg:BondRepaymentTerms ;
+            .
+#        # This is optional because we also support stripped bonds = no coupons
+            OPTIONAL { 
+                ?__trade_security mg:hasInterestPaymentTerms ?__coupon_payment_terms_temp .
+                    
+                ?__coupon_payment_terms_temp mg:specifies ?__coupon_payment_schedule_temp ;
+                    mg:couponPaymentMonthNumber ?__coupon_mo ;
+                    mg:couponPaymentMonthDayNumber ?__mo_day_nbr ;
+				.
+                    
+                ?__coupon_payment_schedule_temp a mg:CouponPaymentSchedule .
+
+                ?__next_coupon_evt a gist:ScheduledEvent ;
+                    gist:isMemberOf ?__coupon_payment_schedule_temp ;
+                    skos:prefLabel ?__next_cpn_label ;
+                    mg:plannedOccursDate ?__next_cpn_dt ;
+                    gist:isCategorizedBy mgx:_FinancialBusinessEventType_interestRemittance ;
+                .       
+            } #/OPTIONAL
+        }#/GRAPH
+    }#/WHERE
+    ORDER BY ?__trade_maturity
+    } # inner select
+
+    GRAPH mg3:__current__ {
+    ?__secacct gist:hasPositionIn ?__bond_iri ;
+        gist:isMemberOf ?__portfolio_account ;
+    .
+        
+    OPTIONAL { 
+        ?__secacct gist:isAffectedBy ?__activity_purchase_evt .
+        ?__activity_purchase_evt gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
+            mg:transactionDate ?__purch_dt ;
+            gist:hasMagnitude [ 
+                gist:hasAspect mgx:_Aspect_securityTradeNetAmount ;
+                gist:numericValue ?__net_amt ;
+            ] ;
+            gist:hasMagnitude [ 
+                gist:hasAspect mgx:_Aspect_securityTradeGrossAmount ;
+                gist:numericValue ?__gross_amt ;
+            ] ;
+        .
+    }
+    ?__portfolio_account gist:isIdentifiedBy [ gist:uniqueText ?__acct_number ] ;
+        a mg:InvestmentPortfolio ;
+    .
+
+    ?__bond_iri gist:isCategorizedBy mgx:_MarketableSecurityType_bond ; 
+        mg:hasRepaymentTerms ?__repayment_terms ;
+        gist:isIdentifiedBy [ gist:uniqueText ?__equity_symbol_str ] ;
+        gist:description ?desc ;
+    .
+    ?__repayment_terms mg:specifies [
+        gist:isCategorizedBy mgx:_FinancialBusinessEventType_debtPrincipalRepayment ;
+        mg:plannedOccursDate ?__maturity ;
+        a gist:ScheduledEvent ;
+    ] .
+    OPTIONAL { 
+        ?__bond_iri mg:hasInterestPaymentTerms ?__coupon_payment_terms .
+        ?__coupon_payment_terms a mg:CouponPaymentTerms . 
+    }
+
+} # combined
+    
+    # Commenting this out generates 
+    FILTER(?__trade_maturity = ?__maturity)
+
+#	# Determine whether a matching purchase is found in Activities and Trades
+#    # Only retain solutions with matching bond maturity date and issuer.
+# Ensure we have a solid match between trade and activity
+    BIND(?__trade_purch_dt = ?__purch_dt && 
+        ?__trade_gross_amt = ?__gross_amt && 
+        ?__trade_net_amt = ?__net_amt 
+    AS ?__purch_match)
+
+    FILTER(
+        ?__purch_match = true
+        &&
+        CONTAINS(?desc, ?__issuer_str)
+    )
+    
+    # Pull the currency symbol (USD,CAD)
+    GRAPH mg3:__units__ { ?__currency_uom gist:symbol ?__currency . }
+    BIND(REPLACE(STR(?__currency),"\\W+","-") AS ?__currency_key)
+
+##    BIND(2 * ?__coupon_trades / ?__principal AS ?coupon_calc)
+#    # Hope that one of the two coupon determination methods succeeds
+#    BIND(COALESCE(?__coupon_listed, ?__coupon_trades, ?coupon_calc) AS ?__coupon)
+#
+#    # Keys for use below
+    BIND(REPLACE(STR(?__trade_purch_dt),"\\W+","-") AS ?__date_key)
+    BIND(REPLACE(STR(?__acct_number),"\\W+","-") AS ?__acct_key)
+
+    BIND(IF(
+        STRSTARTS(?__equity_symbol_str,"."), 
+        STRAFTER(?__equity_symbol_str,"."),
+        IF(CONTAINS(?__equity_symbol_str,"."),
+            STRBEFORE(?__equity_symbol_str,"."),
+            ?__equity_symbol_str)) AS ?__symbol_str_norm)
+    # Equity Symbol
+    BIND(REPLACE(UCASE(STR(?__symbol_str_norm)), "\\W+", "-") AS ?__eq_symbol)
+
+#    # Transaction key = convenience binding for making new IRIs
+    BIND(CONCAT(
+        ?__acct_key,'_',
+        ?__eq_symbol,'_',
+        'first_coupon_',
+        STRBEFORE(STR(?__next_cpn_dt),"T"),'_',
+        ?__currency_key
+        ) AS ?__tx_key)
+
+## Sum of qty,price,gross,commission,net as a discrimator to create a unique Event IRI
+    BIND(MD5(STR(round((?__trade_purch_amt + ?__trade_price_amt + ?__trade_gross_amt + ?__trade_commission_amt + ?__trade_net_amt)*1000)/1000)) AS ?__discriminator_str)
+
+# Next Coupon Event
+    # BIND(STRBEFORE(STR(?__next_cpn_dt),"T") AS ?__next_cpn_key)
+    BIND(IRI(CONCAT(
+        STR(mg3:),
+        '_Event_',
+        ?__tx_key,'_',
+        ?__discriminator_str)) AS ?__1st_coupon_evt)        
+
+    # Coupon Payment Terms
+#    BIND(IRI(CONCAT(STR(mg3:),'_CouponPaymentTerms_', ?__eq_symbol)) AS ?__coupon_payment_terms)
+    # Coupon Payment Schedule
+    BIND(IRI(CONCAT(STR(mg3:),'_CouponPaymentSchedule_', ?__eq_symbol)) AS ?__coupon_payment_schedule)
+    # Coupon
+#    BIND(IRI(CONCAT(STR(mg3:),'_Magnitude_annual_percent_', STR(?__coupon * 100))) AS ?__coupon_rate_magn)
+    # Magnitude for YTM
+    BIND(IRI(CONCAT(STR(mg3:),'_Magnitude_yieldToMaturity_', STR(?__ytm_num))) AS ?__ytm_magn)
+        
+}
+#ORDER BY ?__purch_dt

@@ -249,6 +249,31 @@ Worth knowing before writing one: a mapped variable is a **required** join. A ro
 mapped cell is empty yields no solution at all, so the whole row vanishes — not just that
 value. Ordinary SPARQL, and the opposite of what the maps read like.
 
+### The bondfix demonstration — in progress
+`examples/moneygraph/bondfix/` re-expresses moneygraph's `fix-missing-bond-data.rq` as an
+ordered rule set held to the query's output quad for quad. **Round 1 is done**: fixture,
+oracle (the committed query with its unjoined currency pattern fixed) and a frozen golden,
+enforced by the integration suite. See that directory's README for the cases and for why the
+live store cannot serve as the oracle.
+
+Three engine gaps stand between it and a working rule set, taken in this order:
+1. **Multi-pattern L.** `jhp:hasMatchPattern` 1..n, each with its own `jhp:inGraph`, L
+   being their conjunction. Needed because trades and holdings share predicates, so the
+   merged-source workaround matches a trade against itself. Refused with `Rewrite` at first.
+2. **`jhp:hasBinding`**: `jhp:bindText` (one SPARQL expression, held to `check_filters`'
+   threat model) → a declared `gistp:LiteralVariable`, topologically ordered, usable as a
+   mint slot. It covers slugging, symbol normalisation and the MD5 discriminator the query
+   mints from, and it closes chained minting for literals. A declarative pipeline was
+   rejected because it cannot express the MD5.
+3. **`rerun_rules!`**: undo a set's earlier firings, then run. This is the rule-set
+   equivalent of the script's `DROP SILENT GRAPH`, and removes exactly what the set asserted.
+
+The decomposition then needs no further engine work:
+- OPTIONAL branches become separate rules.
+- Two output graphs become one rule per destination.
+- The heuristic trade↔holding join is materialised once, by the first rule, as a link fact
+  in a working graph.
+
 ### Known next tasks
 - **The list-valued source-map terms are unbuilt**: `gistp:mapFrom` (the vocabulary has no
   class for a source attribute, so there is nothing to read a column name off),
