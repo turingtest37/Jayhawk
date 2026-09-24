@@ -85,9 +85,18 @@
 :_id a gistp:LiteralVariable , gistp:SparqlVariable ;
     gistp:variableText "?id" ;
     gistp:requiresDatatype xsd:string .
-:_given a gistp:LiteralVariable , gistp:SparqlVariable ; gistp:variableText "?given" .
-:_title a gistp:LiteralVariable , gistp:SparqlVariable ; gistp:variableText "?title" .
-:_skill a gistp:LiteralVariable , gistp:SparqlVariable ; gistp:variableText "?skill" .
+# xsd:string on every mapped column, because that is what a CSV cell is. The engine does not
+# read requiresDatatype yet, but gistPatternShapes.ttl requires one per LiteralVariable, and
+# a cast step for typed columns will read exactly these declarations.
+:_given a gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?given" ;
+    gistp:requiresDatatype xsd:string .
+:_title a gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?title" ;
+    gistp:requiresDatatype xsd:string .
+:_skill a gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?skill" ;
+    gistp:requiresDatatype xsd:string .
 
 # Minted from the id column, which a source map bound. That is the join the feature exists
 # for: iriTemplate reads a value the match pattern never mentions.
