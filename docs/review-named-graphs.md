@@ -1,4 +1,4 @@
-# Adversarial review — `named-graphs` branch (`gistp:inGraph`, round 5a)
+# Adversarial review — `named-graphs` branch (`jhp:inGraph`, round 5a)
 
 > **STATUS: all findings closed.** F1–F5 were fixed on 2026-08-20 as the first commit of
 > round 5b, and each fix is pinned by a regression test named for its finding
@@ -20,7 +20,7 @@ outside the envelope the new tests cover.
 
 ## 1. What the change does, and what it gets right
 
-`gistp:inGraph` on a pattern (L, R, or a NAC) names the graph that pattern is evaluated in:
+`jhp:inGraph` on a pattern (L, R, or a NAC) names the graph that pattern is evaluated in:
 either a declared `gistp:SparqlVariable` (a *graph variable*) or a constant graph IRI.
 
 - `load_in_graph/1` reads it from the **default** graph — it is a statement *about* the
@@ -106,7 +106,7 @@ That assertion is currently pinning the bug in place. It should become `@test_th
 function dataset_lines(spec::RuleSpec, from::AbstractVector; keyword::AbstractString = "USING")
     if isempty(from)
         is_scoped(spec) && error(
-            "rule <$(spec.iri)>: gistp:inGraph needs an explicit graph set. With no dataset " *
+            "rule <$(spec.iri)>: jhp:inGraph needs an explicit graph set. With no dataset " *
             "clause a graph variable ranges over every named graph in the store -- " *
             "<$PROVENANCE_GRAPH>, every firing, every tombstone, and the rule's own pattern " *
             "graphs. An empty graph set is not 'the default graph' here, it is everything.")
@@ -174,7 +174,7 @@ Two further consequences of the same divergence:
 variable-vs-constant decision:
 
 ```julia
-"L's triples, scoped by gistp:inGraph if it has one. The one place that decision is made."
+"L's triples, scoped by jhp:inGraph if it has one. The one place that decision is made."
 match_text(spec::RuleSpec; indent::AbstractString = "  ") =
     spec.match_scope === nothing ?
         bgp_text(spec.match, spec; indent = indent) :

@@ -1,7 +1,7 @@
 #  RULE 1 -- the simplest useful shape: classify what is already there.
 #
 #  A financial instrument carrying both a coupon rate and a maturity date is a bond. That is
-#  a definition, not a change of mind, so the rule only ADDS: gistp:Assert.
+#  a definition, not a change of mind, so the rule only ADDS: jhp:_RewriteMode_assert.
 #
 #  What to notice:
 #    * ?rate and ?maturity are LITERAL-position variables, written "?rate"^^gistp:var.
@@ -14,16 +14,17 @@
 @prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
 @prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
 @prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
 @prefix mg:    <https://w3id.org/moneygraph/ns/ontology/> .
 @prefix :      <https://w3id.org/moneygraph/ns/rules/> .
 
 :ClassifyBond
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "Classify bond" ;
     skos:definition "An instrument with a coupon rate and a maturity date is a mg:Bond." ;
-    gistp:hasMatchPattern     :ClassifyBond_L ;
-    gistp:hasConstructPattern :ClassifyBond_R ;
-    gistp:rewriteMode         gistp:Assert .
+    jhp:hasMatchPattern     :ClassifyBond_L ;
+    jhp:hasConstructPattern :ClassifyBond_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_assert .
 
 :ClassifyBond_L rdf:type gistp:SparqlPattern .
 :ClassifyBond_R rdf:type gistp:SparqlPattern .

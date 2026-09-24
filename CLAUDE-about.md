@@ -62,14 +62,14 @@ five staged operations in one transaction — see the developer guide.
 
 ### The control layer
 
-`gistp:hasNegativeCondition` (0..n) compiles each guard graph to its own `FILTER NOT EXISTS`,
-emitted *after* the `BIND`s so a guard may name a minted variable. `gistp:strategy`
-(`Once` / `ToFixpoint`, defaulting to `ToFixpoint` for `Assert`), `gistp:maxIterations` and
-`gistp:priority` are loaded and validated; priority is displayed but not yet acted on.
+`jhp:hasNegativeCondition` (0..n) compiles each guard graph to its own `FILTER NOT EXISTS`,
+emitted *after* the `BIND`s so a guard may name a minted variable. `jhp:strategy`
+(`Once` / `ToFixpoint`, defaulting to `ToFixpoint` for `Assert`), `jhp:maxIterations` and
+`jhp:priority` are loaded and validated; priority is displayed but not yet acted on.
 `gistp:oneOf` compiles to `VALUES`, which constrains when L also binds the variable and
 generates when it does not.
 
-`gistp:inGraph` scopes a *pattern* to a named graph -- a declared variable binds whichever
+`jhp:inGraph` scopes a *pattern* to a named graph -- a declared variable binds whichever
 graph matched, any other IRI is a constant -- or, third reading, to a
 `gistp:TabularDataSource`, which compiles to `SERVICE <x-sparql-anything:>` and contributes no
 dataset clause at all. A scoped rule emits **both** `USING` and

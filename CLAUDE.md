@@ -6,7 +6,10 @@ project exists and where it is going.
 
 Turning RDF **graph patterns into functions that take a graph and produce a graph**, and
 building that into a working computing architecture. The pattern language itself is defined
-elsewhere — `gistPatterningDefinitions.ttl` in **`~/dev/gistPatterns`**. This project is about
+elsewhere — `gistPatterningDefinitions.ttl` in **`~/dev/gistPatterns`** (`gistp:`), and the
+rule layer this engine executes — `jhp:Rule`, `RuleSet`, modes, strategies, conditions — in
+`JayhawkPatterningDefinitions.ttl` in **`~/dev/JayhawkPatterningDefinitions`**
+([github](https://github.com/turingtest37/JayhawkPatterning)). This project is about
 **executing** those patterns: compiling, running, and reasoning over them.
 
 Organizing idea: a pattern can play the role of **I, L, or R** in a graph-rewrite span
@@ -56,7 +59,7 @@ references (no dangling condition). RDF's open world mostly tolerates this, but 
 deletes a node's identity triples while other triples still reference it yields silent
 orphans. `dangling_risks` **reports** this at compile time and `explain_rule` shows it before
 anything runs — it does not refuse, because stripping a node is sometimes the intent. For real
-DPO safety: add a NAC (`gistp:hasNegativeCondition`, implemented) or use
+DPO safety: add a NAC (`jhp:hasNegativeCondition`, implemented) or use
 AlgebraicRewriting.jl, where the dangling condition is enforced for real.
 
 ## Where the work stands
@@ -88,7 +91,7 @@ because SPARQL's `IRIREF` is a token whose character set already excludes every 
 quote the checks look for; a bracketed run that breaks that set is not an IRI, is not
 blanked, and is refused. The two remaining conformance gaps are deliberate: a filter is not
 parsed as an expression (`FILTER(!!!)` compiles and the store rejects it — contained, but
-diagnosed late), and `gistp:filterText` is never checked for being *semantically* sensible.
+diagnosed late), and `jhp:filterText` is never checked for being *semantically* sensible.
 
 The split between judgement and mechanism still holds, and is worth preserving:
 - **LLM** for authoring: vague intent → the right `SparqlVariable` individuals and
@@ -97,7 +100,7 @@ The split between judgement and mechanism still holds, and is worth preserving:
   difference between "usually compiles" and "provably compiles."
 
 ### Rule sets — built
-`run_rules` applies an ordered set. A set is `gistp:RuleSet ⊑ gist:OrderedCollection`, with
+`run_rules` applies an ordered set. A set is `jhp:RuleSet ⊑ gist:OrderedCollection`, with
 membership reified as `gist:OrderedMember` carrying `gist:providesOrderFor` and
 `gist:sequence`. **Not an `rdf:List`**, and the reason is decisive: SPARQL cannot recover a
 position from a list — a property path yields membership as a *set*, which is right for
@@ -107,9 +110,9 @@ the membership node is one `ORDER BY`. Reifying it also puts the position on the
 sets, and the set itself is a resource that can carry a label, a definition and its own
 validity period. That last is the point: a revised guideline is a revised rule *set*.
 
-Two levels of iteration, independent: each rule honours its own `gistp:strategy`, and the
+Two levels of iteration, independent: each rule honours its own `jhp:strategy`, and the
 set has one of its own governing how many times the whole ordered pass is made.
-`gistp:priority` survives as the ordering for a bare list of rules with no set object, and
+`jhp:priority` survives as the ordering for a bare list of rules with no set object, and
 as the tiebreak between equal sequence numbers — note the directions disagree, priority
 being higher-first and `gist:sequence` lower-first.
 
@@ -174,8 +177,8 @@ Retention is deliberately coupled to the firing: undo restores the claim *and* f
 retraction. A retraction outliving the firing that made it would assert a fact is no longer
 held while the fact sits in the graph.
 
-### Write-side `gistp:inGraph` — built
-`gistp:inGraph` on the **construct** pattern declares where a rule's output goes. Crucially
+### Write-side `jhp:inGraph` — built
+`jhp:inGraph` on the **construct** pattern declares where a rule's output goes. Crucially
 the destination is *not* part of compilation: `insert_query` still projects `R` into a fresh
 firing graph exactly as an unscoped rule does, and `promote_query` copies it into the
 destination afterwards. That split is the whole design — the firing graph stays the unit of
@@ -290,7 +293,7 @@ Kept as the record of why the current design won, not as live options.
   Oxigraph, Stardog, RDFox) for reasoning/materialization.
 - For fixpoint/closure work (RDFS/OWL RL), use a real reasoner as a separate process and
   materialize its output — it's a different operation (monotone closure) from SPO/DPO
-  rewriting; don't reimplement it in the compiler. Note that `gistp:Assert` runs to a fixpoint
+  rewriting; don't reimplement it in the compiler. Note that `jhp:_RewriteMode_assert` runs to a fixpoint
   *within one rule*; that is not the same thing as RDFS/OWL closure over a whole graph.
 - AlgebraicJulia stack (Catlab.jl, ACSets.jl, AlgebraicRewriting.jl) is the route for the
   functorial-migration or true-DPO path. API not yet stable — check current docs.

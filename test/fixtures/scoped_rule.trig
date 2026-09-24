@@ -7,30 +7,31 @@
 #  The overlap is the point. ex:s2 is Tagged in book A but not in book B, so a correctly
 #  scoped guard must decline it in A and allow it in B. A guard nested inside L's own
 #  GRAPH group would re-quantify ?_Book over every named graph and silently drop the
-#  ex:s2/B row -- see the scopeNote on gistp:inGraph, and `where_body`.
+#  ex:s2/B row -- see the scopeNote on jhp:inGraph, and `where_body`.
 
 @prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
 @prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
 @prefix ex:    <http://example.org/bk/> .
 @prefix :      <http://example.org/bkrules/> .
 
 :PerBook
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "Record which book a security is held in" ;
-    gistp:hasMatchPattern      :PerBook_L ;
-    gistp:hasConstructPattern  :PerBook_R ;
-    gistp:hasNegativeCondition :PerBook_NoTag ;
-    gistp:rewriteMode          gistp:Assert ;
-    gistp:strategy             gistp:Once .
+    jhp:hasMatchPattern      :PerBook_L ;
+    jhp:hasConstructPattern  :PerBook_R ;
+    jhp:hasNegativeCondition :PerBook_NoTag ;
+    jhp:rewriteMode          jhp:_RewriteMode_assert ;
+    jhp:strategy             jhp:Once .
 
 #  L and the guard read per book; R is unscoped, so the result lands in a firing graph.
-:PerBook_L     rdf:type gistp:SparqlPattern ; gistp:inGraph :_Book .
-:PerBook_NoTag rdf:type gistp:SparqlPattern ; gistp:inGraph :_Book .
+:PerBook_L     rdf:type gistp:SparqlPattern ; jhp:inGraph :_Book .
+:PerBook_NoTag rdf:type gistp:SparqlPattern ; jhp:inGraph :_Book .
 :PerBook_R     rdf:type gistp:SparqlPattern .
 
 #  A graph variable. It is declared like any other variable, and occupies no position inside
-#  any pattern graph -- gistp:inGraph names it from the default graph.
+#  any pattern graph -- jhp:inGraph names it from the default graph.
 :_Book rdf:type gistp:SparqlVariable ;
        gistp:variableText "?_Book" .
 

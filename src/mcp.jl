@@ -33,7 +33,7 @@ function tool_list_rules(; ep::SparqlEndpoint=endpoint())
             elseif r.mode === :Rewrite
                 "  (in-place rewrite: DELETES from live data)"
             else
-                "  <$(r.mode_iri)> is not a gistp:rewriteMode this engine knows -- " *
+                "  <$(r.mode_iri)> is not a jhp:rewriteMode this engine knows -- " *
                 "THIS RULE CANNOT BE RUN"
             end,
         )
@@ -143,7 +143,7 @@ function tool_explain_rule(
         end
     end
     # Filters get their own line rather than being left for the reader to spot in the query
-    # text below. `gistp:filterText` is the one term whose value is spliced into what runs,
+    # text below. `jhp:filterText` is the one term whose value is spliced into what runs,
     # so "read what the rule declares before you run it" has to be something this report
     # actually makes possible -- and the guards are already itemised on exactly that ground.
     if isempty(spec.filters)
@@ -261,7 +261,7 @@ Apply a rule and report the firings it produced.
 Every firing lands in its own named graph, so the result is attributable and each one can be
 reversed individually with `undo_firing`.
 
-**A `gistp:Rewrite` requires `confirm = true`.** `Construct` and `Assert` only ever add, so
+**A `jhp:_RewriteMode_rewrite` requires `confirm = true`.** `Construct` and `Assert` only ever add, so
 the worst a mistaken call does is create a graph somebody drops again. A rewrite takes facts
 away from live data. It is still reversible -- the removed triples go to a tombstone in the
 same atomic update -- but "reversible" and "reviewed" are different things, and a destructive
@@ -281,14 +281,14 @@ function tool_run_rule(
     # A model reads text, not exceptions. Answer the foreseeable mistakes rather than
     # raising -- an agent can act on "a Rewrite needs exactly one source graph".
     if mode_symbol(spec) === :Rewrite && length(source) != 1
-        return "Refused: <$rule> is a gistp:Rewrite, which edits one named graph in " *
+        return "Refused: <$rule> is a jhp:_RewriteMode_rewrite, which edits one named graph in " *
                "place, so `source` must name exactly one graph -- got $(length(source)). " *
                "A deletion has to say what it deletes from."
     end
     if mode_symbol(spec) === :Rewrite && !confirm
         d = dry_run(spec; source=source, ep=ep)
         return """
-               Refused: <$rule> is a gistp:Rewrite, which DELETES from live data. Against \
+               Refused: <$rule> is a jhp:_RewriteMode_rewrite, which DELETES from live data. Against \
                $(join(("<$g>" for g in source), " + ")) it would remove $(d.removed) \
                triple(s) and add $(d.count).
 
@@ -348,7 +348,7 @@ end
 """
     tool_list_rule_sets(; ep = endpoint()) -> String
 
-The catalogue of rule sets: every `gistp:RuleSet`, its label, and how many rules it orders.
+The catalogue of rule sets: every `jhp:RuleSet`, its label, and how many rules it orders.
 """
 function tool_list_rule_sets(; ep::SparqlEndpoint=endpoint())
     cat = list_rule_sets(; ep=ep)
@@ -377,7 +377,7 @@ reviewer who cannot see what was about to happen has not reviewed anything. An u
 set is diagnosed here as text rather than raised: a model can act on "member 2 has no
 gist:sequence".
 
-`confirm` is required if any member is a `gistp:Rewrite`, on the same grounds as
+`confirm` is required if any member is a `jhp:_RewriteMode_rewrite`, on the same grounds as
 [`tool_run_rule`](@ref) -- with the additional one that a set hides the destructive member
 among others, so the prompt matters more, not less.
 """
@@ -405,7 +405,7 @@ function tool_run_rules(
 
     if !isempty(rewrites) && length(unique(mode_symbol(s) for s in specs)) > 1
         return """
-               Refused: rule set <$set> mixes gistp:Rewrite with additive modes.
+               Refused: rule set <$set> mixes jhp:_RewriteMode_rewrite with additive modes.
 
                $listing
 
@@ -417,7 +417,7 @@ function tool_run_rules(
     end
     if !isempty(rewrites) && !confirm
         return """
-               Refused: rule set <$set> contains $(length(rewrites)) gistp:Rewrite rule(s), \
+               Refused: rule set <$set> contains $(length(rewrites)) jhp:_RewriteMode_rewrite rule(s), \
                which DELETE from live data.
 
                $listing
@@ -492,7 +492,7 @@ end
 
 Reverse one firing: drop its graph and retract its provenance record.
 
-Complete for `Construct` and `Assert`, which only add. When `gistp:Rewrite` lands, a firing
+Complete for `Construct` and `Assert`, which only add. When `jhp:_RewriteMode_rewrite` lands, a firing
 will also carry a tombstone graph that has to be replayed.
 
 Only firings. The graph IRI arrives from a model's tool call, so it is checked against the
@@ -530,7 +530,7 @@ end
 
 What was once true: every fact a rewrite has removed, with when and by which rule.
 
-The counterpart to asking the data what is true now. A `gistp:Rewrite` keeps the triples it
+The counterpart to asking the data what is true now. A `jhp:_RewriteMode_rewrite` keeps the triples it
 removes in a tombstone graph, so nothing is really lost -- but until this existed, finding
 them meant already knowing a tombstone's UUID. Provenance is the index.
 """
@@ -554,7 +554,7 @@ function tool_retractions(;
             "Nothing has been retracted in this store."
         else
             "Nothing matching $pat has been retracted. Note this reports only what a " *
-            "gistp:Rewrite removed -- a fact that was never asserted, and a fact that " *
+            "jhp:_RewriteMode_rewrite removed -- a fact that was never asserted, and a fact that " *
             "is still true, both look like this."
         end
     end

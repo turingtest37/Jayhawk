@@ -1,9 +1,9 @@
-#  Transitive closure of ex:partOf, as a gistp:Assert rule.
+#  Transitive closure of ex:partOf, as a jhp:_RewriteMode_assert rule.
 #
 #  Exists to exercise the fixpoint driver, which the Person-to-Employee example cannot:
 #  that rule reads gist:Person and writes ex:Employee, so its output can never match its own
 #  input and it converges after exactly one round. This one feeds itself, so it iterates
-#  until nothing new is derived -- the least fixpoint, which is what gistp:Assert means.
+#  until nothing new is derived -- the least fixpoint, which is what jhp:_RewriteMode_assert means.
 #
 #     default graph   the Rule and its variable declarations
 #     named graph L   the match pattern's triples, and nothing else
@@ -12,18 +12,19 @@
 @prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
 @prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
 @prefix ex:    <http://example.org/tc/> .
 @prefix :      <http://example.org/tcrules/> .
 
 :PartOfTransitive
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "partOf is transitive" ;
     skos:definition "If a is part of b and b is part of c, then a is part of c." ;
-    gistp:hasMatchPattern     :PartOfTransitive_L ;
-    gistp:hasConstructPattern :PartOfTransitive_R ;
+    jhp:hasMatchPattern     :PartOfTransitive_L ;
+    jhp:hasConstructPattern :PartOfTransitive_R ;
     # Assert, not Construct: the result is G union f(G), iterated to a least fixpoint.
     # Compiles to exactly the same SPARQL as Construct would; only the driver differs.
-    gistp:rewriteMode         gistp:Assert .
+    jhp:rewriteMode         jhp:_RewriteMode_assert .
 
 :PartOfTransitive_L rdf:type gistp:SparqlPattern ;
     skos:prefLabel "match: a two-step partOf chain" .

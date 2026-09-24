@@ -1028,7 +1028,7 @@ end
     @testset "an empty filter is refused rather than emitted" begin
         # FILTER() is a syntax error, and FILTER(true) would silently do nothing -- the
         # same trap `an empty condition is skipped` avoids on the guard side.
-        @test occursin("empty gistp:filterText", refusal(with_filters("   ")))
+        @test occursin("empty jhp:filterText", refusal(with_filters("   ")))
     end
 
     @testset "filters follow the BINDs, and every builder carries them" begin
@@ -1495,7 +1495,7 @@ end
         @test !occursin("USING", insert_query(spec; into="urn:firing:x"))
     end
 
-    @testset "gistp:inGraph scopes the triples, not the clause" begin
+    @testset "jhp:inGraph scopes the triples, not the clause" begin
         # Build a scoped variant: L in ?_Book, a NAC in the same ?_Book, R using ?_Book as
         # an ordinary object term (which is the whole provenance use case).
         base = person_to_employee()
@@ -1933,7 +1933,7 @@ end
     end
 
     @testset "F5: a template may mint from the graph L matched in" begin
-        # "one node per book" is the obvious thing to want from gistp:inGraph. check_mints
+        # "one node per book" is the obvious thing to want from jhp:inGraph. check_mints
         # computed `bound` without scope_vars, so it was refused -- and refused with a
         # message about minting from another minted variable, which ?_Book is not.
         BOOK = "$(R)_Book"
@@ -1980,7 +1980,7 @@ end
     end
 
     # ---------------------------------------------------------------------
-    # gistp:inGraph, third reading: a data source rather than a graph
+    # jhp:inGraph, third reading: a data source rather than a graph
     # ---------------------------------------------------------------------
 
     # A rule whose L is scoped to a gistp:TabularDataSource. Built here rather than loaded,
@@ -2265,7 +2265,7 @@ end
         end
         @test e isa ErrorException
         @test occursin(
-            "no gistp:inGraph naming a gistp:TabularDataSource", sprint(showerror, e)
+            "no jhp:inGraph naming a gistp:TabularDataSource", sprint(showerror, e)
         )
     end
 
@@ -2426,7 +2426,7 @@ end
         # later rules to read it -- and a Rewrite takes exactly one source graph, which is
         # its target, so after the first such firing there is no source it can accept.
         #
-        # An additive rule that declares gistp:inGraph on its construct pattern has no such
+        # An additive rule that declares jhp:inGraph on its construct pattern has no such
         # problem: its output is promoted into the named graph, the working set never grows,
         # and the Rewrite reads the derived triples from the graph they went to.
         undirected = [
@@ -2444,7 +2444,7 @@ end
         @test occursin("Rewrite rules: $(R)Del", msg)
         @test occursin("no destination: $(R)Add", msg)
         # and the fix is stated, not left to be inferred
-        @test occursin("gistp:inGraph on its construct pattern", msg)
+        @test occursin("jhp:inGraph on its construct pattern", msg)
 
         directed = [
             trivial("Add", Jayhawk.MODE_CONSTRUCT; cscope="urn:dest"),
@@ -2473,7 +2473,7 @@ end
             err
         end
         @test !(
-            e isa ArgumentError && occursin("mixes gistp:Rewrite", sprint(showerror, e))
+            e isa ArgumentError && occursin("mixes jhp:_RewriteMode_rewrite", sprint(showerror, e))
         )
     end
 

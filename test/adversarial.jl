@@ -284,7 +284,7 @@ end
     end
 
     # ===========================================================================
-    # 3b. gistp:Rewrite -- the pure half
+    # 3b. jhp:_RewriteMode_rewrite -- the pure half
     # ===========================================================================
     #
     # Round 2 turned on the one mode that takes facts away. The set arithmetic behind it is
@@ -764,11 +764,11 @@ end
 
             @testset "[PROVEN] one malformed rule does not take out the catalogue" begin
                 # rule_catalogue maps mode_symbol over every row, and mode_symbol throws on an
-                # unrecognised gistp:rewriteMode. One bad rule anywhere in the store and
+                # unrecognised jhp:rewriteMode. One bad rule anywhere in the store and
                 # tool_list_rules -- the agent's only way to discover *any* rule -- raises
                 # ArgumentError instead of listing the good ones.
                 #
-                # Observed: ArgumentError: unknown gistp:rewriteMode <http://example.org/NotAMode>
+                # Observed: ArgumentError: unknown jhp:rewriteMode <http://example.org/NotAMode>
                 Jayhawk.update!("""INSERT DATA { <urn:r:Odd> a <$(Jayhawk.C_RULE)> ;
                     <$(Jayhawk.P_MODE)> <http://example.org/NotAMode> . }""")
                 out = try
@@ -781,7 +781,7 @@ end
                 Jayhawk.update!("DELETE WHERE { <urn:r:Odd> ?p ?o }")
             end
 
-            @testset "[PIN] a rule with no gistp:Rule typing is still refused clearly" begin
+            @testset "[PIN] a rule with no jhp:Rule typing is still refused clearly" begin
                 err = try
                     tool_explain_rule("urn:does:not:exist")
                 catch e
@@ -892,7 +892,7 @@ end
             reset_store!()
         end
 
-        # --- 4f. gistp:Rewrite against live data --------------------------------------------
+        # --- 4f. jhp:_RewriteMode_rewrite against live data --------------------------------------------
         #
         # The destructive mode. Its whole licence to exist is that it is reversible: "the removed
         # triples go to a tombstone in the same atomic update" is what makes it defensible to hand
@@ -1019,7 +1019,7 @@ end
 
             @testset "[PROVEN] MCP refuses a bad source arity instead of raising" begin
                 # Every other refusal on the MCP surface comes back as a string the model can read
-                # and act on -- "Refused: ... is a gistp:Rewrite, which DELETES from live data",
+                # and act on -- "Refused: ... is a jhp:_RewriteMode_rewrite, which DELETES from live data",
                 # "Refused: ... is not a recorded firing". The source-arity check raises
                 # ArgumentError out of apply_rewrite!/dry_run_rewrite instead, so the agent gets a
                 # stack trace for the ordinary mistake of passing the wrong number of graphs.

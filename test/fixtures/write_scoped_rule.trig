@@ -1,4 +1,4 @@
-#  Rules that declare WHERE their output goes, with gistp:inGraph on the construct pattern.
+#  Rules that declare WHERE their output goes, with jhp:inGraph on the construct pattern.
 #
 #  Scope on the match pattern says which graphs a rule READS. Scope on the construct pattern
 #  says which graph it WRITES, and the two have almost nothing in common beyond the property
@@ -24,6 +24,7 @@
 @prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
 @prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
 @prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
 @prefix ex:    <http://example.org/ws/> .
 @prefix :      <http://example.org/wsrules/> .
 
@@ -32,13 +33,13 @@
 #################################################################
 
 :FileEmployee
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "File employee" ;
     skos:definition """Derive an employee record and write it into the HR graph rather than
                        leaving it in a firing graph for someone to merge by hand.""" ;
-    gistp:hasMatchPattern     :FileEmployee_L ;
-    gistp:hasConstructPattern :FileEmployee_R ;
-    gistp:rewriteMode         gistp:Construct .
+    jhp:hasMatchPattern     :FileEmployee_L ;
+    jhp:hasConstructPattern :FileEmployee_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_construct .
 
 :FileEmployee_L rdf:type gistp:SparqlPattern ;
     skos:prefLabel "match: a person with a name" .
@@ -46,7 +47,7 @@
 # The destination. A constant, and it is the whole of the write-side feature.
 :FileEmployee_R rdf:type gistp:SparqlPattern ;
     skos:prefLabel "construct: the employee record, in the HR graph" ;
-    gistp:inGraph <urn:jayhawk:ws-test:hr> .
+    jhp:inGraph <urn:jayhawk:ws-test:hr> .
 
 :_P rdf:type gistp:SparqlVariable ; gistp:variableText "?_P" ;
     skos:definition "The person. Bound by L, carried into R." .
@@ -76,21 +77,21 @@
 #  means.
 
 :CloseReportsTo
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "Reports-to is transitive" ;
     skos:definition "If a reports to b and b reports to c, then a reports to c." ;
-    gistp:hasMatchPattern     :CloseReportsTo_L ;
-    gistp:hasConstructPattern :CloseReportsTo_R ;
-    gistp:rewriteMode         gistp:Assert ;
-    gistp:strategy            gistp:ToFixpoint ;
-    gistp:maxIterations       10 .
+    jhp:hasMatchPattern     :CloseReportsTo_L ;
+    jhp:hasConstructPattern :CloseReportsTo_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_assert ;
+    jhp:strategy            jhp:ToFixpoint ;
+    jhp:maxIterations       10 .
 
 :CloseReportsTo_L rdf:type gistp:SparqlPattern ;
     skos:prefLabel "match: a two-step reporting chain" .
 
 :CloseReportsTo_R rdf:type gistp:SparqlPattern ;
     skos:prefLabel "construct: the shortcut, in the same graph" ;
-    gistp:inGraph <urn:jayhawk:ws-test:org> .
+    jhp:inGraph <urn:jayhawk:ws-test:org> .
 
 :_a rdf:type gistp:SparqlVariable ; gistp:variableText "?a" .
 :_b rdf:type gistp:SparqlVariable ; gistp:variableText "?b" .
@@ -113,15 +114,15 @@
 #  graph would have no way to say which went where. Undo would be guesswork.
 
 :FileByVariable
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "File into whichever graph the data names" ;
-    gistp:hasMatchPattern     :FileByVariable_L ;
-    gistp:hasConstructPattern :FileByVariable_R ;
-    gistp:rewriteMode         gistp:Construct .
+    jhp:hasMatchPattern     :FileByVariable_L ;
+    jhp:hasConstructPattern :FileByVariable_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_construct .
 
 :FileByVariable_L rdf:type gistp:SparqlPattern .
 :FileByVariable_R rdf:type gistp:SparqlPattern ;
-    gistp:inGraph :_g .
+    jhp:inGraph :_g .
 
 :_g rdf:type gistp:SparqlVariable ; gistp:variableText "?_g" ;
     skos:definition "A graph, bound by the data. Legal on a read scope, refused on a write." .

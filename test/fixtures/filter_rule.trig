@@ -22,6 +22,7 @@
 @prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
 @prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
 @prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
 @prefix ex:    <http://example.org/ops/> .
 @prefix :      <http://example.org/rules/> .
 
@@ -30,15 +31,15 @@
 #################################################################
 
 :OrderPrecedence
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "Order precedence" ;
     skos:definition """An order precedes another when its order number sorts first. Needs a
                        comparison between two bound values, which is exactly what a Basic
                        Graph Pattern cannot say.""" ;
-    gistp:hasMatchPattern     :OrderPrecedence_L ;
-    gistp:hasConstructPattern :OrderPrecedence_R ;
-    gistp:rewriteMode         gistp:Construct ;
-    gistp:hasFilterCondition  :EarlierNumber , :NumberIsAString .
+    jhp:hasMatchPattern     :OrderPrecedence_L ;
+    jhp:hasConstructPattern :OrderPrecedence_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_construct ;
+    jhp:hasFilterCondition  :EarlierNumber , :NumberIsAString .
 
 :OrderPrecedence_L rdf:type gistp:SparqlPattern ;
     skos:prefLabel "match: any two orders carrying order numbers" .
@@ -51,16 +52,16 @@
 # Asymmetric on purpose: `<` rather than `!=` rules out both the self-pairs and the
 # mirror-image duplicates in one expression.
 :EarlierNumber
-    rdf:type gistp:FilterCondition ;
+    rdf:type jhp:FilterCondition ;
     skos:prefLabel "the first order number sorts before the second" ;
-    gistp:filterText "STR(?numA) < STR(?numB)" .
+    jhp:filterText "STR(?numA) < STR(?numB)" .
 
 # A full IRI, with the '#' an RDF datatype almost always carries. Written in angle
 # brackets because this compiler emits no PREFIX line and never will.
 :NumberIsAString
-    rdf:type gistp:FilterCondition ;
+    rdf:type jhp:FilterCondition ;
     skos:prefLabel "the order number is a plain string" ;
-    gistp:filterText "DATATYPE(?numA) = <http://www.w3.org/2001/XMLSchema#string>" .
+    jhp:filterText "DATATYPE(?numA) = <http://www.w3.org/2001/XMLSchema#string>" .
 
 # --- variables -------------------------------------------------------------
 
@@ -97,19 +98,19 @@
 #    A second rule: a condition that declares no expression
 #################################################################
 #
-#  gistp:hasFilterCondition points at something with no gistp:filterText. Fetched through a
+#  jhp:hasFilterCondition points at something with no jhp:filterText. Fetched through a
 #  join this row simply would not come back, the rule would compile to no FILTER, and it
 #  would then match MORE than it says -- the loudest possible bug arriving as the quietest
 #  possible symptom. load_filters uses an OPTIONAL so it can refuse instead.
 
 :OrderPrecedenceBroken
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "Order precedence, with a condition that says nothing" ;
-    gistp:hasMatchPattern     :OrderPrecedence_L ;
-    gistp:hasConstructPattern :OrderPrecedence_R ;
-    gistp:rewriteMode         gistp:Construct ;
-    gistp:hasFilterCondition  :SaysNothing .
+    jhp:hasMatchPattern     :OrderPrecedence_L ;
+    jhp:hasConstructPattern :OrderPrecedence_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_construct ;
+    jhp:hasFilterCondition  :SaysNothing .
 
 :SaysNothing
-    rdf:type gistp:FilterCondition ;
+    rdf:type jhp:FilterCondition ;
     skos:prefLabel "a condition someone forgot to finish" .

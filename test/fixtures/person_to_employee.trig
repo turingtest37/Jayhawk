@@ -1,7 +1,7 @@
-#  NOTE: this is a copy of gistPatterns/example_rule.trig, kept here so that Jayhawk's
-#  test suite is self-contained and does not reach into a sibling repository. The
-#  authoritative version lives in ~/dev/gistPatterns, where verify.py validates it against
-#  gistPatternShapes.ttl. If the two drift, that one wins.
+#  NOTE: this is a copy of JayhawkPatterning's examples/example_rule.trig, kept here so that
+#  Jayhawk's test suite is self-contained and does not reach into a sibling repository. The
+#  authoritative version lives in ~/dev/JayhawkPatterningDefinitions, where tools/verify.py
+#  validates it against JayhawkPatternShapes.ttl. If the two drift, that one wins.
 #
 # A complete rewrite rule, serialised as TriG.
 #
@@ -26,6 +26,7 @@
 @prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
 @prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
 @prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
 @prefix ex:    <http://example.org/hr/> .
 @prefix :      <http://example.org/rules/> .
 
@@ -34,13 +35,13 @@
 #################################################################
 
 :PersonToEmployee
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "Person to Employee" ;
     skos:definition "Every gist:Person bearing an identifier becomes an ex:Employee carrying the same identifier text." ;
-    gistp:hasMatchPattern     :PersonToEmployee_L ;
-    gistp:hasConstructPattern :PersonToEmployee_R ;
+    jhp:hasMatchPattern     :PersonToEmployee_L ;
+    jhp:hasConstructPattern :PersonToEmployee_R ;
     # Pure function G -> f(G): compiles to CONSTRUCT { R } WHERE { L }.
-    gistp:rewriteMode         gistp:Construct .
+    jhp:rewriteMode         jhp:_RewriteMode_construct .
 
 :PersonToEmployee_L rdf:type gistp:SparqlPattern ;
     skos:prefLabel "match: a Person with an identifier" .

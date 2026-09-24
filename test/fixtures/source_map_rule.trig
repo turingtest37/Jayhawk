@@ -21,22 +21,23 @@
 @prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
 @prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
 @prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
 @prefix fx:    <http://sparql.xyz/facade-x/ns/> .
 @prefix ex:    <http://example.org/staff/> .
 @prefix :      <http://example.org/smrules/> .
 
 :StaffFromCsv
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "Staff from CSV" ;
     skos:definition """Read a staff roster, minting a person per row from the id column and
                        cleaning the title and skills columns on the way in.""" ;
-    gistp:hasMatchPattern     :StaffFromCsv_L ;
-    gistp:hasConstructPattern :StaffFromCsv_R ;
-    gistp:rewriteMode         gistp:Construct .
+    jhp:hasMatchPattern     :StaffFromCsv_L ;
+    jhp:hasConstructPattern :StaffFromCsv_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_construct .
 
 :StaffFromCsv_L rdf:type gistp:SparqlPattern ;
     skos:prefLabel "match: a row of the roster" ;
-    gistp:inGraph :_Roster .
+    jhp:inGraph :_Roster .
 
 :StaffFromCsv_R rdf:type gistp:SparqlPattern ;
     skos:prefLabel "construct: the person" .

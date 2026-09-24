@@ -14,18 +14,19 @@
 @prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
 @prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
 @prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
 @prefix mg:    <https://w3id.org/moneygraph/ns/ontology/> .
 @prefix mg3:   <https://w3id.org/moneygraph/ns/data/> .
 @prefix mgx:   <https://w3id.org/moneygraph/ns/example/> .
 @prefix :      <https://w3id.org/moneygraph/ns/rules/> .
 
 :DomesticListing
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "Domestic listing" ;
     skos:definition "A security listed on a US exchange is domestically listed." ;
-    gistp:hasMatchPattern     :DomesticListing_L ;
-    gistp:hasConstructPattern :DomesticListing_R ;
-    gistp:rewriteMode         gistp:Construct .
+    jhp:hasMatchPattern     :DomesticListing_L ;
+    jhp:hasConstructPattern :DomesticListing_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_construct .
 
 :DomesticListing_L rdf:type gistp:SparqlPattern .
 :DomesticListing_R rdf:type gistp:SparqlPattern .

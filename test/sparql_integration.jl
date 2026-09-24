@@ -744,7 +744,7 @@ INSERT DATA { GRAPH <$OG> {
             Jayhawk.update!("DELETE WHERE { <$rule> <$(Jayhawk.P_STRATEGY)> ?o }")
             spec = load_rule(rule)
             @test spec.strategy === nothing
-            @test effective_strategy(spec) === :ToFixpoint       # from gistp:Assert
+            @test effective_strategy(spec) === :ToFixpoint       # from jhp:_RewriteMode_assert
             Jayhawk.update!("""INSERT DATA {
                 <$rule> <$(Jayhawk.P_STRATEGY)> <$(Jayhawk.STRATEGY_TOFIXPOINT)> }""")
         end
@@ -905,8 +905,8 @@ ex:s2 ex:p ex:plain .
         Jayhawk.update!("DROP SILENT GRAPH <$SK>")
     end
 
-    @testset "gistp:inGraph reads a data source, not only a graph" begin
-        # Round 5b: the third reading of gistp:inGraph. The scope names a
+    @testset "jhp:inGraph reads a data source, not only a graph" begin
+        # Round 5b: the third reading of jhp:inGraph. The scope names a
         # gistp:TabularDataSource instead of a graph, and the pattern compiles to
         # SERVICE <x-sparql-anything:> rather than GRAPH.
         #
@@ -922,14 +922,15 @@ ex:s2 ex:p ex:plain .
             @prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
             @prefix gist:  <$(GIST)> .
             @prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+            @prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
             @prefix fx:    <$(FXN)> .
             @prefix xyz:   <http://sparql.xyz/facade-x/data/> .
             @prefix :      <$(CR)> .
-            :CsvToPerson a gistp:Rule ;
-                gistp:hasMatchPattern :CsvToPerson_L ;
-                gistp:hasConstructPattern :CsvToPerson_R ;
-                gistp:rewriteMode gistp:Construct ; gistp:strategy gistp:Once .
-            :CsvToPerson_L a gistp:SparqlPattern ; gistp:inGraph :_People .
+            :CsvToPerson a jhp:Rule ;
+                jhp:hasMatchPattern :CsvToPerson_L ;
+                jhp:hasConstructPattern :CsvToPerson_R ;
+                jhp:rewriteMode jhp:_RewriteMode_construct ; jhp:strategy jhp:Once .
+            :CsvToPerson_L a gistp:SparqlPattern ; jhp:inGraph :_People .
             :CsvToPerson_R a gistp:SparqlPattern .
             :_People a gistp:TabularDataSource ; fx:csv.headers "true" ; $(extra)
                      fx:location $(location) .
@@ -973,7 +974,7 @@ ex:s2 ex:p ex:plain .
         engine_cleanup()
     end
 
-    @testset "gistp:hasFilterCondition: the comparison a BGP cannot make" begin
+    @testset "jhp:hasFilterCondition: the comparison a BGP cannot make" begin
         # `check_filters` argues at length about what the emitted text may contain. Only a
         # real SPARQL engine can settle whether what it lets through actually parses and
         # actually narrows the match, so that is what this does.
@@ -1038,27 +1039,27 @@ ex:s2 ex:p ex:plain .
 
         @testset "a condition that declares no expression is refused" begin
             # It would compile to no FILTER at all, so the rule would quietly match MORE
-            # than it says. An inner join on gistp:filterText could not tell the difference.
+            # than it says. An inner join on jhp:filterText could not tell the difference.
             e = try
                 load_rule("$(RULES)OrderPrecedenceBroken")
             catch err
                 err
             end
             @test e isa ErrorException
-            @test occursin("declares no gistp:filterText", sprint(showerror, e))
+            @test occursin("declares no jhp:filterText", sprint(showerror, e))
         end
 
         Jayhawk.update!("DROP SILENT GRAPH <$FG>")
         Jayhawk.update!("DELETE WHERE { ?s <$(Jayhawk.P_FILTER)> ?o } ;
                          DELETE WHERE { ?s <$(Jayhawk.P_FILTERTEXT)> ?o } ;
-                         DELETE WHERE { ?s a <$(Jayhawk.GISTP_NS)FilterCondition> }")
+                         DELETE WHERE { ?s a <$(Jayhawk.JHP_NS)FilterCondition> }")
         for g in ("$(RULES)OrderPrecedence_L", "$(RULES)OrderPrecedence_R")
             Jayhawk.update!("DROP SILENT GRAPH <$g>")
         end
         engine_cleanup()
     end
 
-    @testset "gistp:inGraph reads per named graph" begin
+    @testset "jhp:inGraph reads per named graph" begin
         # Round 5a: the read side. L and its guard are scoped to a graph variable; R uses
         # that variable as an ordinary term, so "which graph did this come from" becomes a
         # fact the rule asserts.
@@ -1326,7 +1327,7 @@ ex:s2 ex:p ex:plain .
         end
 
         @testset "a rule can declare where its output goes" begin
-            # Write-side gistp:inGraph. What does NOT change is the firing graph: a scoped rule
+            # Write-side jhp:inGraph. What does NOT change is the firing graph: a scoped rule
             # still projects R into a fresh one, which is then pruned and promoted. That is why
             # the write stays reversible -- undo retracts from the destination exactly what the
             # firing graph holds, rather than re-deriving it and hoping the two agree.
@@ -1552,7 +1553,7 @@ ex:s2 ex:p ex:plain .
             end
 
             @testset "an ad-hoc list is ordered by priority, not by argument order" begin
-                # What gistp:priority is still for, now that gist:sequence carries set-relative
+                # What jhp:priority is still for, now that gist:sequence carries set-relative
                 # order. AssignReview declares priority 100; PersonToEmployee declares none, so
                 # 0. Passing them lowest-first must still run the higher priority first.
                 Jayhawk.load_file!(fixture("nac_rule.trig"))
@@ -1582,7 +1583,7 @@ ex:s2 ex:p ex:plain .
                     ("NoMembers", "has no members"),
                     ("MissingSequence", "has no gist:sequence"),
                     ("MissingTarget", "has no gist:providesOrderFor"),
-                    ("OrdersANonRule", "is not typed gistp:Rule"),
+                    ("OrdersANonRule", "is not typed jhp:Rule"),
                     ("FirstDisagrees", "states its order twice"),
                     ("Duplicated", "more than one position"),
                 )
@@ -1644,7 +1645,7 @@ ex:s2 ex:p ex:plain .
         spec = load_rule("$(BKR)PerBook")
 
         @testset "the graph variable is discovered from the default graph" begin
-            # gistp:inGraph is a statement ABOUT the pattern, so it lives in the default
+            # jhp:inGraph is a statement ABOUT the pattern, so it lives in the default
             # graph and its object occupies no position inside any pattern. Without the
             # scope branch in _occurs_in it is never found, and the compiler emits
             # GRAPH <...:_Book> -- a constant naming a graph nobody created. The rule then

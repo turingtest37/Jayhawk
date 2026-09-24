@@ -14,7 +14,7 @@
 #      "coupon/IBM%203.30%25%20of%202029" -- correct, legal, and unreadable. ENCODE_FOR_URI
 #      is not slugging: it percent-encodes rather than tidying. Mint from a controlled
 #      identifier, never from free text.
-#    * gistp:strategy ToFixpoint with a stated budget. Minting is deterministic, so this
+#    * jhp:strategy ToFixpoint with a stated budget. Minting is deterministic, so this
 #      would converge anyway -- but a rule that says when it is done is better than one that
 #      merely happens to stop.
 
@@ -22,22 +22,23 @@
 @prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
 @prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
 @prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
 @prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
 @prefix mg:    <https://w3id.org/moneygraph/ns/ontology/> .
 @prefix mgx:   <https://w3id.org/moneygraph/ns/example/> .
 @prefix :      <https://w3id.org/moneygraph/ns/rules/> .
 
 :MintCouponEvent
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "Mint coupon payment event" ;
     skos:definition "Every bond gets a coupon payment event, unless it already has one." ;
-    gistp:hasMatchPattern      :MintCouponEvent_L ;
-    gistp:hasConstructPattern  :MintCouponEvent_R ;
-    gistp:hasNegativeCondition :MintCouponEvent_NoEventYet ;
-    gistp:rewriteMode          gistp:Assert ;
-    gistp:strategy             gistp:ToFixpoint ;
-    gistp:maxIterations        5 ;
-    gistp:priority             50 .
+    jhp:hasMatchPattern      :MintCouponEvent_L ;
+    jhp:hasConstructPattern  :MintCouponEvent_R ;
+    jhp:hasNegativeCondition :MintCouponEvent_NoEventYet ;
+    jhp:rewriteMode          jhp:_RewriteMode_assert ;
+    jhp:strategy             jhp:ToFixpoint ;
+    jhp:maxIterations        5 ;
+    jhp:priority             50 .
 
 :MintCouponEvent_L           rdf:type gistp:SparqlPattern .
 :MintCouponEvent_R           rdf:type gistp:SparqlPattern .

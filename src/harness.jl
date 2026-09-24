@@ -10,7 +10,7 @@
 # purpose is to let AI agents mutate enterprise data, reversibility is not a nice-to-have.
 #
 # Round 1 is additive only -- no rule deletes anything -- so DROP is a complete undo. When
-# gistp:Rewrite lands, deletions must additionally be captured into a tombstone graph in the
+# jhp:_RewriteMode_rewrite lands, deletions must additionally be captured into a tombstone graph in the
 # same atomic update, because DROP cannot restore what a rule removed.
 
 using UUIDs
@@ -344,7 +344,7 @@ end
 """
     apply_rewrite!(spec; into, source, actor, iteration, ep) -> Firing
 
-Apply a `gistp:Rewrite`: the one mode that changes the data rather than adding beside it.
+Apply a `jhp:_RewriteMode_rewrite`: the one mode that changes the data rather than adding beside it.
 
 **Exactly one source graph, and it is the target.** The other modes read a union and write
 elsewhere, so any number of sources is meaningful. A deletion has to name the graph it
@@ -365,7 +365,7 @@ function apply_rewrite!(
 )
     length(source) == 1 || throw(
         ArgumentError(
-            "rule <$(spec.iri)>: gistp:Rewrite needs exactly one source graph, which is the " *
+            "rule <$(spec.iri)>: jhp:_RewriteMode_rewrite needs exactly one source graph, which is the " *
             "graph it edits; got $(length(source)). Construct and Assert read a union and " *
             "write elsewhere, but a deletion has to name what it deletes from.",
         ),
@@ -412,7 +412,7 @@ const DEFAULT_MAX_ITERATIONS = 100
 Which application strategy actually governs this run.
 
 Three sources, most specific first: what the caller asked for, what the rule declares with
-`gistp:strategy`, and failing both the default for its mode. `Assert` defaults to
+`jhp:strategy`, and failing both the default for its mode. `Assert` defaults to
 `ToFixpoint` because inflationary iteration is what the mode means; `Construct` is a pure
 function and `Rewrite` deletes, so both default to `Once`.
 
@@ -482,7 +482,7 @@ function run_rule(
         throw(
             ArgumentError(
                 "rule <$(spec.iri)>: a rule whose match pattern or negative condition " *
-                "carries gistp:inGraph must name its graphs in `source`. " *
+                "carries jhp:inGraph must name its graphs in `source`. " *
                 "With no dataset clause a graph variable ranges over every named graph in the " *
                 "store, including <$PROVENANCE_GRAPH> and every firing and tombstone -- so an " *
                 "empty `source` is not 'the default graph' here, it is everything.",
@@ -502,10 +502,10 @@ function run_rule(
         strat === :ToFixpoint &&
         throw(
             ArgumentError(
-                "rule <$(spec.iri)>: gistp:inGraph on the match pattern with a ToFixpoint " *
+                "rule <$(spec.iri)>: jhp:inGraph on the match pattern with a ToFixpoint " *
                 "strategy is not supported yet. Each iteration adds its firing graph to the " *
                 "working set, so the next round would bind that firing as a graph to match " *
-                "in. Declare gistp:strategy gistp:Once, or pass strategy = :Once. " *
+                "in. Declare jhp:strategy jhp:Once, or pass strategy = :Once. " *
                 "(A scope on the CONSTRUCT pattern does iterate -- its output is promoted " *
                 "into the destination rather than appended to the working set.)",
             ),
@@ -549,9 +549,9 @@ function run_rule(
         spec.max_iterations === nothing
         throw(
             ArgumentError(
-                "rule <$(spec.iri)>: a gistp:Rewrite run to a fixpoint with no " *
-                "gistp:hasNegativeCondition must state a bound. Give the rule a negative " *
-                "condition saying when it has already fired, or set gistp:maxIterations -- " *
+                "rule <$(spec.iri)>: a jhp:_RewriteMode_rewrite run to a fixpoint with no " *
+                "jhp:hasNegativeCondition must state a bound. Give the rule a negative " *
+                "condition saying when it has already fired, or set jhp:maxIterations -- " *
                 "falling back to a default of $DEFAULT_MAX_ITERATIONS destructive passes is " *
                 "not a decision this should make for you.",
             ),
@@ -584,7 +584,7 @@ function run_rule(
     return error(
         """
         rule <$(spec.iri)>: still changing the graph after $budget iterations. Either \
-        raise the bound, add a gistp:hasNegativeCondition saying when the rule has \
+        raise the bound, add a jhp:hasNegativeCondition saying when the rule has \
         already fired, or check for IRI minting via gistp:iriTemplate, which turns \
         fixpoint evaluation into the chase and need not terminate."""
     )
@@ -594,26 +594,26 @@ end
     run_rules(set; source = String[], actor = "jayhawk", strategy = nothing,
               max_iterations = nothing, ep = endpoint()) -> Vector{Firing}
 
-Apply an ordered rule set. `set` may be a `RuleSetSpec`, the IRI of a `gistp:RuleSet`, or a
+Apply an ordered rule set. `set` may be a `RuleSetSpec`, the IRI of a `jhp:RuleSet`, or a
 bare vector of rule IRIs.
 
 Two levels of iteration, and they are independent. Each rule still honours its **own**
-`gistp:strategy`, so an `Assert` rule closes internally before the next rule is reached. The
+`jhp:strategy`, so an `Assert` rule closes internally before the next rule is reached. The
 **set's** strategy governs how many times the whole ordered pass is made: `Once` by default,
 `ToFixpoint` to repeat until a complete pass neither adds nor removes anything. A cascade
 where a later rule feeds an earlier one needs the second, and cannot be expressed by rule
 strategies alone.
 
-Given a bare vector, order is `gistp:priority` descending then IRI -- the case that keeps
-`gistp:priority` useful now that `gist:sequence` carries set-relative order. Note the
+Given a bare vector, order is `jhp:priority` descending then IRI -- the case that keeps
+`jhp:priority` useful now that `gist:sequence` carries set-relative order. Note the
 directions disagree: priority is higher-first, `gist:sequence` is lower-first.
 
 **Mixed modes need a destination.** An undirected additive rule's output is a new named
-graph that must join the working set for later rules to see it, but a `gistp:Rewrite` needs
+graph that must join the working set for later rules to see it, but a `jhp:_RewriteMode_rewrite` needs
 exactly one source graph, which is also its target. Those requirements are contradictory the
 moment such a rule has fired, so a set that mixes a `Rewrite` with an additive rule that has
 no write destination is refused. Give every additive member a destination with write-side
-`gistp:inGraph` and the set composes: its output is promoted into that graph rather than
+`jhp:inGraph` and the set composes: its output is promoted into that graph rather than
 appended to the working set, so the `Rewrite` still has exactly one source and reads the
 derived triples from where they were written. Refusing the undirected case is the only
 honest option: the alternative is handing the rewrite the original graph alone and quietly
@@ -700,7 +700,7 @@ function _run_rule_sequence(
     # later rules to read it -- and a Rewrite takes exactly one source graph, which is its
     # target, so after the first such firing there is no source it can accept.
     #
-    # Give those rules a gistp:inGraph on their construct pattern and the contradiction goes
+    # Give those rules a jhp:inGraph on their construct pattern and the contradiction goes
     # away: the output is promoted into the named destination instead, the working set never
     # grows, and a Rewrite later in the set reads the derived triples from the graph they were
     # written to. That is what write-side scoping bought beyond materialisation -- the mixed
@@ -711,13 +711,13 @@ function _run_rule_sequence(
     if !isempty(rewrites) && !isempty(floating)
         throw(
             ArgumentError(
-                "rule set $label mixes gistp:Rewrite with additive rules that do not say " *
+                "rule set $label mixes jhp:_RewriteMode_rewrite with additive rules that do not say " *
                 "where their output goes. Rewrite rules: $(join(rewrites, ", ")). Additive " *
                 "rules with no destination: $(join(floating, ", ")). An undirected additive " *
                 "rule writes into a fresh firing graph which must join the working set for " *
                 "later rules to read it, but a Rewrite takes exactly one source graph and " *
                 "that graph is its target -- so after the first such firing there is no " *
-                "source it can accept. Give each of those rules gistp:inGraph on its " *
+                "source it can accept. Give each of those rules jhp:inGraph on its " *
                 "construct pattern naming the graph the Rewrite reads, and the set composes; " *
                 "or split it in two and run them in sequence.",
             ),
@@ -788,7 +788,7 @@ function dry_run_rewrite(
 )
     length(source) == 1 || throw(
         ArgumentError(
-            "rule <$(spec.iri)>: gistp:Rewrite needs exactly one source graph; got $(length(source)).",
+            "rule <$(spec.iri)>: jhp:_RewriteMode_rewrite needs exactly one source graph; got $(length(source)).",
         ),
     )
     gadd, gdel = new_firing_graph(), new_firing_graph()
@@ -981,7 +981,7 @@ end
 What was once true: every triple a rewrite has removed, with when and by which rule.
 
 This is the question the engine could always answer in principle and never in practice. A
-`gistp:Rewrite` writes the triples it removes into a tombstone graph, so the facts survive
+`jhp:_RewriteMode_rewrite` writes the triples it removes into a tombstone graph, so the facts survive
 the deletion -- but finding them meant knowing a tombstone's IRI, which is a UUID nobody
 holds. Here the provenance record is the index: tombstones are reached through
 `jayhawk:tombstoneGraph`, so only graphs this engine actually wrote are searched, and each

@@ -28,6 +28,7 @@
 @prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
 @prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
 @prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
 @prefix ex:    <http://example.org/ops/> .
 @prefix :      <http://example.org/rules/> .
 
@@ -36,16 +37,16 @@
 #################################################################
 
 :ComplianceChecks
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "Compliance check per regulation" ;
     skos:definition """Every widget needs one compliance check per regulation we operate
                        under. One match, three results.""" ;
-    gistp:hasMatchPattern      :ComplianceChecks_L ;
-    gistp:hasConstructPattern  :ComplianceChecks_R ;
-    gistp:hasNegativeCondition :ComplianceChecks_NotYet ;
-    gistp:rewriteMode          gistp:Assert ;
-    gistp:strategy             gistp:ToFixpoint ;
-    gistp:maxIterations        5 .
+    jhp:hasMatchPattern      :ComplianceChecks_L ;
+    jhp:hasConstructPattern  :ComplianceChecks_R ;
+    jhp:hasNegativeCondition :ComplianceChecks_NotYet ;
+    jhp:rewriteMode          jhp:_RewriteMode_assert ;
+    jhp:strategy             jhp:ToFixpoint ;
+    jhp:maxIterations        5 .
 
 :ComplianceChecks_L rdf:type gistp:SparqlPattern ;
     skos:prefLabel "match: a widget with a code" .

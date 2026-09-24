@@ -7,7 +7,7 @@
 #  structure -- a separate gist:ID node carrying the text -- is replaced by a flat
 #  ex:employeeNumber on the person, and the ID node is taken away.
 #
-#  That is what gistp:Rewrite is for, and it is the only mode where I matters. I is authored
+#  That is what jhp:_RewriteMode_rewrite is for, and it is the only mode where I matters. I is authored
 #  by repetition: `:_P a gist:Person` appears in BOTH graphs, so it survives. Everything else
 #  in L is in L \ I and is deleted.
 #
@@ -28,6 +28,7 @@
 @prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
 @prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
 @prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
 @prefix ex:    <http://example.org/hr/> .
 @prefix :      <http://example.org/rules/> .
 
@@ -36,14 +37,14 @@
 #################################################################
 
 :FlattenIdentifier
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "Flatten identifier" ;
     skos:definition """Replace a person's gist:ID structure with a flat ex:employeeNumber,
                        removing the identifier node.""" ;
-    gistp:hasMatchPattern     :FlattenIdentifier_L ;
-    gistp:hasConstructPattern :FlattenIdentifier_R ;
+    jhp:hasMatchPattern     :FlattenIdentifier_L ;
+    jhp:hasConstructPattern :FlattenIdentifier_R ;
     # Rewrite: this one takes facts away. Compiles to DELETE { L \ I } INSERT { R \ I }.
-    gistp:rewriteMode         gistp:Rewrite .
+    jhp:rewriteMode         jhp:_RewriteMode_rewrite .
 
 :FlattenIdentifier_L rdf:type gistp:SparqlPattern ;
     skos:prefLabel "match: a Person identified by a gist:ID carrying text" .

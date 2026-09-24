@@ -14,29 +14,31 @@
 # Serd loses literal datatypes on anyway. Jena parses TriG; Julia reads SPARQL Results JSON.
 
 const GISTP_NS = "https://w3id.org/semanticarts/ns/patterns/gist/"
+# The rule layer -- Rule, RuleSet, modes, strategies -- lives in JayhawkPatterning, not gistPatterns.
+const JHP_NS = "https://turingtest37.github.io/jayhawkpatterning/"
 
-const P_MATCH = GISTP_NS * "hasMatchPattern"
-const P_CONSTRUCT = GISTP_NS * "hasConstructPattern"
-const P_MODE = GISTP_NS * "rewriteMode"
+const P_MATCH = JHP_NS * "hasMatchPattern"
+const P_CONSTRUCT = JHP_NS * "hasConstructPattern"
+const P_MODE = JHP_NS * "rewriteMode"
 const P_VARIABLETEXT = GISTP_NS * "variableText"
 const P_IRITEMPLATE = GISTP_NS * "iriTemplate"
 const P_HASSLOT = GISTP_NS * "hasSlot"
 const P_SLOTNAME = GISTP_NS * "slotName"
 const P_SLOTVALUE = GISTP_NS * "slotValue"
 const P_ONEOF = GISTP_NS * "oneOf"
-const P_NAC = GISTP_NS * "hasNegativeCondition"
-const P_FILTER = GISTP_NS * "hasFilterCondition"
-const P_FILTERTEXT = GISTP_NS * "filterText"
-const P_INGRAPH = GISTP_NS * "inGraph"
+const P_NAC = JHP_NS * "hasNegativeCondition"
+const P_FILTER = JHP_NS * "hasFilterCondition"
+const P_FILTERTEXT = JHP_NS * "filterText"
+const P_INGRAPH = JHP_NS * "inGraph"
 
 const RDF_FIRST = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first"
 const RDF_REST = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest"
-const P_STRATEGY = GISTP_NS * "strategy"
-const P_PRIORITY = GISTP_NS * "priority"
-const P_MAXITER = GISTP_NS * "maxIterations"
+const P_STRATEGY = JHP_NS * "strategy"
+const P_PRIORITY = JHP_NS * "priority"
+const P_MAXITER = JHP_NS * "maxIterations"
 const C_SPARQLVAR = GISTP_NS * "SparqlVariable"
-# No C_FILTERCOND. `load_filters` reaches a condition through gistp:hasFilterCondition and
-# never through its type, on purpose: joining on `?f a gistp:FilterCondition` would drop an
+# No C_FILTERCOND. `load_filters` reaches a condition through jhp:hasFilterCondition and
+# never through its type, on purpose: joining on `?f a jhp:FilterCondition` would drop an
 # untyped condition silently, and a dropped filter widens the rule. The property is the
 # edge that matters; the class is the shapes file's business.
 const C_TABULARSOURCE = GISTP_NS * "TabularDataSource"
@@ -47,14 +49,14 @@ const C_TABULARSOURCE = GISTP_NS * "TabularDataSource"
 const FX_NS = "http://sparql.xyz/facade-x/ns/"
 const P_FX_LOCATION = FX_NS * "location"
 const SA_SERVICE = "x-sparql-anything:"
-const C_RULE = GISTP_NS * "Rule"
+const C_RULE = JHP_NS * "Rule"
 
-const MODE_CONSTRUCT = GISTP_NS * "Construct"
-const MODE_ASSERT = GISTP_NS * "Assert"
-const MODE_REWRITE = GISTP_NS * "Rewrite"
+const MODE_CONSTRUCT = JHP_NS * "_RewriteMode_construct"
+const MODE_ASSERT = JHP_NS * "_RewriteMode_assert"
+const MODE_REWRITE = JHP_NS * "_RewriteMode_rewrite"
 
-const STRATEGY_ONCE = GISTP_NS * "Once"
-const STRATEGY_TOFIXPOINT = GISTP_NS * "ToFixpoint"
+const STRATEGY_ONCE = JHP_NS * "Once"
+const STRATEGY_TOFIXPOINT = JHP_NS * "ToFixpoint"
 
 strategy_symbol(s::AbstractString) =
     if s == STRATEGY_ONCE
@@ -62,7 +64,7 @@ strategy_symbol(s::AbstractString) =
     elseif s == STRATEGY_TOFIXPOINT
         :ToFixpoint
     else
-        throw(ArgumentError("unknown gistp:strategy <$s>"))
+        throw(ArgumentError("unknown jhp:strategy <$s>"))
     end
 
 "One triple of a pattern, with terms still un-substituted."
@@ -94,7 +96,7 @@ Its own named graph, like L and R, and compiled to its own `FILTER NOT EXISTS`.
 struct NacSpec
     graph::String
     triples::Vector{PatternTriple}
-    # gistp:inGraph, if the condition is scoped: the IRI of a graph variable or of a constant
+    # jhp:inGraph, if the condition is scoped: the IRI of a graph variable or of a constant
     # graph. A guard scoped to the same variable as L reads "no such thing in THIS graph".
     scope::Union{String,Nothing}
 end
@@ -145,7 +147,7 @@ struct RuleSpec
     strategy::Union{Symbol,Nothing}     # :Once, :ToFixpoint, or unstated
     priority::Int
     max_iterations::Union{Int,Nothing}  # unstated means the caller's default
-    # gistp:inGraph on L and on R: the IRI of a graph variable or of a constant graph, or
+    # jhp:inGraph on L and on R: the IRI of a graph variable or of a constant graph, or
     # `nothing` for the graph-blind reading every rule had before named graphs. Scope is a
     # property of the *pattern*, not of a triple -- TriG cannot nest a GRAPH inside a graph,
     # so a per-triple graph term would have to be reified inside the pattern.
@@ -156,7 +158,7 @@ struct RuleSpec
     # Empty for every rule that reads only the store, which is what keeps the golden
     # snapshots of those rules unchanged.
     services::Dict{String,Vector{Pair{String,String}}}
-    # Every gistp:filterText the rule declares, sorted, each compiled to its own FILTER(...).
+    # Every jhp:filterText the rule declares, sorted, each compiled to its own FILTER(...).
     # Text rather than structure: a SPARQL expression grammar in RDF would be a second
     # language to learn and to keep in step with SPARQL's own. The bargain is that the text
     # is spliced into the query, so `check_filters` has to earn that splice -- see it for
@@ -389,7 +391,7 @@ mode_symbol(m::AbstractString) =
     elseif m == MODE_REWRITE
         :Rewrite
     else
-        throw(ArgumentError("unknown gistp:rewriteMode <$m>"))
+        throw(ArgumentError("unknown jhp:rewriteMode <$m>"))
     end
 
 mode_symbol(s::RuleSpec) = mode_symbol(s.mode)
@@ -411,7 +413,7 @@ end
 
 Fetch one rule and both of its pattern graphs.
 
-Reads `gistp:hasMatchPattern` / `hasConstructPattern` / `rewriteMode` from the default
+Reads `jhp:hasMatchPattern` / `hasConstructPattern` / `rewriteMode` from the default
 graph, then the triples of each named graph. The pattern *is* its graph: a pattern's IRI is
 also the IRI of the graph holding its triples, so there is no membership vocabulary and no
 predicate blacklist separating payload from metadata.
@@ -429,12 +431,12 @@ SELECT ?mode ?l ?c WHERE {
     )
 
     isempty(rows) && error(
-        "no rule found at <$r>: it must carry gistp:hasMatchPattern, " *
-        "gistp:hasConstructPattern and gistp:rewriteMode in the default graph.",
+        "no rule found at <$r>: it must carry jhp:hasMatchPattern, " *
+        "jhp:hasConstructPattern and jhp:rewriteMode in the default graph.",
     )
     length(rows) == 1 || error(
         "<$r> has $(length(rows)) match/construct/mode combinations; exactly one is " *
-        "required. gistPatternShapes.ttl RuleShape enforces this -- validate first.",
+        "required. JayhawkPatternShapes.ttl RuleShape enforces this -- validate first.",
     )
 
     row = rows[1]
@@ -563,13 +565,13 @@ end
 """
     load_filters(rule_iri; ep = endpoint()) -> Vector{String}
 
-Every `gistp:filterText` the rule declares, deduplicated and sorted.
+Every `jhp:filterText` the rule declares, deduplicated and sorted.
 
 Sorted by the **text**, not by the condition's node, so a filter authored as a blank node
-compiles to the same bytes on every run. A `gistp:FilterCondition` carries one expression;
+compiles to the same bytes on every run. A `jhp:FilterCondition` carries one expression;
 several conditions are conjunctive, which is what separate `FILTER`s already mean.
 
-The `gistp:filterText` is fetched through an `OPTIONAL` rather than joined, so that a
+The `jhp:filterText` is fetched through an `OPTIONAL` rather than joined, so that a
 condition carrying none is *refused* rather than dropped. An inner join would silently
 return one fewer row, and a missing filter does not narrow a rule -- it widens it. That is
 the loudest possible bug arriving as the quietest possible symptom, and it is the mirror of
@@ -588,18 +590,18 @@ SELECT ?f ?t WHERE {
     out = String[]
     for r in rows
         haskey(r, "t") || error(
-            "rule <$rule_iri>: gistp:hasFilterCondition names $(sparql_text(r["f"])), which " *
-            "declares no gistp:filterText. A condition with no expression would compile to " *
+            "rule <$rule_iri>: jhp:hasFilterCondition names $(sparql_text(r["f"])), which " *
+            "declares no jhp:filterText. A condition with no expression would compile to " *
             "no FILTER at all, so the rule would silently match MORE than it says, not " *
-            "less. Give it a gistp:filterText or drop the gistp:hasFilterCondition.",
+            "less. Give it a jhp:filterText or drop the jhp:hasFilterCondition.",
         )
         t = r["t"]
         t isa RDFLiteral || error(
-            "rule <$rule_iri>: gistp:filterText is $(sparql_text(t)), which is not a " *
+            "rule <$rule_iri>: jhp:filterText is $(sparql_text(t)), which is not a " *
             "literal. A filter condition is a SPARQL expression written as a string.",
         )
         is_var_literal(t) && error(
-            "rule <$rule_iri>: gistp:filterText is the variable $(repr(t.lexical)), which " *
+            "rule <$rule_iri>: jhp:filterText is the variable $(repr(t.lexical)), which " *
             "nothing in a rule binds. A condition is fixed when the rule is authored.",
         )
         push!(out, t.lexical)
@@ -612,7 +614,7 @@ function load_strategy(rule_iri::AbstractString; ep::SparqlEndpoint=endpoint())
     rows = select("SELECT ?s WHERE { <$(check_iri(rule_iri))> <$P_STRATEGY> ?s }"; ep=ep)
     isempty(rows) && return nothing
     length(rows) == 1 || error(
-        "<$rule_iri> declares $(length(rows)) gistp:strategy values; at most one is allowed.",
+        "<$rule_iri> declares $(length(rows)) jhp:strategy values; at most one is allowed.",
     )
     return strategy_symbol(_iri(rows[1]["s"]))
 end
@@ -629,8 +631,8 @@ function load_max_iterations(rule_iri::AbstractString; ep::SparqlEndpoint=endpoi
     isempty(rows) && return nothing
     n = parse(Int, (rows[1]["m"]::RDFLiteral).lexical)
     n >= 1 || error(
-        "<$rule_iri>: gistp:maxIterations is $n. A budget below 1 cannot be satisfied by " *
-        "any run; gistPatternShapes.ttl RuleShape rejects it -- validate first.",
+        "<$rule_iri>: jhp:maxIterations is $n. A budget below 1 cannot be satisfied by " *
+        "any run; JayhawkPatternShapes.ttl RuleShape rejects it -- validate first.",
     )
     return n
 end
@@ -638,7 +640,7 @@ end
 """
     load_in_graph(pattern_iri; ep = endpoint()) -> Union{String,Nothing}
 
-The `gistp:inGraph` of one pattern: the IRI of a graph variable or of a constant graph.
+The `jhp:inGraph` of one pattern: the IRI of a graph variable or of a constant graph.
 
 Unlike a pattern's triples, this lives in the **default** graph -- it is a statement *about*
 the pattern, not part of it -- which is why it needs its own query and why the variable it
@@ -648,13 +650,13 @@ function load_in_graph(pattern_iri::AbstractString; ep::SparqlEndpoint=endpoint(
     rows = select("SELECT ?g WHERE { <$(check_iri(pattern_iri))> <$P_INGRAPH> ?g }"; ep=ep)
     isempty(rows) && return nothing
     length(rows) == 1 || error(
-        "pattern <$pattern_iri> declares $(length(rows)) gistp:inGraph values; at most one " *
-        "is allowed. A pattern is evaluated in one graph. gistPatternShapes.ttl " *
+        "pattern <$pattern_iri> declares $(length(rows)) jhp:inGraph values; at most one " *
+        "is allowed. A pattern is evaluated in one graph. JayhawkPatternShapes.ttl " *
         "SparqlPatternShape enforces this -- validate first.",
     )
     g = rows[1]["g"]
     g isa IRIRef || error(
-        "pattern <$pattern_iri>: gistp:inGraph is $(sparql_text(g)), which is not an IRI. " *
+        "pattern <$pattern_iri>: jhp:inGraph is $(sparql_text(g)), which is not an IRI. " *
         "A graph name is an IRI -- either a declared gistp:SparqlVariable or a constant " *
         "graph. No literal can name a graph, so there is no \"?g\"^^gistp:var reading here " *
         "as there is for gistp:slotValue.",
@@ -689,7 +691,7 @@ object; all three have to be looked for, and the position variables are suffixed
 so two alternatives never accidentally share one.
 
 **A fourth position, off to one side.** A *graph* variable occupies no position inside any
-pattern graph: it is named by `<pattern> gistp:inGraph <var>` in the **default** graph. Left
+pattern graph: it is named by `<pattern> jhp:inGraph <var>` in the **default** graph. Left
 to the three alternatives above it would never be discovered, `var_of` would return nothing,
 and [`term_sparql`](@ref) would emit it as a bare IRI -- `GRAPH <…:_Book>`, a constant naming
 a graph nobody created. The rule would compile, validate, run, and match nothing, with no
@@ -781,7 +783,7 @@ that is what constructing it means -- and [`check_mints`](@ref) separately requi
 is always in L.
 
 That used to end "nothing the compiler needs is reachable only from the default graph". A
-*graph* variable is: `gistp:inGraph` is a statement about the pattern, so it sits in the
+*graph* variable is: `jhp:inGraph` is a statement about the pattern, so it sits in the
 default graph and its object occupies no position inside any pattern. [`_occurs_in`](@ref)
 carries a fourth alternative for exactly that case.
 """
@@ -985,7 +987,7 @@ function check_mints(spec::RuleSpec)
     #
     # L's *graph* variable counts too. It is bound by the GRAPH clause rather than by any
     # triple, so `vars_in` cannot see it, and without `scope_vars` a template minting one
-    # node per graph -- the obvious thing to want from `gistp:inGraph` -- was refused with a
+    # node per graph -- the obvious thing to want from `jhp:inGraph` -- was refused with a
     # message about minting from another minted variable, which it is not. This is only safe
     # now that `match_text` scopes the collision and fan-in queries too: while those built an
     # unscoped L, a mint keyed on the graph variable would have been checked against a query
@@ -1160,10 +1162,10 @@ end
 """
     load_services(scopes; ep = endpoint()) -> Dict{String,Vector{Pair{String,String}}}
 
-Which of a rule's `gistp:inGraph` scopes name a **data source** rather than a graph, and the
+Which of a rule's `jhp:inGraph` scopes name a **data source** rather than a graph, and the
 `fx:` properties each carries.
 
-`gistp:inGraph` already reads two ways, and which one you get is decided by what the value
+`jhp:inGraph` already reads two ways, and which one you get is decided by what the value
 IS rather than by separate vocabulary: a declared `gistp:SparqlVariable` is a graph variable,
 any other IRI a constant graph. This is the third reading, decided the same way — an IRI
 typed `gistp:TabularDataSource` names a *file*, and a pattern scoped to it compiles to
@@ -1221,7 +1223,7 @@ end
     all_scopes(spec) -> Vector{String}
     graph_scopes(spec) -> Vector{String}
 
-Every `gistp:inGraph` a rule declares, and the subset of those that name a graph rather than
+Every `jhp:inGraph` a rule declares, and the subset of those that name a graph rather than
 a data source. The split matters because only the latter belong in a dataset clause.
 """
 function all_scopes(spec::RuleSpec)
@@ -1239,7 +1241,7 @@ end
 """
     read_scopes(spec) -> Vector{String}
 
-The graph scopes a rule READS through: `gistp:inGraph` on the match pattern and on each
+The graph scopes a rule READS through: `jhp:inGraph` on the match pattern and on each
 negative condition, minus any data source.
 
 Separate from [`write_scope`](@ref) because the two have opposite requirements, and
@@ -1270,7 +1272,7 @@ write_scope(spec::RuleSpec) = spec.construct_scope
 """
     promote_query(; firing, target) -> String
 
-Copy a pruned firing graph into the graph its rule declared with `gistp:inGraph`.
+Copy a pruned firing graph into the graph its rule declared with `jhp:inGraph`.
 
 Applied from the firing graph rather than from `R`'s template, so the destination receives
 exactly what the firing graph claims -- which is what makes `undo_firing!` an exact inverse
@@ -1334,7 +1336,7 @@ function dataset_lines(
         # it does not have.
         isempty(read_scopes(spec)) || error(
             "rule <$(spec.iri)>: a rule whose match pattern or negative condition carries " *
-            "gistp:inGraph must name its graphs. With no " *
+            "jhp:inGraph must name its graphs. With no " *
             "dataset clause a graph variable ranges over every named graph in the store -- " *
             "the provenance graph, every firing, every tombstone, and the rule catalogue's " *
             "own pattern graphs. An empty graph set is not 'the default graph' here, it is " *
@@ -1366,7 +1368,7 @@ and because a reader looking for why a rule declined wants the cheap scalar test
 Filter and `FILTER NOT EXISTS` are both conjunctive constraints on the same group, so their
 relative order changes no result -- only which one a query log blames first.
 
-**`gistp:inGraph` scopes the triples, not the clause.** Wrapping the finished string in one
+**`jhp:inGraph` scopes the triples, not the clause.** Wrapping the finished string in one
 `GRAPH ?g { … }` looks equivalent and is not. SPARQL translates `GRAPH ?g { P }` to
 `Graph(?g, translate(P))`, so `?g` is bound by the operator *surrounding* the group and is
 still unbound while `P` is evaluated: `BIND(BOUND(?g) AS ?seen)` inside the group yields
@@ -1395,7 +1397,7 @@ end
 """
     match_text(spec; indent = "  ") -> String
 
-L's triples, wrapped in `GRAPH …` if the match pattern carries `gistp:inGraph`.
+L's triples, wrapped in `GRAPH …` if the match pattern carries `jhp:inGraph`.
 
 **One decision, one place.** `where_body` is not the only function that embeds L: so do
 [`collision_queries`](@ref) and [`mint_fanin`](@ref), and both used to call `bgp_text`
@@ -1592,7 +1594,7 @@ function check_no_blanks(spec::RuleSpec)
             blank node is an undeclared variable -- it cannot be validated, cannot carry \
             gistp:oneOf or gistp:iriTemplate, does not connect L to R (SPARQL will not \
             carry it from WHERE into CONSTRUCT), and is illegal outright in the DELETE \
-            template a gistp:Rewrite emits.
+            template a jhp:_RewriteMode_rewrite emits.
 
             Declare each one in the default graph:
 
@@ -1768,7 +1770,7 @@ end
 """
     scope_vars(scope, spec) -> Set{String}
 
-The SPARQL variable a `gistp:inGraph` names, or an empty set if it names a constant graph.
+The SPARQL variable a `jhp:inGraph` names, or an empty set if it names a constant graph.
 
 A one-element set rather than a `Union{String,Nothing}` so it composes with `vars_in`, which
 is what every binding question in the compiler is phrased against.
@@ -1784,7 +1786,7 @@ end
 """
     check_scopes(spec)
 
-Refuse every use of `gistp:inGraph` this round does not implement, and every one it cannot
+Refuse every use of `jhp:inGraph` this round does not implement, and every one it cannot
 make safe. Each of these is otherwise a *silent* wrong answer, which is why they are errors
 rather than warnings.
 
@@ -1802,7 +1804,7 @@ function check_scopes(spec::RuleSpec)
     spec.construct_scope === nothing ||
         !haskey(spec.services, spec.construct_scope) ||
         error(
-            "rule <$(spec.iri)>: gistp:inGraph on the construct pattern <$(spec.construct_graph)> " *
+            "rule <$(spec.iri)>: jhp:inGraph on the construct pattern <$(spec.construct_graph)> " *
             "names <$(spec.construct_scope)>, a gistp:TabularDataSource. A data source is a place " *
             "to read FROM: it compiles to a SERVICE, and a SERVICE cannot be written to. Scope " *
             "the match pattern to the source and let the results land in a firing graph.",
@@ -1816,7 +1818,7 @@ function check_scopes(spec::RuleSpec)
     spec.construct_scope === nothing ||
         !haskey(spec.variables, spec.construct_scope) ||
         error(
-            "rule <$(spec.iri)>: gistp:inGraph on the construct pattern " *
+            "rule <$(spec.iri)>: jhp:inGraph on the construct pattern " *
             "<$(spec.construct_graph)> names the variable " *
             "$(spec.variables[spec.construct_scope]), and a write destination has to be a " *
             "constant graph IRI. Different solutions would go to different graphs, and a " *
@@ -1826,7 +1828,7 @@ function check_scopes(spec::RuleSpec)
         )
 
     mode_symbol(spec) === :Rewrite && error(
-        "rule <$(spec.iri)>: gistp:inGraph with gistp:Rewrite is not supported yet. A " *
+        "rule <$(spec.iri)>: jhp:inGraph with jhp:_RewriteMode_rewrite is not supported yet. A " *
         "rewrite deletes from exactly one target graph, and a scoped match can bind several " *
         "-- so the target, the tombstone and the undo record would each have to become a " *
         "set. A Rewrite already has a destination, which is the graph it reads: naming a " *
@@ -1944,7 +1946,7 @@ _bare_var(v::AbstractString) = (startswith(v, '?') || startswith(v, '$')) ? v[2:
 
 Reject a filter condition that is not an expression, or that tests a variable nothing binds.
 
-`gistp:filterText` is the one place this engine splices author-supplied text into a query, so
+`jhp:filterText` is the one place this engine splices author-supplied text into a query, so
 it is the one place that has to be argued rather than assumed. The bargain the rest of the
 design makes -- "rules are the tools, not SPARQL", a catalogue of named rewrites instead of
 an open UPDATE endpoint -- is only worth anything if a rule cannot *become* an open endpoint
@@ -1952,7 +1954,7 @@ by smuggling syntax through a filter. Hence:
 
   * **No `{` or `}`.** Braces are what a filter would need to close the compiler's own
     `FILTER(` and open something else -- a `SERVICE`, a subquery, a second `WHERE` group.
-    Barring them also bars `EXISTS`, which is deliberate: `gistp:hasNegativeCondition` is the
+    Barring them also bars `EXISTS`, which is deliberate: `jhp:hasNegativeCondition` is the
     sanctioned way to say "no such thing", and it is a *pattern*, so it is reviewable as RDF
     rather than as text.
   * **No `#`.** A comment swallows the rest of the line, including the `)` this compiler
@@ -1988,7 +1990,7 @@ function check_filters(spec::RuleSpec)
     )
     for f in spec.filters
         isempty(strip(f)) && error(
-            "rule <$(spec.iri)>: a gistp:FilterCondition has empty gistp:filterText. An " *
+            "rule <$(spec.iri)>: a jhp:FilterCondition has empty jhp:filterText. An " *
             "expression that says nothing cannot constrain anything; drop the condition.",
         )
 
@@ -2002,7 +2004,7 @@ function check_filters(spec::RuleSpec)
             '{' =>
                 "could open a group -- a SERVICE, a subquery, or a second " *
                 "WHERE. For \"no such thing exists\" use " *
-                "gistp:hasNegativeCondition, which is a reviewable " *
+                "jhp:hasNegativeCondition, which is a reviewable " *
                 "pattern rather than text",
             '}' =>
                 "could close the FILTER this compiler wraps the " *
@@ -2014,7 +2016,7 @@ function check_filters(spec::RuleSpec)
         )
             occursin(ch, skel) && error(
                 "rule <$(spec.iri)>: filter $(repr(f)) contains $(repr(ch)), which $why. " *
-                "A gistp:filterText is one SPARQL expression and nothing else. Inside a " *
+                "A jhp:filterText is one SPARQL expression and nothing else. Inside a " *
                 "quoted string the character is fine -- this one is not in one.",
             )
         end
@@ -2248,7 +2250,7 @@ end
 """
     rewrite_query(spec; target, firing, tombstone, from = String[]) -> String
 
-A `gistp:Rewrite` as one atomic SPARQL Update, recorded so it can be reversed.
+A `jhp:_RewriteMode_rewrite` as one atomic SPARQL Update, recorded so it can be reversed.
 
 Unlike `Construct` and `Assert`, a rewrite mutates the data. `target` is the graph it edits;
 `firing` and `tombstone` capture what was added and what was removed, which is what makes
@@ -2268,7 +2270,7 @@ function rewrite_query(
 )
     check_bound(spec)
     mode_symbol(spec) === :Rewrite || error(
-        "rule <$(spec.iri)>: rewrite_query is only for gistp:Rewrite; this rule is " *
+        "rule <$(spec.iri)>: rewrite_query is only for jhp:_RewriteMode_rewrite; this rule is " *
         "$(mode_symbol(spec)). Use insert_query.",
     )
 
@@ -2550,7 +2552,7 @@ wrapper differs.
 function insert_query(spec::RuleSpec; into::AbstractString, from::AbstractVector=String[])
     check_bound(spec)
     mode_symbol(spec) === :Rewrite && error(
-        "rule <$(spec.iri)>: gistp:Rewrite mutates the data, so it cannot be run through " *
+        "rule <$(spec.iri)>: jhp:_RewriteMode_rewrite mutates the data, so it cannot be run through " *
         "insert_query, which only ever adds to a firing graph. Use rewrite_query.",
     )
     using_lines = dataset_lines(spec, from)
@@ -2583,7 +2585,7 @@ end
 """
     list_rules(; ep = endpoint()) -> Vector{String}
 
-Every `gistp:Rule` IRI in the store, sorted.
+Every `jhp:Rule` IRI in the store, sorted.
 """
 function list_rules(; ep::SparqlEndpoint=endpoint())
     rows = select("SELECT ?r WHERE { ?r a <$C_RULE> } ORDER BY ?r"; ep=ep)
@@ -2599,7 +2601,7 @@ const SKOS_DEFINITION = "http://www.w3.org/2004/02/skos/core#definition"
 Every rule in the store with its mode, label and definition -- what a human or an agent
 needs to choose one, without reading any SPARQL.
 
-Each entry carries `mode` (a `Symbol`) and `mode_iri` (the raw `gistp:rewriteMode` value).
+Each entry carries `mode` (a `Symbol`) and `mode_iri` (the raw `jhp:rewriteMode` value).
 A rule whose mode is not one of the three recognised IRIs comes back as `:Unrecognised`
 rather than raising: this is the *catalogue*, and it is the only route an agent has to
 discovering any rule at all, so one malformed rule must not hide the rest of them. The rule
@@ -2978,7 +2980,7 @@ function check_source_maps(spec::RuleSpec)
     spec.match_scope !== nothing && haskey(spec.services, spec.match_scope) || error(
         "rule <$(spec.iri)>: $(length(spec.source_maps)) gistp:SourceMap(s) " *
         "($(join((m.variable for m in spec.source_maps), ", "))) but the match pattern " *
-        "<$(spec.match_graph)> has no gistp:inGraph naming a gistp:TabularDataSource. A " *
+        "<$(spec.match_graph)> has no jhp:inGraph naming a gistp:TabularDataSource. A " *
         "source map reads a column, and only a data source makes columns exist -- " *
         "without one the generated row variable would range over whatever the dataset " *
         "clause holds, matching the wrong thing rather than failing.",
@@ -3010,13 +3012,13 @@ end
 # arrives from one ORDER BY rather than one round trip per member.
 #
 # The membership is reified, which also means the position belongs to the MEMBERSHIP rather
-# than to the rule: one rule can sit at different places in different sets. gistp:priority
+# than to the rule: one rule can sit at different places in different sets. jhp:priority
 # cannot express that, being a property of a rule in isolation -- so it survives as the
 # ordering of last resort rather than as the mechanism.
 
 const GIST_NS = "https://w3id.org/semanticarts/ns/ontology/gist/"
 
-const C_RULESET = GISTP_NS * "RuleSet"
+const C_RULESET = JHP_NS * "RuleSet"
 const P_ISMEMBEROF = GIST_NS * "isMemberOf"
 const P_ISFIRSTMEMBEROF = GIST_NS * "isFirstMemberOf"
 const P_PROVIDESORDERFOR = GIST_NS * "providesOrderFor"
@@ -3044,9 +3046,9 @@ end
 """
     load_rule_set(set_iri; ep = endpoint()) -> RuleSetSpec
 
-Read one `gistp:RuleSet` out of the store, resolving its membership into an execution order.
+Read one `jhp:RuleSet` out of the store, resolving its membership into an execution order.
 
-Order is `gist:sequence` ascending, then `gistp:priority` descending, then IRI. The second
+Order is `gist:sequence` ascending, then `jhp:priority` descending, then IRI. The second
 key is not decoration: equal sequence numbers are legal and mean "rank unspecified between
 these", and falling back on priority is the only interpretation that uses what the author
 actually said. The third is there so that a set with genuine ties still compiles to the same
@@ -3063,7 +3065,7 @@ function load_rule_set(set_iri::AbstractString; ep::SparqlEndpoint=endpoint())
 
     typed = select("SELECT ?t WHERE { <$s> a <$C_RULESET> BIND(1 AS ?t) }"; ep=ep)
     isempty(typed) && error(
-        "no rule set found at <$s>: it must be typed gistp:RuleSet in the default graph.",
+        "no rule set found at <$s>: it must be typed jhp:RuleSet in the default graph.",
     )
 
     labels = select("SELECT ?label WHERE { <$s> <$SKOS_LABEL> ?label }"; ep=ep)
@@ -3102,7 +3104,7 @@ SELECT ?m ?rule ?seq WHERE {
         member = sparql_text(r["m"])
         haskey(r, "rule") || error(
             "rule set <$s>: member $member has no gist:providesOrderFor, so it holds a " *
-            "position for nothing. Point it at a gistp:Rule or remove it.",
+            "position for nothing. Point it at a jhp:Rule or remove it.",
         )
         haskey(r, "seq") || error(
             "rule set <$s>: member $member has no gist:sequence, so its position in the " *
@@ -3113,7 +3115,7 @@ SELECT ?m ?rule ?seq WHERE {
         istyped = select("SELECT ?t WHERE { <$rule> a <$C_RULE> BIND(1 AS ?t) }"; ep=ep)
         isempty(istyped) && error(
             "rule set <$s>: member $member orders <$rule>, which is not typed " *
-            "gistp:Rule. A set orders rules; ordering anything else would compile to " *
+            "jhp:Rule. A set orders rules; ordering anything else would compile to " *
             "nothing and run silently.",
         )
         push!(
@@ -3129,7 +3131,7 @@ SELECT ?m ?rule ?seq WHERE {
         "rule set <$s> orders the same rule at more than one position: " *
         "$(join(sort(unique([r for r in rules if count(==(r), rules) > 1])), ", ")). " *
         "A rule applied twice in one pass is either a typo or a fixpoint written by hand -- " *
-        "declare gistp:strategy gistp:ToFixpoint on the rule instead.",
+        "declare jhp:strategy jhp:ToFixpoint on the rule instead.",
     )
 
     # gist lets a collection name its first member outright. If that disagrees with the
@@ -3156,7 +3158,7 @@ end
 """
     list_rule_sets(; ep = endpoint()) -> Vector{NamedTuple}
 
-Every `gistp:RuleSet` in the store, with its label and membership count, for a catalogue.
+Every `jhp:RuleSet` in the store, with its label and membership count, for a catalogue.
 """
 function list_rule_sets(; ep::SparqlEndpoint=endpoint())
     rows = select(
@@ -3193,7 +3195,7 @@ export RuleSetSpec, load_rule_set, list_rule_sets, C_RULESET, GIST_NS
 export STRATEGY_ONCE, STRATEGY_TOFIXPOINT
 export parse_template, template_slots, bind_text, minted_vars
 export ambiguous_separators, collision_queries, check_collisions, mint_fanin
-export GISTP_NS, MODE_CONSTRUCT, MODE_ASSERT, MODE_REWRITE
+export GISTP_NS, JHP_NS, MODE_CONSTRUCT, MODE_ASSERT, MODE_REWRITE
 export read_scopes, write_scope, promote_query
 export SourceMapSpec, load_source_maps, source_map_bgp, source_map_pipeline
 export check_source_maps, fx_predicate, regex_quote, XYZ_NS, FX_ROW_VAR

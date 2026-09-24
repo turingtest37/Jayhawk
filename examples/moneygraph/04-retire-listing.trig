@@ -1,4 +1,4 @@
-#  RULE 4 -- gistp:Rewrite, the mode that takes facts away.
+#  RULE 4 -- jhp:_RewriteMode_rewrite, the mode that takes facts away.
 #
 #  A delisted security should no longer claim a current listing. This removes the listing
 #  and records it as a former one.
@@ -22,18 +22,19 @@
 @prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
 @prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
 @prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
 @prefix mg:    <https://w3id.org/moneygraph/ns/ontology/> .
 @prefix mgx:   <https://w3id.org/moneygraph/ns/example/> .
 @prefix :      <https://w3id.org/moneygraph/ns/rules/> .
 
 :RetireListing
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "Retire listing" ;
     skos:definition "A delisted security's current listing becomes a former listing." ;
-    gistp:hasMatchPattern     :RetireListing_L ;
-    gistp:hasConstructPattern :RetireListing_R ;
-    gistp:rewriteMode         gistp:Rewrite ;
-    gistp:strategy            gistp:Once .
+    jhp:hasMatchPattern     :RetireListing_L ;
+    jhp:hasConstructPattern :RetireListing_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_rewrite ;
+    jhp:strategy            jhp:Once .
 
 :RetireListing_L rdf:type gistp:SparqlPattern .
 :RetireListing_R rdf:type gistp:SparqlPattern .

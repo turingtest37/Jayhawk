@@ -95,7 +95,7 @@ struct RuleSpec
     enums::Dict{String,Vector{RDFTerm}}          # variable IRI  => gistp:oneOf values
     nacs::Vector{NacSpec}                        # negative conditions
     strategy, priority, max_iterations           # execution policy
-    match_scope, construct_scope                 # gistp:inGraph, or nothing
+    match_scope, construct_scope                 # jhp:inGraph, or nothing
 end
 ```
 
@@ -145,7 +145,7 @@ There are **seven** places that assemble a WHERE clause. They all route through 
 function, because a guard honoured by only some of them means the thing that executes is not
 the thing that was reviewed.
 
-### `gistp:inGraph` reads three ways
+### `jhp:inGraph` reads three ways
 
 The scope IRI is resolved in `graph_wrap`, and nowhere else:
 
@@ -171,7 +171,7 @@ moment that project added one.
 > loading and compilation; execution was verified by hand:
 > `sa.sh -q compiled.rq -f ttl`.
 
-### `gistp:inGraph` scopes the triples, not the clause
+### `jhp:inGraph` scopes the triples, not the clause
 
 Wrapping the finished WHERE in one `GRAPH ?g { … }` looks equivalent and is not. SPARQL
 translates `GRAPH ?g { P }` to `Graph(?g, translate(P))`, so **`?g` is bound by the operator
@@ -244,9 +244,14 @@ request is one transaction, so a firing is never half-applied.
 
 Every term so far has taken the same seven steps. Follow them in order.
 
-1. **Define it** in `~/dev/gistPatterns/gistPatterningDefinitions.ttl`, with a `skos:definition`
-   and a `skos:scopeNote` saying what it means *and what it deliberately cannot express*.
-2. **Constrain it** in `gistPatternShapes.ttl`. Prefer `sh:in` for closed enumerations —
+1. **Define it**, with a `skos:definition` and a `skos:scopeNote` saying what it means *and
+   what it deliberately cannot express*. A term about *executing* rules (`jhp:` -- rules,
+   modes, strategies, conditions, rule sets) goes in
+   `~/dev/JayhawkPatterningDefinitions/ontologies/JayhawkPatterningDefinitions.ttl`; a term
+   about the pattern language itself (`gistp:` -- variables, minting, source maps) goes in
+   `~/dev/gistPatterns/ontologies/gistPatterningDefinitions.ttl`.
+2. **Constrain it** in the matching shapes file, `JayhawkPatternShapes.ttl` or
+   `gistPatternShapes.ttl`. Prefer `sh:in` for closed enumerations —
    it avoids forcing every validation run to load the vocabulary, and stops anyone inventing
    a value the compiler has no backend for.
 3. **Add a negative case** to `example_rule_invalid.trig` and its needle to `verify.py`.
@@ -376,8 +381,8 @@ hashing each node's surroundings, which is graph isomorphism.
 In the order I would take them.
 
 **Conflict analysis.** Rule sets themselves are **built** — `run_rules` applies a
-`gistp:RuleSet`, a `gist:OrderedCollection` whose membership is reified so one `ORDER BY`
-recovers the order, and `gistp:priority` orders a bare list and breaks `gist:sequence` ties.
+`jhp:RuleSet`, a `gist:OrderedCollection` whose membership is reified so one `ORDER BY`
+recovers the order, and `jhp:priority` orders a bare list and breaks `gist:sequence` ties.
 What is still missing is the part that makes a set *trustworthy*: an answer to "does order
 matter here?" There is a cheap conservative one: over predicates,
 

@@ -1,6 +1,7 @@
-#  NOTE: copy of gistPatterns/example_minting_rule.trig, kept here so Jayhawk's suite is
-#  self-contained. The authoritative version lives in ~/dev/gistPatterns, where verify.py
-#  validates it against gistPatternShapes.ttl. If the two drift, that one wins.
+#  NOTE: copy of JayhawkPatterning's examples/example_minting_rule.trig, kept here so
+#  Jayhawk's suite is self-contained. The authoritative version lives in
+#  ~/dev/JayhawkPatterningDefinitions, where tools/verify.py validates it against
+#  JayhawkPatternShapes.ttl. If the two drift, that one wins.
 #
 # A rewrite rule that MINTS a new node, serialised as TriG.
 #
@@ -20,6 +21,7 @@
 @prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
 @prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
 @prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
 @prefix ex:    <http://example.org/hr/> .
 @prefix :      <http://example.org/rules/> .
 
@@ -28,14 +30,14 @@
 #################################################################
 
 :PersonToEmployeeRecord
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "Person to Employee record" ;
     skos:definition """Every gist:Person bearing an identifier gets an ex:Employee record,
                        minted from the identifier text and linked back to the person.""" ;
-    gistp:hasMatchPattern     :PersonToEmployeeRecord_L ;
-    gistp:hasConstructPattern :PersonToEmployeeRecord_R ;
+    jhp:hasMatchPattern     :PersonToEmployeeRecord_L ;
+    jhp:hasConstructPattern :PersonToEmployeeRecord_R ;
     # Assert: the employee records join the graph rather than replacing it.
-    gistp:rewriteMode         gistp:Assert .
+    jhp:rewriteMode         jhp:_RewriteMode_assert .
 
 :PersonToEmployeeRecord_L rdf:type gistp:SparqlPattern ;
     skos:prefLabel "match: a Person with an identifier" .

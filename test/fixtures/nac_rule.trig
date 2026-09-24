@@ -20,6 +20,7 @@
 @prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
 @prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
 @prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
 @prefix ex:    <http://example.org/ops/> .
 @prefix :      <http://example.org/rules/> .
 
@@ -28,21 +29,21 @@
 #################################################################
 
 :AssignReview
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "Assign review task" ;
     skos:definition """Every submitted order gets a review task, minted from its order
                        number -- unless it already has one.""" ;
-    gistp:hasMatchPattern      :AssignReview_L ;
-    gistp:hasConstructPattern  :AssignReview_R ;
-    gistp:hasNegativeCondition :AssignReview_NoTaskYet ;
-    gistp:rewriteMode          gistp:Assert ;
+    jhp:hasMatchPattern      :AssignReview_L ;
+    jhp:hasConstructPattern  :AssignReview_R ;
+    jhp:hasNegativeCondition :AssignReview_NoTaskYet ;
+    jhp:rewriteMode          jhp:_RewriteMode_assert ;
     # Control. Without the negative condition, ToFixpoint here would still terminate --
     # minting is deterministic, so round two derives the same triples and they are pruned --
     # but it would terminate by accident. The condition makes "already done" something the
     # rule states rather than something the driver notices.
-    gistp:strategy             gistp:ToFixpoint ;
-    gistp:maxIterations        10 ;
-    gistp:priority             100 .
+    jhp:strategy             jhp:ToFixpoint ;
+    jhp:maxIterations        10 ;
+    jhp:priority             100 .
 
 :AssignReview_L rdf:type gistp:SparqlPattern ;
     skos:prefLabel "match: a submitted order carrying an order number" .
@@ -126,4 +127,4 @@
 # What a NAC cannot say: a Basic Graph Pattern has no FILTER, so "no OTHER order refers to
 # this" -- which needs an inequality -- is not expressible here. A test that distinguishes
 # by type assertion rather than by comparison is. The comparison belongs to
-# gistp:hasFilterCondition instead; see filter_rule.trig.
+# jhp:hasFilterCondition instead; see filter_rule.trig.

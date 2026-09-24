@@ -10,10 +10,10 @@ You never write SPARQL. You draw the situation.
 
 ```turtle
 :ClassifyBond
-    rdf:type gistp:Rule ;
-    gistp:hasMatchPattern     :ClassifyBond_L ;
-    gistp:hasConstructPattern :ClassifyBond_R ;
-    gistp:rewriteMode         gistp:Assert .
+    rdf:type jhp:Rule ;
+    jhp:hasMatchPattern     :ClassifyBond_L ;
+    jhp:hasConstructPattern :ClassifyBond_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_assert .
 
 :ClassifyBond_L { :_Sec a gist:FinancialInstrument ;
                        mg:couponRate "?rate"^^gistp:var ;
@@ -75,8 +75,8 @@ retractions(predicate = "…/gist/hasPositionIn")    # what was once true
 
 | | |
 |---|---|
-| **Ordered rule sets** | A `gistp:RuleSet` is a `gist:OrderedCollection` with reified membership, so one `ORDER BY` recovers the order. Two independent levels of iteration: each rule's own `gistp:strategy`, and the set's, for when a later rule feeds an earlier one. |
-| **Write destinations** | `gistp:inGraph` on the *construct* pattern says where output goes. The firing graph stays the unit of attribution and of undo, so a rule can write into live data and still be reversed exactly. |
+| **Ordered rule sets** | A `jhp:RuleSet` is a `gist:OrderedCollection` with reified membership, so one `ORDER BY` recovers the order. Two independent levels of iteration: each rule's own `jhp:strategy`, and the set's, for when a later rule feeds an earlier one. |
+| **Write destinations** | `jhp:inGraph` on the *construct* pattern says where output goes. The firing graph stays the unit of attribution and of undo, so a rule can write into live data and still be reversed exactly. |
 | **History** | `retractions()` answers *what was once true*. A rewrite always kept what it deleted; the provenance record is now the index, so finding it no longer means knowing a UUID. |
 | **Tabular sources** | `gistp:SourceMap` says "this variable comes from that column" and the compiler owes the Facade-X predicate, the row container and the value pipeline. For an extraction rule **L is empty**. |
 
@@ -84,9 +84,9 @@ retractions(predicate = "…/gist/hasPositionIn")    # what was once true
 
 | Mode | Result | Use it for |
 |---|---|---|
-| `gistp:Construct` | `f(G)` — the construct pattern alone | reports, migrations |
-| `gistp:Assert` | `G ∪ f(G)`, iterated to a fixpoint | classification, derivation, closure |
-| `gistp:Rewrite` | `DELETE { L∖I } INSERT { R∖I }` | correcting, retiring, state transitions |
+| `jhp:_RewriteMode_construct` | `f(G)` — the construct pattern alone | reports, migrations |
+| `jhp:_RewriteMode_assert` | `G ∪ f(G)`, iterated to a fixpoint | classification, derivation, closure |
+| `jhp:_RewriteMode_rewrite` | `DELETE { L∖I } INSERT { R∖I }` | correcting, retiring, state transitions |
 
 The mode is an explicit property of the rule, never inferred. `I = L ∩ R` is authored by
 repetition: whatever is preserved is written into both patterns.
@@ -127,8 +127,12 @@ done
 
 ## Related
 
-- **Pattern vocabulary** — [`~/dev/gistPatterns`](../gistPatterns): `gistPatterningDefinitions.ttl`,
-  its SHACL shapes, worked example rules and `verify.py`. Moves in lockstep with this repo.
+- **Rule vocabulary** — [`~/dev/JayhawkPatterningDefinitions`](../JayhawkPatterningDefinitions)
+  ([github](https://github.com/turingtest37/JayhawkPatterning)): `jhp:Rule`, `RuleSet`, the
+  rewrite modes and strategies, their SHACL shapes, worked example rules and `verify.py`.
+  Moves in lockstep with this repo.
+- **Pattern vocabulary** — [`~/dev/gistPatterns`](../gistPatterns): `gistPatterningDefinitions.ttl`
+  (`gistp:` variables, IRI minting, source maps) and its SHACL shapes.
 - **[`RdfMaterializer`](../RdfMaterializer)** — the ontology materialiser (OWL declarations
   into Julia structs and per-predicate functions), split out of Jayhawk at v0.4.0. Nothing
   here depends on it.

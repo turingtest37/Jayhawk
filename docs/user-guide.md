@@ -65,12 +65,12 @@ The declaration, in the **default graph** — what the rule is, and what its var
 
 ```turtle
 :ClassifyBond
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "Classify bond" ;
     skos:definition "An instrument with a coupon rate and a maturity date is a mg:Bond." ;
-    gistp:hasMatchPattern     :ClassifyBond_L ;
-    gistp:hasConstructPattern :ClassifyBond_R ;
-    gistp:rewriteMode         gistp:Assert .
+    jhp:hasMatchPattern     :ClassifyBond_L ;
+    jhp:hasConstructPattern :ClassifyBond_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_assert .
 
 :ClassifyBond_L rdf:type gistp:SparqlPattern .
 :ClassifyBond_R rdf:type gistp:SparqlPattern .
@@ -113,7 +113,7 @@ placeholder and valid instance data, so your own SHACL shapes can validate it. B
 position must hold a literal, so there you write `"?rate"^^gistp:var` instead. The datatype is
 the marker.
 
-**The mode is stated, never inferred.** `gistp:Assert` means "add these facts." A reader
+**The mode is stated, never inferred.** `jhp:_RewriteMode_assert` means "add these facts." A reader
 should not have to diff L against R to work out whether a rule deletes.
 
 **`skos:prefLabel` and `skos:definition` are not decoration.** They are what `list_rules`
@@ -124,9 +124,9 @@ without a definition is a rule nobody will trust.
 
 | Mode | What you get | Reach for it when |
 |---|---|---|
-| `gistp:Construct` | `f(G)` — the construct pattern alone, input untouched | Reports, extracts, migrations: the answer is separate from the input |
-| `gistp:Assert` | `G ∪ f(G)`, repeated to a fixpoint | Classification, derivation, transitive closure |
-| `gistp:Rewrite` | `DELETE { L∖I } INSERT { R∖I }` | Correcting, retiring, state transitions |
+| `jhp:_RewriteMode_construct` | `f(G)` — the construct pattern alone, input untouched | Reports, extracts, migrations: the answer is separate from the input |
+| `jhp:_RewriteMode_assert` | `G ∪ f(G)`, repeated to a fixpoint | Classification, derivation, transitive closure |
+| `jhp:_RewriteMode_rewrite` | `DELETE { L∖I } INSERT { R∖I }` | Correcting, retiring, state transitions |
 
 `Construct` and `Assert` compile to **identical SPARQL**. The difference is entirely in how
 often the engine runs it and what it does with the answer. That is worth knowing, because it
@@ -254,12 +254,12 @@ current listing should become a former listing:
 
 ```turtle
 :RetireListing
-    rdf:type gistp:Rule ;
+    rdf:type jhp:Rule ;
     skos:prefLabel "Retire listing" ;
-    gistp:hasMatchPattern     :RetireListing_L ;
-    gistp:hasConstructPattern :RetireListing_R ;
-    gistp:rewriteMode         gistp:Rewrite ;
-    gistp:strategy            gistp:Once .
+    jhp:hasMatchPattern     :RetireListing_L ;
+    jhp:hasConstructPattern :RetireListing_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_rewrite ;
+    jhp:strategy            jhp:Once .
 ```
 
 **L** — a listed instrument that has been delisted:
@@ -480,7 +480,7 @@ Use (a) when the derived facts are now part of the record. Use (b) when you are 
 The point is that the engine will not guess which you meant — chaining is a decision, and it
 is yours.
 
-Note that this is a *separate* question from `gistp:ToFixpoint`. A fixpoint strategy iterates
+Note that this is a *separate* question from `jhp:ToFixpoint`. A fixpoint strategy iterates
 **within one rule**: each round's output joins that rule's working set, which is how transitive
 closure works. It does not carry one rule's output into the next.
 
@@ -617,10 +617,10 @@ inspection function reads:
 | `enums` | variable IRI ⇒ the values `oneOf` allows. **Check this first when a rule stops firing** — see §10 |
 | `nacs` | a `NacSpec` per guard |
 | `strategy`, `priority`, `max_iterations` | execution policy, or `nothing` where unstated |
-| `match_scope`, `construct_scope` | `gistp:inGraph` — where the rule **reads** and where it **writes**, or `nothing` |
+| `match_scope`, `construct_scope` | `jhp:inGraph` — where the rule **reads** and where it **writes**, or `nothing` |
 | `source_maps` | a `SourceMapSpec` per `gistp:SourceMap`: column, target variable, and pipeline |
 | `services` | scopes that name a `gistp:TabularDataSource`, with their `fx:` properties |
-| `filters` | the `gistp:filterText` of each `gistp:hasFilterCondition`, sorted |
+| `filters` | the `jhp:filterText` of each `jhp:hasFilterCondition`, sorted |
 
 ```julia
 spec.mode                      # "https://…/patterns/gist/Assert"
@@ -720,7 +720,7 @@ run_rules(set; strategy = :ToFixpoint, max_iterations = 5)
 
 **Why.** `run_rules` applies an ordered set, and the set's own strategy governs how many times
 the whole pass is made — which is the only way to express "a later rule feeds an earlier one".
-`set` may be a `RuleSetSpec`, the IRI of a `gistp:RuleSet`, or a bare vector of rule IRIs.
+`set` may be a `RuleSetSpec`, the IRI of a `jhp:RuleSet`, or a bare vector of rule IRIs.
 Returns every `Firing` in the order it ran, and members that contributed nothing yield none.
 See §9's **Rule sets** for the vocabulary and for why mixed modes are refused.
 
@@ -890,7 +890,7 @@ They also enforce the safety rails the plain functions leave to you. `tool_run_r
 rewrite without `confirm = true`:
 
 ```
-Refused: <…/RetireListing> is a gistp:Rewrite, which DELETES from live data. Against
+Refused: <…/RetireListing> is a jhp:_RewriteMode_rewrite, which DELETES from live data. Against
 <urn:jayhawk:example:moneygraph> it would remove 1 triple(s) and add 1.
 
 Run explain_rule first to see exactly which triples, then call run_rule again with
@@ -984,11 +984,11 @@ IRIs**. That is what lets an `Assert` rule converge instead of growing forever.
 
 ### Guards: when a rule must not fire
 
-A rule with no guard fires on every match, every time. `gistp:hasNegativeCondition` names a
+A rule with no guard fires on every match, every time. `jhp:hasNegativeCondition` names a
 pattern that must **not** match:
 
 ```turtle
-:MintCouponEvent gistp:hasNegativeCondition :MintCouponEvent_NoEventYet .
+:MintCouponEvent jhp:hasNegativeCondition :MintCouponEvent_NoEventYet .
 
 :MintCouponEvent_NoEventYet rdf:type gistp:SparqlPattern .
 :MintCouponEvent_NoEventYet { :_Event rdf:type mg:CouponPaymentEvent . }
@@ -1003,7 +1003,7 @@ Zero or more guards are allowed and all must fail for the rule to fire. A guard 
 Graph Pattern like any other pattern — no `FILTER`, no `OPTIONAL`, no `UNION`. *"No
 `mg:Exchange` refers to this"* is expressible, because the distinguishing test is a type
 assertion. *"No **other** security refers to this"* is not, because it needs an inequality —
-a comparison between bound values, which is what `gistp:hasFilterCondition` below is for.
+a comparison between bound values, which is what `jhp:hasFilterCondition` below is for.
 
 ### Filters: when a rule must compare
 
@@ -1012,15 +1012,15 @@ Comparison is not. *"These two are different nodes"*, *"this string contains tha
 *"this date falls before that one"* are all tests on values L has already **bound**, and no
 arrangement of triples says any of them.
 
-`gistp:hasFilterCondition` names a condition carrying one SPARQL expression:
+`jhp:hasFilterCondition` names a condition carrying one SPARQL expression:
 
 ```turtle
-:MergeBondDetails gistp:hasFilterCondition :IssuerNameMatches .
+:MergeBondDetails jhp:hasFilterCondition :IssuerNameMatches .
 
 :IssuerNameMatches
-    rdf:type gistp:FilterCondition ;
+    rdf:type jhp:FilterCondition ;
     skos:prefLabel "issuer name appears in the activity description" ;
-    gistp:filterText "CONTAINS(STR(?_actDesc), STR(?_issuerName))" .
+    jhp:filterText "CONTAINS(STR(?_actDesc), STR(?_issuerName))" .
 ```
 
 It compiles to exactly what it says:
@@ -1044,7 +1044,7 @@ it is spliced, and refused if it:
 
 | | why |
 |---|---|
-| contains `{` or `}` | would open a group or close the compiler's own `FILTER`. This bars `EXISTS { … }` deliberately — `gistp:hasNegativeCondition` is the sanctioned way to say "no such thing", and it is a reviewable *pattern* |
+| contains `{` or `}` | would open a group or close the compiler's own `FILTER`. This bars `EXISTS { … }` deliberately — `jhp:hasNegativeCondition` is the sanctioned way to say "no such thing", and it is a reviewable *pattern* |
 | contains `#` | a comment swallows the closing parenthesis the compiler emits |
 | contains `;` | separates operations in an update request |
 | has unbalanced parentheses | either closes the `FILTER` early or swallows what follows |
@@ -1066,7 +1066,7 @@ IRI, is not blanked, and is refused like any other text.
 Write full IRIs, then:
 
 ```turtle
-gistp:filterText "DATATYPE(?amount) = <http://www.w3.org/2001/XMLSchema#decimal>" .
+jhp:filterText "DATATYPE(?amount) = <http://www.w3.org/2001/XMLSchema#decimal>" .
 ```
 
 That last row is the one that costs real time. SPARQL does **not** raise an error on an
@@ -1078,16 +1078,16 @@ refusal here.
 ### How often a rule runs
 
 ```turtle
-:MintCouponEvent gistp:strategy      gistp:ToFixpoint ;
-                 gistp:maxIterations 5 ;
-                 gistp:priority      50 .
+:MintCouponEvent jhp:strategy      jhp:ToFixpoint ;
+                 jhp:maxIterations 5 ;
+                 jhp:priority      50 .
 ```
 
 | Property | Values | Default |
 |---|---|---|
-| `gistp:strategy` | `gistp:Once`, `gistp:ToFixpoint` | `ToFixpoint` for `Assert`, `Once` otherwise |
-| `gistp:maxIterations` | a positive integer | 100 |
-| `gistp:priority` | an integer | 0 |
+| `jhp:strategy` | `jhp:Once`, `jhp:ToFixpoint` | `ToFixpoint` for `Assert`, `Once` otherwise |
+| `jhp:maxIterations` | a positive integer | 100 |
+| `jhp:priority` | an integer | 0 |
 
 **`ToFixpoint` re-runs until a pass changes nothing.** Each round's output joins that rule's
 working set, which is how transitive closure works — and why a fixpoint run needs an explicit
@@ -1102,8 +1102,8 @@ One combination is refused outright: a **`Rewrite` run to a fixpoint with no gua
 stated budget**. A deleting rule has nothing to tell it when it is done, and falling back to
 100 destructive passes is not a decision the engine will make for you.
 
-`gistp:priority` orders a bare list of rules handed to `run_rules`, higher first, and breaks
-ties between equal `gist:sequence` numbers inside a `gistp:RuleSet`. Note that the two
+`jhp:priority` orders a bare list of rules handed to `run_rules`, higher first, and breaks
+ties between equal `gist:sequence` numbers inside a `jhp:RuleSet`. Note that the two
 directions disagree: priority is higher-first, `gist:sequence` is lower-first. See
 **Rule sets** below.
 
@@ -1123,7 +1123,7 @@ works it out and `explain_rule` shows the result.
 
 ### Graph scoping
 
-`gistp:inGraph` scopes a *pattern*, and it reads three ways — decided by what the value **is**,
+`jhp:inGraph` scopes a *pattern*, and it reads three ways — decided by what the value **is**,
 not by separate vocabulary:
 
 | the value is | the pattern reads | |
@@ -1151,14 +1151,14 @@ the graph it reads; naming a second is a different operation), and a scope on R 
 
 ### Rule sets: what runs, in what order, and how many times
 
-`run_rule` takes one rule. A `gistp:RuleSet` takes several, in a stated order:
+`run_rule` takes one rule. A `jhp:RuleSet` takes several, in a stated order:
 
 ```turtle
 set:BondEnrichment
-    rdf:type gistp:RuleSet ;
+    rdf:type jhp:RuleSet ;
     skos:prefLabel "Bond enrichment" ;
-    gistp:strategy      gistp:ToFixpoint ;
-    gistp:maxIterations 5 .
+    jhp:strategy      jhp:ToFixpoint ;
+    jhp:maxIterations 5 .
 
 set:BondEnrichment_1
     rdf:type gist:OrderedMember ;
@@ -1170,7 +1170,7 @@ set:BondEnrichment_1
 
 ```julia
 run_rules("https://…/sets/BondEnrichment"; source = [D, DERIVED], actor = "doug")
-run_rules(["…/RuleA", "…/RuleB"]; source = [D])      # a bare list: gistp:priority orders it
+run_rules(["…/RuleA", "…/RuleB"]; source = [D])      # a bare list: jhp:priority orders it
 ```
 
 A set is a `gist:OrderedCollection` and membership is **reified** — a `gist:OrderedMember`
@@ -1183,7 +1183,7 @@ different places in different sets, and what makes the set itself a resource tha
 label, a definition and a validity period. **A revised guideline is a revised rule set.**
 
 **Two levels of iteration, and they are independent.** Each rule still honours its own
-`gistp:strategy`, so an `Assert` member closes internally before the next member is reached.
+`jhp:strategy`, so an `Assert` member closes internally before the next member is reached.
 The *set's* strategy governs how many times the whole ordered pass is made. You need the
 second whenever a later rule feeds an earlier one, and no arrangement of per-rule strategies
 expresses that — a rule's own fixpoint iterates that rule alone:
@@ -1204,9 +1204,9 @@ without recording provenance, so returning one would hand back a firing `undo_fi
 refuse.
 
 **Mixed modes are refused**, with one escape. An additive rule's output is a new named graph
-later rules must read, but a `gistp:Rewrite` takes exactly one source graph which is also its
+later rules must read, but a `jhp:_RewriteMode_rewrite` takes exactly one source graph which is also its
 target — contradictory the moment an additive rule has fired. So a set is all-`Rewrite` or
-contains none. Give the additive members a `gistp:inGraph` destination and the contradiction
+contains none. Give the additive members a `jhp:inGraph` destination and the contradiction
 goes away: the working set never grows, the rewrite still has exactly one source, and it reads
 the derived triples from the graph they were written to.
 
@@ -1385,14 +1385,14 @@ Each message names the fix.
 | *iriTemplate … is relative* | Templates expand to absolute IRIs. A bare local part mints into whatever namespace the rule file's empty prefix happens to name. |
 | *separates slots with `"_"`* | `ENCODE_FOR_URI` leaves `-._~` alone, so `"x_y"+"z"` and `"x"+"y_z"` both give `x_y_z` — two different things merged into one node. Use `/`. |
 | *carries a template, which declares it minted, but the match pattern also binds it* | A variable is either constructed or matched. |
-| *gistp:Rewrite needs exactly one source graph* | "Delete from the union of these three" is neither expressible nor reviewable. |
+| *jhp:_RewriteMode_rewrite needs exactly one source graph* | "Delete from the union of these three" is neither expressible nor reviewable. |
 | *still changing the graph after N iterations* | A fixpoint did not converge. Usually IRI minting from a value the rule itself derives. |
 | *running to a fixpoint needs an explicit `source`* | Each round has to see the previous round's output, and SPARQL's `USING` cannot name the default graph. Load into a named graph, or apply the rule `Once`. |
-| *a gistp:Rewrite run to a fixpoint with no gistp:hasNegativeCondition must state a bound* | A deleting rule has nothing to say when it is done. Add a guard or a `maxIterations`. |
+| *a jhp:_RewriteMode_rewrite run to a fixpoint with no jhp:hasNegativeCondition must state a bound* | A deleting rule has nothing to say when it is done. Add a guard or a `maxIterations`. |
 | *no rule found at `<…>`* | The IRI is wrong, or the rule's three declarations are not in the **default** graph. |
 | *target graph `<…>` already holds N triple(s)* | `apply_rule`'s `into` must start empty: its size is reported as this rule's contribution, and `undo_firing!` drops the whole graph. |
-| *gistp:inGraph must name a graph by IRI* | A graph name is an IRI, and so is a slot value. Here there is not even a withdrawn spelling to point at: no literal can name a graph, and none ever could. |
-| *a rule with gistp:inGraph must name its graphs in `source`* | A graph variable with no dataset clause ranges over every named graph in the store, provenance included. |
+| *jhp:inGraph must name a graph by IRI* | A graph name is an IRI, and so is a slot value. Here there is not even a withdrawn spelling to point at: no literal can name a graph, and none ever could. |
+| *a rule with jhp:inGraph must name its graphs in `source`* | A graph variable with no dataset clause ranges over every named graph in the store, provenance included. |
 
 ---
 
