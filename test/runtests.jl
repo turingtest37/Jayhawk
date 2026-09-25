@@ -2224,6 +2224,23 @@ end
         @test length(construct_only(spec)) == 1
     end
 
+    @testset "parts are joined hub first, never in bare IRI order" begin
+        # The store joins GRAPH groups left to right, so this is a query plan. Here the hub
+        # (sharing ?_A with one part and ?_B with the other) sorts LAST by IRI; emitted in IRI
+        # order, the two leaf parts would share nothing and cross-multiply. Measured on the
+        # bondfix rules: 4.39 s in IRI order, 0.016 s hub first.
+        leafA = Jayhawk.MatchPart("$(R)P_a", [owns("_A", "_X")], LEFT)
+        leafB = Jayhawk.MatchPart("$(R)P_b", [owns("_B", "_g")], RIGHT)
+        hub = Jayhawk.MatchPart("$(R)P_z", [
+            PatternTriple(iri("$(R)_A"), iri("$(EX)knows"), iri("$(R)_B"))], LEFT)
+        spec = pair(; parts=[leafA, leafB, hub])
+        @test [p.graph for p in Jayhawk.ordered_parts(spec)] == ["$(R)P_z", "$(R)P_a", "$(R)P_b"]
+        q = compile_rule(spec; from=[LEFT, RIGHT])
+        @test findfirst("knows", q).start < findfirst("owns> ?_X", q).start
+        # equally connected parts keep IRI order, so the golden above still holds
+        @test [p.graph for p in Jayhawk.ordered_parts(pair())] == ["$(R)Pair_Left", "$(R)Pair_Right"]
+    end
+
     @testset "what a multi-pattern L refuses" begin
         err(spec) =
             try

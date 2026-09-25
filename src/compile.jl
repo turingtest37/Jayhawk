@@ -1763,6 +1763,52 @@ function pre_mint_text(spec::RuleSpec)
 end
 
 """
+    ordered_parts(spec) -> Vector{MatchPart}
+
+The order a multi-pattern L's parts are emitted in -- which is the order the store joins
+them in, so it is a query plan, not a cosmetic choice.
+
+Jena evaluates consecutive `GRAPH` groups left to right and does not reorder them. Emitted
+in IRI order, a part that shares no variable with the parts before it is evaluated
+unanchored and cross-multiplied with them. Measured on the bondfix rules over a 540-quad
+fixture: FirstCouponEvent's WHERE took **4.39 s** with its small anchoring part (the match
+node in the work graph) sorted last, and **0.016 s** with it first; MatchTradeToHolding went
+from 0.51 s to 0.09 s. The oracle query they reproduce takes 0.1 s.
+
+RDF gives the values of `jhp:hasMatchPattern` no order, so the compiler picks one, by the
+standard rule for avoiding cartesian products, applied greedily:
+
+  * **first**, the part sharing the most variables with the other parts -- the hub the rest
+    hang off -- breaking ties by fewer triples, then by IRI;
+  * **then**, repeatedly, the part sharing the most variables with those already placed,
+    ties broken the same way.
+
+A graph variable counts as a variable of its part. The order depends on the spec alone, so
+the same rule compiles to the same bytes; and a rule whose parts are all equally connected
+keeps IRI order, which is what its golden text was written against.
+"""
+function ordered_parts(spec::RuleSpec)
+    parts = spec.match_parts
+    length(parts) <= 1 && return parts
+    vs(p) = union(vars_in(p.triples, spec), scope_vars(p.scope, spec))
+    pv = Dict(p.graph => vs(p) for p in parts)
+    key(p, shared) = (-shared, length(p.triples), p.graph)
+    others(p) = reduce(union, (pv[q.graph] for q in parts if q !== p); init=Set{String}())
+    remaining = collect(parts)
+    first_part = argmin(p -> key(p, length(intersect(pv[p.graph], others(p)))), remaining)
+    out = [first_part]
+    placed = copy(pv[first_part.graph])
+    filter!(p -> p !== first_part, remaining)
+    while !isempty(remaining)
+        nxt = argmin(p -> key(p, length(intersect(pv[p.graph], placed))), remaining)
+        push!(out, nxt)
+        union!(placed, pv[nxt.graph])
+        filter!(p -> p !== nxt, remaining)
+    end
+    return out
+end
+
+"""
     match_text(spec; indent = "  ") -> String
 
 L's triples, wrapped in `GRAPH …` if the match pattern carries `jhp:inGraph`.
@@ -1792,7 +1838,7 @@ function match_text(spec::RuleSpec; indent::AbstractString="  ")
                 graph_wrap(
                     bgp_text(p.triples, spec; indent=indent * "  "), p.scope, spec; indent=indent
                 )
-            end for p in spec.match_parts
+            end for p in ordered_parts(spec)
         ),
         "\n",
     )

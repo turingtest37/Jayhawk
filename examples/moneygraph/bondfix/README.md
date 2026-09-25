@@ -16,10 +16,12 @@ CLAUDE.md backlog.
 | `data.trig` | the fixture: `__trades-bonds__`, `__current__`, `__units__` |
 | `oracle.rq` | the committed query with one bug fixed (below). The definition of "same effect" |
 | `expected.nq` | what `oracle.rq` writes over `data.trig`, frozen, graphs renamed `urn:jayhawk:example:bondfix:expected:*` |
+| `rules.trig` | the eight rules, their minting functions and the `jhp:RuleSet` ordering them |
 
-`test/sparql_integration.jl` ("bondfix: the oracle reproduces its golden") re-runs the oracle
-and compares the result against `expected.nq` in both directions. The rule set will be held
-to the same file by the same comparison.
+`test/sparql_integration.jl` holds both to `expected.nq`, comparing in both directions.
+"bondfix: the oracle reproduces its golden" re-runs the oracle. "bondfix: the rule set
+reproduces the oracle, quad for quad" runs the rules, then checks that a second run adds
+nothing and that undo leaves the inputs untouched.
 
 ## The cases
 
@@ -71,11 +73,59 @@ Nothing ∅ = ∅ proves is worth having, so this fixture includes the activitie
 - A first-coupon event is minted per *purchase*, not per bond, so a bond bought twice has
   two. That is faithful to the query, and reproduced here on purpose (A2).
 
-## What the rule set still needs from Jayhawk
+## The rule set
 
-- **A match that reads several named graphs, each side kept apart.** Trades and holdings use
-  the same predicates, so merging the graphs matches a trade against itself.
-- **Computed literal bindings.** The symbol normalisation, the `\W+ → -` slug, the date
-  prefix, and the MD5 discriminator the event IRI is minted from.
-- **Re-running as replacement.** The script drops both output graphs before it runs; the
-  rule-set equivalent undoes its own earlier firings.
+`rules.trig` holds eight rules and the `jhp:RuleSet` that orders them. Run over the fixture,
+they write exactly `expected.nq`: 43 + 35 quads, none missing and none extra.
+
+| # | Rule | Reads | Writes | Stands for, in the query |
+|---|---|---|---|---|
+| 1 | MatchTradeToHolding | trades, holdings, units | work | the join and its FILTERs |
+| 2 | ListingAndIssuer | work, trades, holdings | securities | exchange, issuer, issuer's name |
+| 3 | Callable | work, trades | securities | the callable flag |
+| 4 | CouponTerms | work, holdings | securities | the OPTIONAL on the holding's coupon terms |
+| 5 | CouponMonths | work, holdings, trades | securities | both coupon OPTIONALs together |
+| 6 | FirstCouponEvent | work, holdings, trades, units | securities | the minted first-coupon event |
+| 7 | InterestDaysPaid | work, trades | activities | the OPTIONAL on interest days |
+| 8 | YieldToMaturity | work, trades | activities | the minted YTM magnitude |
+
+```julia
+using Jayhawk
+for f in ("data.trig", "rules.trig"); Jayhawk.load_file!("examples/moneygraph/bondfix/$f"); end
+MG3 = "https://w3id.org/moneygraph/ns/data/"
+run_rules("https://w3id.org/moneygraph/ns/rules/bondfix/BondFix";
+          source = ["$(MG3)__trades-bonds__", "$(MG3)__current__", "$(MG3)__units__",
+                    "urn:jayhawk:example:bondfix:work"])
+```
+
+How the query's constructs become rules:
+
+- **The join becomes a fact.** Rule 1 does the heuristic match once. It records the result as
+  a `mgw:Match` node in the work graph, naming every entity the query's filters tie together:
+  the activity, the trade, the account, the bond, the trade security, the issuer, and both
+  repayment terms. The other rules read *which* pairing matched rather than re-deriving it.
+  Each match can be inspected and undone like any other firing.
+- **OPTIONAL becomes a rule of its own.** Such a rule fires only where the optional part
+  matches, which is exactly where the query's template instantiated those triples. The coupon
+  terms need two rules because the query's two coupon triples depend on different OPTIONALs.
+- **Two output graphs become one destination per rule.**
+- **Derived keys become `jhp:hasBinding`s**, with the query's expressions carried over
+  verbatim: symbol normalisation, the `\W+` slug, the date prefix and the MD5 discriminator.
+- **Minted IRIs come from one `gistp:MintingFunction` per kind of IRI**, shared by every rule
+  that mints that kind.
+
+**Assumed, and true of moneygraph's pipeline:** the attribute values the query reads off one
+entity are single-valued, such as one label per issuer and one net amount per trade. Where
+they are not, the query cross-multiplies inside a single solution, and a later rule re-reading
+them could pair them differently. The entities the filters constrain are never re-derived.
+The issuer's label is re-tested against the description in rule 2 for the same reason.
+
+## What building this changed in Jayhawk
+
+| Round | What | Why this query needed it |
+|---|---|---|
+| 2 | several match patterns per rule, each in its own graph | trades and holdings share predicates; merged, a trade matches itself |
+| 3 | `jhp:hasBinding` | every minted IRI is built from a computed key |
+| 3b | `gistp:isMintedBy` | one minting function per class, not the namespace repeated in every rule |
+| 4 | write-scoped firings pruned against the destination only | the issuer's `gist:Organization` typing is already in the trades graph, and the query writes it anyway |
+| 4 | match patterns joined hub first | FirstCouponEvent took 4.39 s with its parts in IRI order and 0.016 s hub first; the oracle takes 0.1 s |

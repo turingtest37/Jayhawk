@@ -278,6 +278,13 @@ Three engine gaps stand between it and a working rule set, taken in this order:
    repeating `mg3:` in each template. Its `gist:conformsTo` policy is recorded, not enforced.
    Its namespace may be an `xsd:anyURI` or an `xsd:string` (gistPatterns `afbc219`: the
    equivalent class takes either, and `≤1 namespace` makes one of each inconsistent).
+**Round 4 is done: the rule set reproduces the oracle quad for quad** (43 + 35, none missing,
+none extra). `examples/moneygraph/bondfix/rules.trig` holds eight rules: rule 1 records the
+join as a `mgw:Match` node, and each OPTIONAL branch and each destination is its own rule.
+Two engine fixes fell out of it. Write-scoped firings are pruned against the destination
+only (`prune_set`), since a fact already in a source is still new where the rule writes it.
+Multi-pattern parts are joined hub first (`ordered_parts`), since IRI order made one rule
+4.39 s instead of 0.016 s.
 3. **`rerun_rules!`**: undo a set's earlier firings, then run. This is the rule-set
    equivalent of the script's `DROP SILENT GRAPH`, and removes exactly what the set asserted.
 

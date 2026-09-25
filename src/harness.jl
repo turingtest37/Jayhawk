@@ -149,6 +149,33 @@ function prune_known!(
     return nothing
 end
 
+"""
+    prune_set(spec, source) -> Vector{String}
+
+The graphs a firing is pruned against: what "new" means for this rule.
+
+For a rule with a write destination (`jhp:inGraph` on R), new means **new to the
+destination** -- not to what the rule read. The two differ exactly when a fact is already
+true in a source but not where the rule writes it, and the rule plainly states it belongs
+there: moneygraph's bond fix writes an issuer's `gist:Organization` typing into
+`__securities__extra` although the trades graph it reads already holds it. Pruning against
+the sources dropped such facts, so the destination never received them -- silently, with a
+count of zero. Pruning against the destination alone is still enough for everything pruning
+is for: undo retracts exactly the firing graph from the destination, and a write-scoped
+fixpoint already requires the destination in `source`, so round two sees round one.
+
+For a rule without one, the firing graph joins the working set, so new means new to the
+working set, as it always has.
+
+One function, because the run and both previews must agree: `dry_run` used to prune against
+the sources only, and `apply_rule` against sources and destination, so for a write-scoped
+rule the preview and the run could report different numbers.
+"""
+function prune_set(spec::RuleSpec, source::AbstractVector)
+    dest = write_scope(spec)
+    return dest === nothing ? String.(source) : [dest]
+end
+
 "Write the provenance record for one firing."
 function record_firing!(f::Firing; actor::AbstractString, ep::SparqlEndpoint=endpoint())
     srcs = if isempty(f.source)
@@ -303,12 +330,9 @@ function apply_rule(
 
     update!(insert_query(spec; into=into, from=source); ep=ep)
 
-    # A declared destination joins the set pruned against, so `count` means "facts new to
-    # the place they are going" rather than "facts new to what the rule read". Those differ
-    # the moment the destination is not itself a source -- and reporting the wrong one would
-    # make a re-run of a converged rule look productive.
+    # `count` means "facts new to the place they are going" -- see `prune_set`.
     dest = write_scope(spec)
-    prune_known!(into, dest === nothing ? source : vcat(String.(source), dest); ep=ep)
+    prune_known!(into, prune_set(spec, source); ep=ep)
     n = graph_size(into; ep=ep)
 
     # The firing graph stays the unit of attribution and of undo even when the rule writes
@@ -813,7 +837,7 @@ ORDER BY ?s ?p ?o LIMIT $(Int(limit))""";
         # The preview has to prune exactly as the run does, or explain_rule shows a reviewer
         # a number the application will not match: an R \ I triple the target already holds
         # is not something this rule adds.
-        prune_known!(gadd, source; ep=ep)
+        prune_known!(gadd, prune_set(spec, source); ep=ep)
         (
             count=graph_size(gadd; ep=ep),
             sample=peek(gadd),
@@ -850,7 +874,7 @@ function dry_run(
     g = new_firing_graph()
     try
         update!(insert_query(spec; into=g, from=source); ep=ep)
-        prune_known!(g, source; ep=ep)
+        prune_known!(g, prune_set(spec, source); ep=ep)
         n = graph_size(g; ep=ep)
         rows = select(
             """

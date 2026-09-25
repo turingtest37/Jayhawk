@@ -1218,6 +1218,9 @@ what made every scoped rule look dangerous. They have opposite requirements:
   ranges over every named graph in the store — the provenance graph, every firing, every
   tombstone, the rule catalogue's own patterns. It also cannot iterate, because each round
   appends its firing graph to the working set.
+- A scoped **write** counts a fact as new when it is new **to the destination**, even if a
+  graph the rule reads already holds it. Copying a fact from where it is into where it
+  belongs is a legitimate rule.
 - A scoped **write** must name a **constant**. Different solutions going to different graphs
   would leave the firing graph — one flat set of triples — with nowhere to record which triple
   went where, so `undo_firing!` could not reverse it. It needs no `source` of its own, and it
@@ -1263,7 +1266,10 @@ derives **6** pairs where exactly **1** is true, because it pairs every owner wi
 the true pair both ways round.
 
 Each part may be scoped differently: a constant, a graph variable, or no scope at all, which
-reads the merge of every `source` graph. I is taken over the whole of L, so a triple from any
+reads the merge of every `source` graph. The compiler chooses the order the parts are joined
+in. It puts first the part that shares the most variables with the others, so no part is
+evaluated unanchored. That order is the query plan, and it matters: bondfix's
+FirstCouponEvent took 4.39 s with its parts in IRI order and 0.016 s joined hub first. I is taken over the whole of L, so a triple from any
 match pattern that R repeats is preserved. `explain_rule` lists each pattern and the graph it
 reads.
 

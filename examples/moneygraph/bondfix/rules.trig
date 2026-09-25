@@ -1,0 +1,510 @@
+#  moneygraph's fix-missing-bond-data.rq, re-expressed as an ordered rule set.
+#
+#  The query is one ~200-line SPARQL update. Here it is eight small rules, each reading the
+#  graphs it needs and writing to one destination. Together they reproduce the query's output
+#  quad for quad (expected.nq; see README.md for the oracle and the one bug it fixes).
+#
+#     1  MatchTradeToHolding    trades + holdings + units  ->  work        the join, as a fact
+#     2  ListingAndIssuer       work + trades + holdings   ->  securities
+#     3  Callable               work + trades              ->  securities
+#     4  CouponTerms            work + holdings            ->  securities  (query's OPTIONAL on C)
+#     5  CouponMonths           work + holdings + trades   ->  securities  (both OPTIONALs)
+#     6  FirstCouponEvent       work + holdings + trades + units -> securities
+#     7  InterestDaysPaid       work + trades              ->  activities  (OPTIONAL on T)
+#     8  YieldToMaturity        work + trades              ->  activities
+#
+#  How the query's constructs map:
+#    * two graphs read side by side  ->  several match patterns, each jhp:inGraph (Round 2)
+#    * the join, which shares no variables and is all FILTER  ->  rule 1's jhp:hasFilterCondition,
+#      and its result recorded as a mgw:Match node in the work graph -- every later rule reads
+#      which pairing matched instead of re-deriving it
+#    * OPTIONAL  ->  a rule of its own, which fires only where the optional part matches; the
+#      query's partial template instantiation drops exactly those triples when it does not
+#    * two output graphs  ->  one destination per rule (write-side jhp:inGraph)
+#    * the derived keys (symbol normalisation, \W+ slug, date prefix, MD5)  ->  jhp:hasBinding
+#      (Round 3)
+#    * IRI minting  ->  one gistp:MintingFunction per kind of IRI, shared by every rule that
+#      mints one (Round 3b)
+#
+#  Assumed, and true of moneygraph's pipeline: the attribute values the query reads off one
+#  entity are single-valued -- one label per issuer, one net amount per trade. Where they are
+#  not, the query cross-multiplies inside one solution and a later rule, re-reading them,
+#  could pair them differently. The entities the query's filters tie together are never
+#  re-derived: they are pinned in the mgw:Match node.
+
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix gist:  <https://w3id.org/semanticarts/ns/ontology/gist/> .
+@prefix gistd: <https://w3id.org/semanticarts/ns/data/gist/> .
+@prefix gistp: <https://w3id.org/semanticarts/ns/patterns/gist/> .
+@prefix jhp:   <https://turingtest37.github.io/jayhawkpatterning/> .
+@prefix mg:    <https://w3id.org/moneygraph/ns/ontology/> .
+@prefix mgx:   <https://w3id.org/moneygraph/ns/taxonomy/> .
+@prefix mg3:   <https://w3id.org/moneygraph/ns/data/> .
+@prefix mgw:   <https://w3id.org/moneygraph/ns/work/> .
+@prefix bf:    <https://w3id.org/moneygraph/ns/rules/bondfix/> .
+
+# ===========================================================================================
+#    The rule set
+# ===========================================================================================
+
+bf:BondFix
+    rdf:type jhp:RuleSet ;
+    skos:prefLabel "Fix missing bond data" ;
+    skos:definition """Copy onto each held bond, and its purchase activity, the facts only the
+                       trade confirmation carries: exchange, issuer, callable flag, coupon
+                       terms, first coupon, days of interest paid, yield to maturity.""" ;
+    jhp:strategy jhp:Once .
+
+bf:BondFix_1 rdf:type gist:OrderedMember ; gist:isMemberOf bf:BondFix ;
+    gist:providesOrderFor bf:MatchTradeToHolding ; gist:sequence 1 .
+bf:BondFix_2 rdf:type gist:OrderedMember ; gist:isMemberOf bf:BondFix ;
+    gist:providesOrderFor bf:ListingAndIssuer ; gist:sequence 2 .
+bf:BondFix_3 rdf:type gist:OrderedMember ; gist:isMemberOf bf:BondFix ;
+    gist:providesOrderFor bf:Callable ; gist:sequence 3 .
+bf:BondFix_4 rdf:type gist:OrderedMember ; gist:isMemberOf bf:BondFix ;
+    gist:providesOrderFor bf:CouponTerms ; gist:sequence 4 .
+bf:BondFix_5 rdf:type gist:OrderedMember ; gist:isMemberOf bf:BondFix ;
+    gist:providesOrderFor bf:CouponMonths ; gist:sequence 5 .
+bf:BondFix_6 rdf:type gist:OrderedMember ; gist:isMemberOf bf:BondFix ;
+    gist:providesOrderFor bf:FirstCouponEvent ; gist:sequence 6 .
+bf:BondFix_7 rdf:type gist:OrderedMember ; gist:isMemberOf bf:BondFix ;
+    gist:providesOrderFor bf:InterestDaysPaid ; gist:sequence 7 .
+bf:BondFix_8 rdf:type gist:OrderedMember ; gist:isMemberOf bf:BondFix ;
+    gist:providesOrderFor bf:YieldToMaturity ; gist:sequence 8 .
+
+# ===========================================================================================
+#    How moneygraph mints IRIs -- stated once, shared by every rule that mints
+# ===========================================================================================
+
+bf:_MintingFunction_Event a gistp:MintingFunction ;
+    gistp:namespace "https://w3id.org/moneygraph/ns/data/"^^xsd:anyURI ;
+    gistp:localTemplate "_Event_{key}" .
+
+bf:_MintingFunction_CouponPaymentSchedule a gistp:MintingFunction ;
+    gistp:namespace "https://w3id.org/moneygraph/ns/data/"^^xsd:anyURI ;
+    gistp:localTemplate "_CouponPaymentSchedule_{symbol}" .
+
+bf:_MintingFunction_YieldMagnitude a gistp:MintingFunction ;
+    gistp:namespace "https://w3id.org/moneygraph/ns/data/"^^xsd:anyURI ;
+    gistp:localTemplate "_Magnitude_yieldToMaturity_{value}" .
+
+# The work graph's own nodes. ':' separates the two slots because it is outside the set
+# ENCODE_FOR_URI leaves alone, so no value can forge it (_Requirement_separator_colon).
+bf:_MintingFunction_Match a gistp:MintingFunction ;
+    gistp:namespace "urn:jayhawk:example:bondfix:match:" ;
+    gistp:localTemplate "{activity}:{trade}" .
+
+# ===========================================================================================
+#    Variables. Declarations are store-wide, and these carry no oneOf, so rules share them.
+# ===========================================================================================
+
+# trade side (__trades-bonds__)
+bf:_tacct   a gistp:SparqlVariable ; gistp:variableText "?_tacct" .
+bf:_tsec    a gistp:SparqlVariable ; gistp:variableText "?_tsec" .
+bf:_tpe     a gistp:SparqlVariable ; gistp:variableText "?_tpe" .
+bf:_qtyM    a gistp:SparqlVariable ; gistp:variableText "?_qtyM" .
+bf:_netM    a gistp:SparqlVariable ; gistp:variableText "?_netM" .
+bf:_priceM  a gistp:SparqlVariable ; gistp:variableText "?_priceM" .
+bf:_grossM  a gistp:SparqlVariable ; gistp:variableText "?_grossM" .
+bf:_commM   a gistp:SparqlVariable ; gistp:variableText "?_commM" .
+bf:_ytmM    a gistp:SparqlVariable ; gistp:variableText "?_ytmM" .
+bf:_exch    a gistp:SparqlVariable ; gistp:variableText "?_exch" .
+bf:_issuer  a gistp:SparqlVariable ; gistp:variableText "?_issuer" .
+bf:_trt     a gistp:SparqlVariable ; gistp:variableText "?_trt" .
+bf:_tmatEv  a gistp:SparqlVariable ; gistp:variableText "?_tmatEv" .
+bf:_tcpt    a gistp:SparqlVariable ; gistp:variableText "?_tcpt" .
+bf:_tsched  a gistp:SparqlVariable ; gistp:variableText "?_tsched" .
+bf:_ncev    a gistp:SparqlVariable ; gistp:variableText "?_ncev" .
+bf:_idm     a gistp:SparqlVariable ; gistp:variableText "?_idm" .
+
+# holding side (__current__)
+bf:_secacct   a gistp:SparqlVariable ; gistp:variableText "?_secacct" .
+bf:_bond      a gistp:SparqlVariable ; gistp:variableText "?_bond" .
+bf:_portfolio a gistp:SparqlVariable ; gistp:variableText "?_portfolio" .
+bf:_pid       a gistp:SparqlVariable ; gistp:variableText "?_pid" .
+bf:_bid       a gistp:SparqlVariable ; gistp:variableText "?_bid" .
+bf:_ape       a gistp:SparqlVariable ; gistp:variableText "?_ape" .
+bf:_anetM     a gistp:SparqlVariable ; gistp:variableText "?_anetM" .
+bf:_agrossM   a gistp:SparqlVariable ; gistp:variableText "?_agrossM" .
+bf:_rt        a gistp:SparqlVariable ; gistp:variableText "?_rt" .
+bf:_matEv     a gistp:SparqlVariable ; gistp:variableText "?_matEv" .
+bf:_cpt       a gistp:SparqlVariable ; gistp:variableText "?_cpt" .
+
+# units, and the work graph
+bf:_uom   a gistp:SparqlVariable ; gistp:variableText "?_uom" .
+# A match node as the later rules READ it. Not bf:_match: a declaration is store-wide, and
+# bf:_match carries gistp:isMintedBy, so in any rule that named it, it would be minted.
+bf:_m     a gistp:SparqlVariable ; gistp:variableText "?_m" .
+bf:_match a gistp:SparqlVariable ; gistp:variableText "?_match" ;
+    gistp:isMintedBy bf:_MintingFunction_Match ;
+    gistp:hasSlot [ a gistp:TemplateSlot ; gistp:slotName "activity" ; gistp:slotValue bf:_ape ] ,
+                  [ a gistp:TemplateSlot ; gistp:slotName "trade" ;    gistp:slotValue bf:_tpe ] .
+
+# computed values (jhp:hasBinding targets) and the literal a mint reads
+bf:_symNorm a gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?symNorm" ; gistp:requiresDatatype xsd:string .
+bf:_eqSym   a gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?eqSym" ; gistp:requiresDatatype xsd:string .
+bf:_acctKey a gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?acctKey" ; gistp:requiresDatatype xsd:string .
+bf:_curKey  a gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?curKey" ; gistp:requiresDatatype xsd:string .
+bf:_disc    a gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?disc" ; gistp:requiresDatatype xsd:string .
+bf:_evtKey  a gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?evtKey" ; gistp:requiresDatatype xsd:string .
+bf:_ytm     a gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?ytm" ; gistp:requiresDatatype xsd:decimal .
+
+# minted
+bf:_sched a gistp:SparqlVariable ; gistp:variableText "?_sched" ;
+    gistp:isMintedBy bf:_MintingFunction_CouponPaymentSchedule ;
+    gistp:hasSlot [ a gistp:TemplateSlot ; gistp:slotName "symbol" ; gistp:slotValue bf:_eqSym ] .
+bf:_evt a gistp:SparqlVariable ; gistp:variableText "?_evt" ;
+    gistp:isMintedBy bf:_MintingFunction_Event ;
+    gistp:hasSlot [ a gistp:TemplateSlot ; gistp:slotName "key" ; gistp:slotValue bf:_evtKey ] .
+bf:_ytmMag a gistp:SparqlVariable ; gistp:variableText "?_ytmMag" ;
+    gistp:isMintedBy bf:_MintingFunction_YieldMagnitude ;
+    gistp:hasSlot [ a gistp:TemplateSlot ; gistp:slotName "value" ; gistp:slotValue bf:_ytm ] .
+
+# The symbol normalisation both minting rules need. Declared per rule (a binding hangs off
+# its rule), but the text is the query's, verbatim.
+#   ".ABC" -> "ABC"      "xyz.TO" -> "xyz"      then upper-cased and \W+ -> "-"
+
+# ===========================================================================================
+#    1. MatchTradeToHolding -- the join, recorded as a fact
+# ===========================================================================================
+
+bf:MatchTradeToHolding
+    rdf:type jhp:Rule ;
+    skos:prefLabel "Match a bond trade to the holding and purchase it belongs to" ;
+    skos:definition """The query's heuristic join: same maturity, same purchase date, gross and
+                       net amounts, and the issuer's name in the holding's description. The
+                       match is written as a node naming every entity it ties together.""" ;
+    jhp:hasMatchPattern bf:Match_Trade , bf:Match_Holding , bf:Match_Units ;
+    jhp:hasConstructPattern bf:Match_R ;
+    jhp:rewriteMode jhp:_RewriteMode_assert ;
+    jhp:strategy jhp:Once ;
+    jhp:hasFilterCondition
+        [ a jhp:FilterCondition ; skos:prefLabel "same maturity" ;
+          jhp:filterText "?tmat = ?mat" ] ,
+        [ a jhp:FilterCondition ; skos:prefLabel "same purchase date" ;
+          jhp:filterText "?tpd = ?pd" ] ,
+        [ a jhp:FilterCondition ; skos:prefLabel "same gross amount" ;
+          jhp:filterText "?gross = ?grossA" ] ,
+        [ a jhp:FilterCondition ; skos:prefLabel "same net amount" ;
+          jhp:filterText "?net = ?netA" ] ,
+        [ a jhp:FilterCondition ; skos:prefLabel "the issuer is named in the description" ;
+          jhp:filterText "CONTAINS(?desc, ?istr)" ] .
+
+bf:Match_Trade   a gistp:SparqlPattern ; jhp:inGraph mg3:__trades-bonds__ .
+bf:Match_Holding a gistp:SparqlPattern ; jhp:inGraph mg3:__current__ .
+bf:Match_Units   a gistp:SparqlPattern ; jhp:inGraph mg3:__units__ .
+bf:Match_R       a gistp:SparqlPattern ; jhp:inGraph <urn:jayhawk:example:bondfix:work> .
+
+bf:Match_Trade {
+    bf:_tacct gist:hasPositionIn bf:_tsec ; gist:isAffectedBy bf:_tpe .
+    bf:_tpe gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
+            mg:transactionDate "?tpd"^^gistp:var ;
+            gist:hasMagnitude bf:_qtyM , bf:_netM , bf:_priceM , bf:_grossM , bf:_commM , bf:_ytmM .
+    bf:_qtyM   gist:hasAspect mgx:_Aspect_securityShareCount ;            gist:numericValue "?qty"^^gistp:var .
+    bf:_netM   gist:hasAspect mgx:_Aspect_securityTradeNetAmount ;        gist:numericValue "?net"^^gistp:var ;
+               gist:hasUnitOfMeasure bf:_uom .
+    bf:_priceM gist:hasAspect mgx:_Aspect_securityShareUnitPriceAmount ;  gist:numericValue "?price"^^gistp:var .
+    bf:_grossM gist:hasAspect mgx:_Aspect_securityTradeGrossAmount ;      gist:numericValue "?gross"^^gistp:var .
+    bf:_commM  gist:hasAspect mgx:_Aspect_securityTradeTransactionCommission ; gist:numericValue "?comm"^^gistp:var .
+    bf:_ytmM   gist:hasAspect mgx:_Aspect_yieldToMaturity ;               gist:numericValue "?ytm"^^gistp:var .
+    bf:_tsec mg:isListedOn bf:_exch ; mg:hasRepaymentTerms bf:_trt ; mg:isIssuedBy bf:_issuer .
+    bf:_issuer skos:prefLabel "?istr"^^gistp:var .
+    bf:_trt rdf:type mg:BondRepaymentTerms ; mg:callable "?callable"^^gistp:var ; mg:specifies bf:_tmatEv .
+    bf:_tmatEv gist:isCategorizedBy mgx:_FinancialBusinessEventType_debtPrincipalRepayment ;
+               mg:plannedOccursDate "?tmat"^^gistp:var .
+}
+
+bf:Match_Holding {
+    bf:_secacct gist:hasPositionIn bf:_bond ; gist:isMemberOf bf:_portfolio ; gist:isAffectedBy bf:_ape .
+    bf:_ape gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
+            mg:transactionDate "?pd"^^gistp:var ;
+            gist:hasMagnitude bf:_anetM , bf:_agrossM .
+    bf:_anetM   gist:hasAspect mgx:_Aspect_securityTradeNetAmount ;   gist:numericValue "?netA"^^gistp:var .
+    bf:_agrossM gist:hasAspect mgx:_Aspect_securityTradeGrossAmount ; gist:numericValue "?grossA"^^gistp:var .
+    bf:_portfolio rdf:type mg:InvestmentPortfolio ; gist:isIdentifiedBy bf:_pid .
+    bf:_pid gist:uniqueText "?acct"^^gistp:var .
+    bf:_bond gist:isCategorizedBy mgx:_MarketableSecurityType_bond ;
+             mg:hasRepaymentTerms bf:_rt ;
+             gist:isIdentifiedBy bf:_bid ;
+             gist:description "?desc"^^gistp:var .
+    bf:_bid gist:uniqueText "?sym"^^gistp:var .
+    bf:_rt mg:specifies bf:_matEv .
+    bf:_matEv rdf:type gist:ScheduledEvent ;
+              gist:isCategorizedBy mgx:_FinancialBusinessEventType_debtPrincipalRepayment ;
+              mg:plannedOccursDate "?mat"^^gistp:var .
+}
+
+# Only so a trade whose currency has no code does not match -- the query requires one.
+bf:Match_Units {
+    bf:_uom gist:symbol "?cur"^^gistp:var .
+}
+
+bf:Match_R {
+    bf:_match rdf:type mgw:Match ;
+              mgw:activity bf:_ape ;
+              mgw:trade bf:_tpe ;
+              mgw:account bf:_secacct ;
+              mgw:bond bf:_bond ;
+              mgw:tradeSecurity bf:_tsec ;
+              mgw:issuer bf:_issuer ;
+              mgw:repaymentTerms bf:_rt ;
+              mgw:tradeRepaymentTerms bf:_trt .
+}
+
+# ===========================================================================================
+#    2. ListingAndIssuer
+# ===========================================================================================
+
+bf:ListingAndIssuer
+    rdf:type jhp:Rule ;
+    skos:prefLabel "Record where a bond is listed and who issued it" ;
+    jhp:hasMatchPattern bf:Issuer_Work , bf:Issuer_Trade , bf:Issuer_Holding ;
+    jhp:hasConstructPattern bf:Issuer_R ;
+    jhp:rewriteMode jhp:_RewriteMode_assert ;
+    jhp:strategy jhp:Once ;
+    # The query names the issuer by the label that passed this test; re-applying it keeps
+    # that true even for an issuer with more than one label.
+    jhp:hasFilterCondition [ a jhp:FilterCondition ; jhp:filterText "CONTAINS(?desc, ?istr)" ] .
+
+bf:Issuer_Work    a gistp:SparqlPattern ; jhp:inGraph <urn:jayhawk:example:bondfix:work> .
+bf:Issuer_Trade   a gistp:SparqlPattern ; jhp:inGraph mg3:__trades-bonds__ .
+bf:Issuer_Holding a gistp:SparqlPattern ; jhp:inGraph mg3:__current__ .
+bf:Issuer_R       a gistp:SparqlPattern ; jhp:inGraph mg3:__securities__extra .
+
+bf:Issuer_Work    { bf:_m mgw:bond bf:_bond ; mgw:tradeSecurity bf:_tsec ; mgw:issuer bf:_issuer . }
+bf:Issuer_Trade   { bf:_tsec mg:isListedOn bf:_exch . bf:_issuer skos:prefLabel "?istr"^^gistp:var . }
+bf:Issuer_Holding { bf:_bond gist:description "?desc"^^gistp:var . }
+bf:Issuer_R {
+    bf:_bond mg:isListedOn bf:_exch ; mg:isIssuedBy bf:_issuer .
+    bf:_issuer rdf:type gist:Organization ;
+               gist:name "?istr"^^gistp:var ;
+               skos:prefLabel "?istr"^^gistp:var .
+}
+
+# ===========================================================================================
+#    3. Callable
+# ===========================================================================================
+
+bf:Callable
+    rdf:type jhp:Rule ;
+    skos:prefLabel "Record whether a bond is callable" ;
+    jhp:hasMatchPattern bf:Callable_Work , bf:Callable_Trade ;
+    jhp:hasConstructPattern bf:Callable_R ;
+    jhp:rewriteMode jhp:_RewriteMode_assert ;
+    jhp:strategy jhp:Once .
+
+bf:Callable_Work  a gistp:SparqlPattern ; jhp:inGraph <urn:jayhawk:example:bondfix:work> .
+bf:Callable_Trade a gistp:SparqlPattern ; jhp:inGraph mg3:__trades-bonds__ .
+bf:Callable_R     a gistp:SparqlPattern ; jhp:inGraph mg3:__securities__extra .
+
+bf:Callable_Work  { bf:_m mgw:repaymentTerms bf:_rt ; mgw:tradeRepaymentTerms bf:_trt . }
+bf:Callable_Trade { bf:_trt mg:callable "?callable"^^gistp:var . }
+bf:Callable_R     { bf:_rt mg:callable "?callable"^^gistp:var . }
+
+# ===========================================================================================
+#    4. CouponTerms -- the query's OPTIONAL on the holding's coupon terms
+# ===========================================================================================
+
+bf:CouponTerms
+    rdf:type jhp:Rule ;
+    skos:prefLabel "Type a held bond's coupon terms and give them a schedule" ;
+    jhp:hasMatchPattern bf:Terms_Work , bf:Terms_Holding ;
+    jhp:hasConstructPattern bf:Terms_R ;
+    jhp:rewriteMode jhp:_RewriteMode_assert ;
+    jhp:strategy jhp:Once ;
+    jhp:hasBinding
+        [ a jhp:Binding ; jhp:bindsVariable bf:_symNorm ;
+          jhp:bindText '''IF(STRSTARTS(?sym, "."), STRAFTER(?sym, "."), IF(CONTAINS(?sym, "."), STRBEFORE(?sym, "."), ?sym))''' ] ,
+        [ a jhp:Binding ; jhp:bindsVariable bf:_eqSym ;
+          jhp:bindText '''REPLACE(UCASE(STR(?symNorm)), "\\\\W+", "-")''' ] .
+
+bf:Terms_Work    a gistp:SparqlPattern ; jhp:inGraph <urn:jayhawk:example:bondfix:work> .
+bf:Terms_Holding a gistp:SparqlPattern ; jhp:inGraph mg3:__current__ .
+bf:Terms_R       a gistp:SparqlPattern ; jhp:inGraph mg3:__securities__extra .
+
+bf:Terms_Work    { bf:_m mgw:bond bf:_bond . }
+bf:Terms_Holding {
+    bf:_bond mg:hasInterestPaymentTerms bf:_cpt ; gist:isIdentifiedBy bf:_bid .
+    bf:_cpt rdf:type mg:CouponPaymentTerms .
+    bf:_bid gist:uniqueText "?sym"^^gistp:var .
+}
+bf:Terms_R {
+    bf:_cpt rdf:type mg:CouponPaymentTerms ; mg:specifies bf:_sched .
+}
+
+# ===========================================================================================
+#    5. CouponMonths -- needs the holding's coupon terms AND the trade's coupon group
+# ===========================================================================================
+
+bf:CouponMonths
+    rdf:type jhp:Rule ;
+    skos:prefLabel "Copy the coupon payment month and day onto a held bond's terms" ;
+    jhp:hasMatchPattern bf:Months_Work , bf:Months_Holding , bf:Months_Trade ;
+    jhp:hasConstructPattern bf:Months_R ;
+    jhp:rewriteMode jhp:_RewriteMode_assert ;
+    jhp:strategy jhp:Once .
+
+bf:Months_Work    a gistp:SparqlPattern ; jhp:inGraph <urn:jayhawk:example:bondfix:work> .
+bf:Months_Holding a gistp:SparqlPattern ; jhp:inGraph mg3:__current__ .
+bf:Months_Trade   a gistp:SparqlPattern ; jhp:inGraph mg3:__trades-bonds__ .
+bf:Months_R       a gistp:SparqlPattern ; jhp:inGraph mg3:__securities__extra .
+
+bf:Months_Work    { bf:_m mgw:bond bf:_bond ; mgw:tradeSecurity bf:_tsec . }
+bf:Months_Holding { bf:_bond mg:hasInterestPaymentTerms bf:_cpt . bf:_cpt rdf:type mg:CouponPaymentTerms . }
+# The query's coupon OPTIONAL is one group: month, day and the next coupon event match
+# together or not at all, so all of it is required here even though R uses two values.
+bf:Months_Trade {
+    bf:_tsec mg:hasInterestPaymentTerms bf:_tcpt .
+    bf:_tcpt mg:specifies bf:_tsched ;
+             mg:couponPaymentMonthNumber "?mo"^^gistp:var ;
+             mg:couponPaymentMonthDayNumber "?day"^^gistp:var .
+    bf:_tsched rdf:type mg:CouponPaymentSchedule .
+    bf:_ncev rdf:type gist:ScheduledEvent ;
+             gist:isMemberOf bf:_tsched ;
+             skos:prefLabel "?ncLabel"^^gistp:var ;
+             mg:plannedOccursDate "?ncDate"^^gistp:var ;
+             gist:isCategorizedBy mgx:_FinancialBusinessEventType_interestRemittance .
+}
+bf:Months_R {
+    bf:_cpt mg:couponPaymentMonthNumber "?mo"^^gistp:var ;
+            mg:couponPaymentMonthDayNumber "?day"^^gistp:var .
+}
+
+# ===========================================================================================
+#    6. FirstCouponEvent -- one per purchase, as the query mints it
+# ===========================================================================================
+
+bf:FirstCouponEvent
+    rdf:type jhp:Rule ;
+    skos:prefLabel "Schedule the first coupon after a purchase" ;
+    jhp:hasMatchPattern bf:Event_Work , bf:Event_Holding , bf:Event_Trade , bf:Event_Units ;
+    jhp:hasConstructPattern bf:Event_R ;
+    jhp:rewriteMode jhp:_RewriteMode_assert ;
+    jhp:strategy jhp:Once ;
+    jhp:hasBinding
+        [ a jhp:Binding ; jhp:bindsVariable bf:_symNorm ;
+          jhp:bindText '''IF(STRSTARTS(?sym, "."), STRAFTER(?sym, "."), IF(CONTAINS(?sym, "."), STRBEFORE(?sym, "."), ?sym))''' ] ,
+        [ a jhp:Binding ; jhp:bindsVariable bf:_eqSym ;
+          jhp:bindText '''REPLACE(UCASE(STR(?symNorm)), "\\\\W+", "-")''' ] ,
+        [ a jhp:Binding ; jhp:bindsVariable bf:_acctKey ;
+          jhp:bindText '''REPLACE(STR(?acct), "\\\\W+", "-")''' ] ,
+        [ a jhp:Binding ; jhp:bindsVariable bf:_curKey ;
+          jhp:bindText '''REPLACE(STR(?cur), "\\\\W+", "-")''' ] ,
+        # The query's discriminator, verbatim: it tells two purchases of one bond apart.
+        [ a jhp:Binding ; jhp:bindsVariable bf:_disc ;
+          jhp:bindText '''MD5(STR(round((?qty + ?price + ?gross + ?comm + ?net)*1000)/1000))''' ] ,
+        # The whole local part as one value: the query joins its parts with "_", which a
+        # template cannot place between two slots unambiguously.
+        [ a jhp:Binding ; jhp:bindsVariable bf:_evtKey ;
+          jhp:bindText '''CONCAT(?acctKey, "_", ?eqSym, "_first_coupon_", STRBEFORE(STR(?ncDate), "T"), "_", ?curKey, "_", ?disc)''' ] .
+
+bf:Event_Work    a gistp:SparqlPattern ; jhp:inGraph <urn:jayhawk:example:bondfix:work> .
+bf:Event_Holding a gistp:SparqlPattern ; jhp:inGraph mg3:__current__ .
+bf:Event_Trade   a gistp:SparqlPattern ; jhp:inGraph mg3:__trades-bonds__ .
+bf:Event_Units   a gistp:SparqlPattern ; jhp:inGraph mg3:__units__ .
+bf:Event_R       a gistp:SparqlPattern ; jhp:inGraph mg3:__securities__extra .
+
+bf:Event_Work {
+    bf:_m mgw:trade bf:_tpe ; mgw:bond bf:_bond ; mgw:tradeSecurity bf:_tsec ; mgw:account bf:_secacct .
+}
+bf:Event_Holding {
+    bf:_secacct gist:isMemberOf bf:_portfolio .
+    bf:_portfolio rdf:type mg:InvestmentPortfolio ; gist:isIdentifiedBy bf:_pid .
+    bf:_pid gist:uniqueText "?acct"^^gistp:var .
+    bf:_bond gist:isIdentifiedBy bf:_bid .
+    bf:_bid gist:uniqueText "?sym"^^gistp:var .
+}
+bf:Event_Trade {
+    bf:_tpe gist:hasMagnitude bf:_qtyM , bf:_netM , bf:_priceM , bf:_grossM , bf:_commM .
+    bf:_qtyM   gist:hasAspect mgx:_Aspect_securityShareCount ;            gist:numericValue "?qty"^^gistp:var .
+    bf:_netM   gist:hasAspect mgx:_Aspect_securityTradeNetAmount ;        gist:numericValue "?net"^^gistp:var ;
+               gist:hasUnitOfMeasure bf:_uom .
+    bf:_priceM gist:hasAspect mgx:_Aspect_securityShareUnitPriceAmount ;  gist:numericValue "?price"^^gistp:var .
+    bf:_grossM gist:hasAspect mgx:_Aspect_securityTradeGrossAmount ;      gist:numericValue "?gross"^^gistp:var .
+    bf:_commM  gist:hasAspect mgx:_Aspect_securityTradeTransactionCommission ; gist:numericValue "?comm"^^gistp:var .
+    bf:_tsec mg:hasInterestPaymentTerms bf:_tcpt .
+    bf:_tcpt mg:specifies bf:_tsched ;
+             mg:couponPaymentMonthNumber "?mo"^^gistp:var ;
+             mg:couponPaymentMonthDayNumber "?day"^^gistp:var .
+    bf:_tsched rdf:type mg:CouponPaymentSchedule .
+    bf:_ncev rdf:type gist:ScheduledEvent ;
+             gist:isMemberOf bf:_tsched ;
+             skos:prefLabel "?ncLabel"^^gistp:var ;
+             mg:plannedOccursDate "?ncDate"^^gistp:var ;
+             gist:isCategorizedBy mgx:_FinancialBusinessEventType_interestRemittance .
+}
+bf:Event_Units { bf:_uom gist:symbol "?cur"^^gistp:var . }
+bf:Event_R {
+    bf:_evt rdf:type gist:ScheduledEvent ;
+            gist:isMemberOf bf:_sched ;
+            skos:prefLabel "?ncLabel"^^gistp:var ;
+            mg:plannedOccursDate "?ncDate"^^gistp:var ;
+            gist:isCategorizedBy mgx:_FinancialBusinessEventType_interestRemittance .
+}
+
+# ===========================================================================================
+#    7. InterestDaysPaid -- the query's OPTIONAL on the trade's interest-days magnitude
+# ===========================================================================================
+
+bf:InterestDaysPaid
+    rdf:type jhp:Rule ;
+    skos:prefLabel "Attach the days of interest paid to a purchase" ;
+    jhp:hasMatchPattern bf:Days_Work , bf:Days_Trade ;
+    jhp:hasConstructPattern bf:Days_R ;
+    jhp:rewriteMode jhp:_RewriteMode_assert ;
+    jhp:strategy jhp:Once .
+
+bf:Days_Work  a gistp:SparqlPattern ; jhp:inGraph <urn:jayhawk:example:bondfix:work> .
+bf:Days_Trade a gistp:SparqlPattern ; jhp:inGraph mg3:__trades-bonds__ .
+bf:Days_R     a gistp:SparqlPattern ; jhp:inGraph mg3:__activities__extra .
+
+bf:Days_Work  { bf:_m mgw:activity bf:_ape ; mgw:trade bf:_tpe . }
+bf:Days_Trade {
+    bf:_tpe gist:hasMagnitude bf:_idm .
+    bf:_idm gist:hasAspect mgx:_Aspect_daysOfInterestPaid ; gist:numericValue "?days"^^gistp:var .
+}
+bf:Days_R {
+    bf:_ape gist:hasMagnitude bf:_idm .
+    bf:_idm rdf:type gist:Magnitude ;
+            gist:hasUnitOfMeasure gistd:_UnitOfMeasure_day ;
+            gist:numericValue "?days"^^gistp:var ;
+            gist:hasAspect mgx:_Aspect_daysOfInterestPaid .
+}
+
+# ===========================================================================================
+#    8. YieldToMaturity
+# ===========================================================================================
+
+bf:YieldToMaturity
+    rdf:type jhp:Rule ;
+    skos:prefLabel "Attach the yield to maturity to a purchase" ;
+    jhp:hasMatchPattern bf:Yield_Work , bf:Yield_Trade ;
+    jhp:hasConstructPattern bf:Yield_R ;
+    jhp:rewriteMode jhp:_RewriteMode_assert ;
+    jhp:strategy jhp:Once .
+
+bf:Yield_Work  a gistp:SparqlPattern ; jhp:inGraph <urn:jayhawk:example:bondfix:work> .
+bf:Yield_Trade a gistp:SparqlPattern ; jhp:inGraph mg3:__trades-bonds__ .
+bf:Yield_R     a gistp:SparqlPattern ; jhp:inGraph mg3:__activities__extra .
+
+bf:Yield_Work  { bf:_m mgw:activity bf:_ape ; mgw:trade bf:_tpe . }
+bf:Yield_Trade {
+    bf:_tpe gist:hasMagnitude bf:_ytmM .
+    bf:_ytmM gist:hasAspect mgx:_Aspect_yieldToMaturity ; gist:numericValue "?ytm"^^gistp:var .
+}
+bf:Yield_R {
+    bf:_ape gist:hasMagnitude bf:_ytmMag .
+    bf:_ytmMag rdf:type gist:Magnitude ;
+               gist:hasUnitOfMeasure mg:_RatioUnit_annualYield ;
+               gist:numericValue "?ytm"^^gistp:var ;
+               gist:hasAspect mgx:_Aspect_yieldToMaturity .
+}

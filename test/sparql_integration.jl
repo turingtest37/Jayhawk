@@ -1410,6 +1410,25 @@ ex:s2 ex:p ex:plain .
                 )
             end
 
+            @testset "new means new to the DESTINATION, even if a source already holds it" begin
+                # The names are already true in the graph CopyName reads; the rule says they
+                # belong in the HR graph too. Pruning against the sources dropped them: HEAD
+                # promoted nothing, and dry_run agreed there was nothing to add. The oracle this
+                # exists for is moneygraph's bond fix, which writes an issuer's gist:Organization
+                # typing into __securities__extra although the trades graph already has it.
+                Jayhawk.update!("DROP SILENT GRAPH <$HR_G>")
+                pre = dry_run("$(WSR)CopyName"; source=[DATA_GRAPH])
+                f = only(run_rule("$(WSR)CopyName"; source=[DATA_GRAPH], actor="ws-test"))
+                @test pre.count == f.count == 2          # the preview prunes as the run does
+                @test Jayhawk.graph_size(HR_G) == 2
+                @test Jayhawk.ask("ASK { GRAPH <$HR_G> { <urn:w:alice> <$(GIST)name> \"Alice\" } }")
+                undo_firing!(f.graph)
+                @test Jayhawk.graph_size(HR_G) == 0      # undo retracts from the destination...
+                @test Jayhawk.ask(                       # ...and leaves the source's copy alone
+                    "ASK { GRAPH <$DATA_GRAPH> { <urn:w:alice> <$(GIST)name> \"Alice\" } }"
+                )
+            end
+
             @testset "a fixpoint that cannot read its destination is refused" begin
                 # Every round would re-derive the same triples, find them already promoted, prune
                 # to nothing and report convergence after one pass -- the right answer by
@@ -2076,6 +2095,68 @@ ex:s2 ex:p ex:plain .
         @test all(occursin(k, subjects) for k in ("5DDZBS0", "5CPNON8", "037833DX5"))
 
         drop_all()
+    end
+
+    @testset "bondfix: the rule set reproduces the oracle, quad for quad" begin
+        # moneygraph's fix-missing-bond-data.rq as eight rules (examples/moneygraph/bondfix/
+        # rules.trig), held to the same golden the oracle is held to above.
+        MG3 = "https://w3id.org/moneygraph/ns/data/"
+        BF = "https://w3id.org/moneygraph/ns/rules/bondfix/"
+        T, C, U = "$(MG3)__trades-bonds__", "$(MG3)__current__", "$(MG3)__units__"
+        W = "urn:jayhawk:example:bondfix:work"
+        SEC, ACT = "$(MG3)__securities__extra", "$(MG3)__activities__extra"
+        XSEC = "urn:jayhawk:example:bondfix:expected:securities"
+        XACT = "urn:jayhawk:example:bondfix:expected:activities"
+        drop_all() = Jayhawk.update!(
+            join(("DROP SILENT GRAPH <$g>" for g in (T, C, U, W, SEC, ACT, XSEC, XACT)), " ; "),
+        )
+        quads(g) = Set(
+            (sparql_text(r["s"]), sparql_text(r["p"]), sparql_text(r["o"])) for
+            r in select("SELECT ?s ?p ?o WHERE { GRAPH <$g> { ?s ?p ?o } }")
+        )
+        engine_cleanup()
+        drop_all()
+        for f in ("data.trig", "expected.nq", "rules.trig")
+            Jayhawk.load_file!(example("bondfix/$f"))
+        end
+        inputs = Dict(g => quads(g) for g in (T, C, U))
+        source = [T, C, U, W]
+
+        fs = run_rules("$(BF)BondFix"; source=source, actor="bondfix")
+
+        @testset "eight rules, in the declared order, each to its own destination" begin
+            @test [split(f.rule, "/")[end] for f in fs] == [
+                "MatchTradeToHolding", "ListingAndIssuer", "Callable", "CouponTerms",
+                "CouponMonths", "FirstCouponEvent", "InterestDaysPaid", "YieldToMaturity",
+            ]
+            @test fs[1].target == W && fs[1].count == 36      # four matches, nine facts each
+            @test all(f.target == SEC for f in fs[2:6])
+            @test all(f.target == ACT for f in fs[7:8])
+        end
+
+        @testset "the output is the oracle's" begin
+            @test isempty(setdiff(quads(SEC), quads(XSEC)))
+            @test isempty(setdiff(quads(XSEC), quads(SEC)))
+            @test isempty(setdiff(quads(ACT), quads(XACT)))
+            @test isempty(setdiff(quads(XACT), quads(ACT)))
+        end
+
+        @testset "a second run adds nothing" begin
+            @test isempty(run_rules("$(BF)BondFix"; source=source, actor="bondfix"))
+        end
+
+        @testset "undo is exact: outputs gone, inputs untouched" begin
+            for f in reverse(fs)
+                undo_firing!(f.graph)
+            end
+            @test Jayhawk.graph_size(SEC) == 0
+            @test Jayhawk.graph_size(ACT) == 0
+            @test Jayhawk.graph_size(W) == 0
+            @test all(quads(g) == inputs[g] for g in (T, C, U))
+        end
+
+        drop_all()
+        engine_cleanup()
     end
 
     @testset "the agent-facing tools" begin

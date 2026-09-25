@@ -247,6 +247,14 @@ treats a multi-pattern rule as unscoped, which drops it from `read_scopes`, sile
 the dataset-clause guard, and renders its parts as one merged BGP. The only place parts
 become text is `match_text`: one `GRAPH` group per part.
 
+**Parts are emitted in join order, not IRI order** (`ordered_parts`). Jena evaluates
+consecutive `GRAPH` groups left to right and does not reorder them, so the order is a query
+plan. The compiler places the hub first, meaning the part sharing the most variables with the
+others. It then repeatedly adds the part sharing the most with those already placed, breaking
+ties by triple count and then IRI. Measured on bondfix's FirstCouponEvent: 4.39 s in IRI
+order, 0.016 s hub first. Equally connected parts keep IRI order, so goldens written before
+this still hold.
+
 `check_match_parts` refuses three things:
 - **An empty part.** An empty conjunct is almost certainly a typo in a pattern graph's name.
 - **`Rewrite`.** Deletion runs from the union of the parts into one target graph, so a match
@@ -294,6 +302,23 @@ the collision gate, the fan-in report and undo without a second code path. Refus
 both spellings on one variable, several of either, and a function whose namespace contains a
 brace or whose parts are missing. Two `iriTemplate`s on one variable used to load silently
 and mint from whichever the store returned first, which measured as the wrong one.
+
+### What "new" means: `prune_set`
+
+A firing graph is pruned before it is recorded, so that `count` means facts this application
+added. *Added to what* depends on the rule, and `prune_set(spec, source)` is the one place
+that decides:
+
+- **With a write destination,** it prunes against the destination only. A fact already true in
+  a source but absent from the destination is new *there*, and the rule says it belongs
+  there. bondfix's issuers are typed `gist:Organization` in the trades graph the rule reads,
+  and the query it reproduces writes that typing into `__securities__extra` anyway. Pruning
+  against the sources dropped it silently: a count of zero and nothing promoted.
+- **Without one,** it prunes against the working set, as it always has.
+
+The run (`apply_rule`) and both previews (`dry_run`, the preview inside `explain_rule`) call
+it. They used to disagree for a write-scoped rule: the previews pruned against the sources
+only, the run against sources plus destination.
 
 ### Rewrite is five operations, not one
 

@@ -11,6 +11,7 @@ runnable and each exercised by `test/sparql_integration.jl` — so the figures q
 | `02-mint-coupon-event.trig` | `Assert` | `iriTemplate` + slots, a guard on the minted variable, strategy |
 | `03-domestic-listing.trig` | `Construct` | `oneOf` in its constraining reading |
 | `04-retire-listing.trig` | `Rewrite` | I authored by repetition; tombstones and exact undo |
+| `bondfix/` | set of 8 | moneygraph's `fix-missing-bond-data.rq` as a rule set, held quad for quad to the query's output. See its README |
 
 The vocabulary is real: `mg:` is the moneygraph ontology and `gist:` is gist Core. `mgx:`
 holds the handful of predicates these examples add, kept in their own namespace so it is

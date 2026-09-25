@@ -135,3 +135,30 @@
 :FileByVariable_R {
     :_P rdf:type ex:Employee .
 }
+
+#################################################################
+#    A Construct whose output is already true in its SOURCE
+#################################################################
+#
+#  "New" for a rule with a destination means new to the destination. The name is already
+#  true in the graph the rule reads, but not in the HR graph it writes to -- so it has to
+#  arrive there. Pruning against the source instead would drop it, and the destination would
+#  never receive a fact the rule plainly states. (Measured on the moneygraph bondfix example:
+#  an issuer already typed gist:Organization in the trades graph never reached
+#  __securities__extra.)
+
+:CopyName
+    rdf:type jhp:Rule ;
+    skos:prefLabel "Copy a person's name into the HR graph" ;
+    jhp:hasMatchPattern     :CopyName_L ;
+    jhp:hasConstructPattern :CopyName_R ;
+    jhp:rewriteMode         jhp:_RewriteMode_construct .
+
+:CopyName_L rdf:type gistp:SparqlPattern .
+:CopyName_R rdf:type gistp:SparqlPattern ;
+    jhp:inGraph <urn:jayhawk:ws-test:hr> .
+
+:_CN rdf:type gistp:SparqlVariable ; gistp:variableText "?_CN" .
+
+:CopyName_L { :_CN gist:name "?cnm"^^gistp:var . }
+:CopyName_R { :_CN gist:name "?cnm"^^gistp:var . }
