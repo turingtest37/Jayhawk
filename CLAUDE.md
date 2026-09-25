@@ -276,9 +276,8 @@ Three engine gaps stand between it and a working rule set, taken in this order:
    another spelling of `iriTemplate` (namespace + localTemplate), so the bondfix rules share
    one function per class (`_Event_`, `_CouponPaymentSchedule_`, `_Magnitude_`) instead of
    repeating `mg3:` in each template. Its `gist:conformsTo` policy is recorded, not enforced.
-   Known tension, left for Doug: `MintingFunction`'s equivalent-class axiom requires
-   `namespace someValuesFrom xsd:anyURI`, while `gistp:namespace` also ranges over
-   `xsd:string` -- a function with a string namespace is asserted but never inferred.
+   Its namespace may be an `xsd:anyURI` or an `xsd:string` (gistPatterns `afbc219`: the
+   equivalent class takes either, and `≤1 namespace` makes one of each inconsistent).
 3. **`rerun_rules!`**: undo a set's earlier firings, then run. This is the rule-set
    equivalent of the script's `DROP SILENT GRAPH`, and removes exactly what the set asserted.
 
