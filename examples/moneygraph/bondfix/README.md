@@ -16,7 +16,7 @@ CLAUDE.md backlog.
 | `data.trig` | the fixture: `__trades-bonds__`, `__current__`, `__units__` |
 | `oracle.rq` | the committed query with one bug fixed (below). The definition of "same effect" |
 | `expected.nq` | what `oracle.rq` writes over `data.trig`, frozen, graphs renamed `urn:jayhawk:example:bondfix:expected:*` |
-| `rules.trig` | the eight rules, their minting functions and the `jhp:RuleSet` ordering them |
+| `rules.trig` | the eight rules, their minting functions and the `jhp:RuleSet` ordering them. **A copy**: moneygraph owns `rules/bondfix/rules.trig` and runs it, and `test/runtests.jl` fails if the two differ |
 
 `test/sparql_integration.jl` holds both to `expected.nq`, comparing in both directions.
 "bondfix: the oracle reproduces its golden" re-runs the oracle. "bondfix: the rule set
@@ -98,6 +98,16 @@ run_rules("https://w3id.org/moneygraph/ns/rules/bondfix/BondFix";
                     "urn:jayhawk:example:bondfix:work"])
 ```
 
+**moneygraph runs this.** `bin/fix-missing-bond-data.sh` no longer posts the `.rq`. Each run it
+starts an empty in-memory Fuseki, copies `__trades-bonds__` and `__current__` into it along
+with the currency codes, runs the set there, and replaces the two output graphs in the live
+store. Rules, firings and provenance never enter the live store, and they must not: it
+answers unscoped queries from the union of its named graphs. Measured: loading and running
+the rules there would add two fake "purchase events" (the rules' own variables) and eight
+`gist:Event`s (the firing records) to every such query. Verified end to end against a
+stand-in store: output identical to `expected.nq`, the earlier contents replaced, and no other
+graph written.
+
 The shell script drops both output graphs before it runs, so that the result reflects the
 *current* inputs. The rule-set equivalent is `rerun_rules!`. It undoes exactly the firings
 recorded against `BondFix` and runs the set again, leaving anything else in those graphs alone.
@@ -134,3 +144,4 @@ The issuer's label is re-tested against the description in rule 2 for the same r
 | 4 | write-scoped firings pruned against the destination only | the issuer's `gist:Organization` typing is already in the trades graph, and the query writes it anyway |
 | 4 | match patterns joined hub first | FirstCouponEvent took 4.39 s with its parts in IRI order and 0.016 s hub first; the oracle takes 0.1 s |
 | 5 | `rerun_rules!`, and firings that record their rule set | after one input changed, a plain re-run left 15 stale triples |
+| 6 | the default endpoint is read from the environment at load | `JAYHAWK_SPARQL_SERVICE` was baked in at precompile, so moneygraph's script ran against the Jayhawk test store instead of its compute store |

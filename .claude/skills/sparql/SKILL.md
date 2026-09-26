@@ -121,8 +121,11 @@ That keeps `"0.0330"^^xsd:decimal` intact, which is the whole point.
 
 ## Configuration
 
-`spqservice` and `spqupdservice` in `src/sparqlclient.jl` are `const`, read from `ENV` at
-module load, so the environment route must be set **before** `using Jayhawk`:
+The default endpoint is read from `JAYHAWK_SPARQL_SERVICE` / `JAYHAWK_UPDATE_SERVICE` when
+the package loads (`endpoint_from_env`, in `__init__`), so set them **before** `using Jayhawk`.
+Do not read `spqservice` / `spqupdservice` for the live endpoint: they are `const`s, fixed
+when the package was *precompiled*, and ignored a later override until this was fixed. Use
+`endpoint()`.
 
 ```sh
 JAYHAWK_SPARQL_SERVICE=http://localhost:3031/other julia --project=. script.jl

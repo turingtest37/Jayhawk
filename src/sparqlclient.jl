@@ -16,7 +16,8 @@ import EzXML: XMLDocument, parsexml, findall, namespaces, namespace
 # under FusekiMainCmd, which is what bin/fuseki-test.sh launches.
 #
 # These two remain `const` because `test/sparql_integration.jl` asserts their shape, and
-# because they are the *default* only. Anything that needs a different server at runtime
+# because they are the *default* only -- and a compile-time one: the endpoint actually used
+# is built from the environment at load time, by `endpoint_from_env` in `__init__`. Anything that needs a different server at runtime
 # passes a `SparqlEndpoint` instead of mutating them -- see `set_endpoint!`.
 
 "String representation of the graph store's SPARQL query service URL."
@@ -57,6 +58,29 @@ end
 const _DEFAULT_ENDPOINT = Ref(
     SparqlEndpoint(spqservice, spqupdservice, spqservice * "/data", 30)
 )
+
+"""
+    endpoint_from_env() -> SparqlEndpoint
+
+The default endpoint as the environment says it is *now*: `JAYHAWK_SPARQL_SERVICE`, and
+`JAYHAWK_UPDATE_SERVICE` if set (else the query service plus `/update`).
+
+`spqservice` and `spqupdservice` are `const`s, and a package's top-level `const`s are
+evaluated when it is **precompiled**, not when it is loaded -- so they hold whatever the
+environment was when the cache was built. Reading them for the default endpoint made the
+documented override silently ineffective: measured, with `JAYHAWK_SPARQL_SERVICE` pointing at
+a compute store on :3041, `endpoint()` still answered :3040, and moneygraph's bond-fix script
+loaded its rules into, and ran them against, the Jayhawk test store instead of its own. A
+cache built while the variable pointed somewhere else would have gone there instead, just as
+quietly. `__init__` runs at every load, so the default is taken from here.
+"""
+function endpoint_from_env()
+    q = get(ENV, "JAYHAWK_SPARQL_SERVICE", "http://localhost:3040/jayhawk")
+    u = get(ENV, "JAYHAWK_UPDATE_SERVICE", q * "/update")
+    return SparqlEndpoint(q, u, q * "/data", 30)
+end
+
+__init__() = (_DEFAULT_ENDPOINT[] = endpoint_from_env(); nothing)
 
 "The endpoint used when a call does not name one."
 endpoint() = _DEFAULT_ENDPOINT[]

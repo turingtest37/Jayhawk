@@ -101,6 +101,35 @@ using Logging
     end
 end
 
+@testset "the endpoint is read from the environment at load, not at precompile" begin
+    # A package's top-level consts are evaluated at precompile, so an endpoint read from them
+    # ignores JAYHAWK_SPARQL_SERVICE set afterwards. Measured: moneygraph's bond fix, told
+    # to use a compute store on :3041, ran against the test store on :3040. A subprocess,
+    # because the variable has to be set before `using` -- in this process it already ran.
+    jl = Base.julia_cmd()
+    proj = dirname(@__DIR__)
+    show_ep = `$jl --startup-file=no --project=$proj -e 'using Jayhawk; e = endpoint(); print(e.query, " ", e.update)'`
+    got = read(addenv(show_ep, "JAYHAWK_SPARQL_SERVICE" => "http://example.invalid:9/probe"), String)
+    @test got == "http://example.invalid:9/probe http://example.invalid:9/probe/update"
+    got = read(addenv(show_ep,
+        "JAYHAWK_SPARQL_SERVICE" => "http://example.invalid:9/q",
+        "JAYHAWK_UPDATE_SERVICE" => "http://example.invalid:9/u"), String)
+    @test got == "http://example.invalid:9/q http://example.invalid:9/u"
+end
+
+@testset "the bondfix rules have not drifted from moneygraph's" begin
+    # moneygraph owns rules/bondfix/rules.trig and runs it; this repo keeps a copy so its suite
+    # never needs a sibling checkout. When one is present, the copy must match byte for byte --
+    # a divergence would mean the example proves something moneygraph no longer runs.
+    ours = joinpath(dirname(@__DIR__), "examples", "moneygraph", "bondfix", "rules.trig")
+    theirs = joinpath(dirname(dirname(@__DIR__)), "moneygraph", "rules", "bondfix", "rules.trig")
+    if isfile(theirs)
+        @test read(ours) == read(theirs)
+    else
+        @test_skip "no moneygraph checkout beside this one"
+    end
+end
+
 @testset "compiler (pure)" begin
     # compile_rule is a pure function of a RuleSpec, so the whole of it is testable with
     # no server running. These specs are built by hand; loading one out of a store is

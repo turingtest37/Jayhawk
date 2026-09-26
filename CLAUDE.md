@@ -290,6 +290,14 @@ Multi-pattern parts are joined hub first (`ordered_parts`), since IRI order made
    `jhp:RuleSet` (`jayhawk:ruleSet`). Measured: after one input changed, a plain second
    `run_rules` left 15 stale triples, and `rerun_rules!` matched the oracle run on the changed
    data exactly. MCP: `run_rules` with `replace = true`, which needs `confirm`.
+   **Round 6 — built.** moneygraph owns `rules/bondfix/rules.trig`, and Jayhawk's copy is
+   drift-checked. `bin/fix-missing-bond-data.sh` runs the set in a throwaway in-memory Fuseki,
+   and writes back only the two output graphs. The live store's union default graph would
+   otherwise show the rules and firings to 25 unscoped queries (measured: +2 fake purchase
+   events, +8 `gist:Event`s). `reload-all.sh` now runs the step after `__current__` is
+   refreshed. Verified end to end against a stand-in store. The deployment exposed a real
+   bug: `JAYHAWK_SPARQL_SERVICE` was baked in at precompile, so the override was ignored.
+   It is now read at load (`endpoint_from_env` in `__init__`).
    Noticed, not fixed: `tool_run_rules` still refuses *any* Rewrite mixed with additive rules,
    while the harness now allows it when every additive member has a write destination. The
    MCP check is stricter than the engine. This is the rule-set

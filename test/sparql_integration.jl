@@ -9,9 +9,8 @@
 # Or, to run it together with everything else:
 #     JAYHAWK_TEST_SPARQL=1 julia --project=. test/runtests.jl
 #
-# The endpoint is baked into `Jayhawk.spqservice` as a `const` at module load, so
-# JAYHAWK_SPARQL_SERVICE must be exported *before* julia starts if the rig is not on
-# the default port. The default (http://localhost:3040/jayhawk) already matches
+# The default endpoint is read from JAYHAWK_SPARQL_SERVICE when the package loads, so
+# export it *before* julia starts if the rig is not on the default port. The default (http://localhost:3040/jayhawk) already matches
 # bin/fuseki-test.sh.
 #
 # These tests build and drop their own named graph and never touch <urn:ontology>, so
