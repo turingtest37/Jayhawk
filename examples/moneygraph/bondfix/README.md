@@ -48,7 +48,9 @@ joined to nothing.
   committed query mints **6** first-coupon events for 3 purchases. Each purchase gets a CAD
   event and a USD event.
 
-`oracle.rq` differs by three lines (`diff` it against the original). The unit comes from the
+`oracle.rq` differs by three lines. (moneygraph deleted the original on 2026-09-26, the rule set
+having replaced it; `git -C ~/dev/moneygraph log --diff-filter=D -p -- queries/fix-missing-bond-data.rq`
+recovers it for the `diff`.) The unit comes from the
 trade's own net-amount magnitude, and its code from `__units__`. The reference graph has to
 exist because no currency in `uomReferenceData.ttl` or `currency.ttl` carries a `gist:symbol`.
 

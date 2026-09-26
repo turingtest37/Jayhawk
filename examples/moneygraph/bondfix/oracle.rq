@@ -1,7 +1,9 @@
 # ORACLE for the bondfix rule set.
 #
-# This is ~/dev/moneygraph/queries/fix-missing-bond-data.rq with ONE deliberate fix and
-# nothing else changed (diff it to check). In the original,
+# This is moneygraph's queries/fix-missing-bond-data.rq with ONE deliberate fix and nothing
+# else changed. That file was deleted on 2026-09-26, the rule set having replaced it; to diff,
+# recover it with  git -C ~/dev/moneygraph log --diff-filter=D -p -- queries/fix-missing-bond-data.rq
+# In the original,
 #     ?__currency_uom gist:symbol ?__currency .
 # is joined to nothing: against a union default graph it matches every gist:symbol in the
 # store -- live, seven exchange codes -- multiplying every row and minting first-coupon
