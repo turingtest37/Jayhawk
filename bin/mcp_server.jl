@@ -191,7 +191,13 @@ TOOLS = [
                 name="confirm",
                 type="boolean",
                 required=false,
-                description="Required if any member is a Rewrite. Review each with explain_rule first -- a set hides a destructive rule among others.",
+                description="Required if any member is a Rewrite, and with replace. Review each with explain_rule first -- a set hides a destructive rule among others.",
+            ),
+            MCP.ToolParameter(;
+                name="replace",
+                type="boolean",
+                required=false,
+                description="Run as a replacement for the set's last run: undo every firing recorded against the set first, so facts the old inputs derived and the current ones do not are removed. Removes data, so it needs confirm = true.",
             ),
         ],
         handler=guarded(
@@ -201,6 +207,7 @@ TOOLS = [
                 actor=str(a, "actor", "mcp"),
                 max_iterations=get(a, "max_iterations", 100),
                 confirm=get(a, "confirm", false) === true,
+                replace=get(a, "replace", false) === true,
             ),
         ),
     ),

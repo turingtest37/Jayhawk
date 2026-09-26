@@ -416,6 +416,11 @@ gist:sequence".
 `confirm` is required if any member is a `jhp:_RewriteMode_rewrite`, on the same grounds as
 [`tool_run_rule`](@ref) -- with the additional one that a set hides the destructive member
 among others, so the prompt matters more, not less.
+
+`replace = true` runs the set as a replacement for its last run ([`rerun_rules!`](@ref)):
+every firing recorded against the set is undone first, so facts the old inputs derived and
+the new ones do not are removed rather than left behind. That removes data, so it needs
+`confirm` too, and the refusal says how many firings it would undo.
 """
 function tool_run_rules(
     set::AbstractString;
@@ -424,6 +429,7 @@ function tool_run_rules(
     strategy::Union{Symbol,Nothing}=nothing,
     max_iterations::Union{Integer,Nothing}=nothing,
     confirm::Bool=false,
+    replace::Bool=false,
     ep::SparqlEndpoint=endpoint(),
 )
     spec = try
@@ -464,16 +470,52 @@ function tool_run_rules(
                """
     end
 
-    fs = run_rules(
-        spec;
-        source=source,
-        actor=actor,
-        strategy=strategy,
-        max_iterations=max_iterations,
-        ep=ep,
-    )
+    previous = replace ? firings(; rule_set=spec.iri, ep=ep) : NamedTuple[]
+    if replace && !isempty(previous) && !confirm
+        n = sum(f.count for f in previous)
+        return """
+               Refused: replacing the last run of rule set <$set> first undoes the \
+               $(length(previous)) firing(s) recorded against it -- $n triple(s) it added.
+
+               $listing
+
+               That is what makes the result reflect the current inputs rather than keep \
+               what the old ones derived, and it removes data. Call run_rules again with \
+               replace = true and confirm = true.
+               """
+    end
+
+    fs, undone = if replace
+        r = try
+            rerun_rules!(
+                spec;
+                source=source,
+                actor=actor,
+                strategy=strategy,
+                max_iterations=max_iterations,
+                ep=ep,
+            )
+        catch e
+            return "Refused before undoing anything: <$set> cannot run as given.\n\n" *
+                   sprint(showerror, e)
+        end
+        r.firings, r.undone
+    else
+        run_rules(
+            spec;
+            source=source,
+            actor=actor,
+            strategy=strategy,
+            max_iterations=max_iterations,
+            ep=ep,
+        ),
+        String[]
+    end
     io = IOBuffer()
     println(io, "Rule set <", set, ">", isempty(spec.label) ? "" : "  -- $(spec.label)")
+    replace && println(
+        io, "Replaced the last run: undid ", length(undone), " firing(s) recorded against the set.\n"
+    )
     println(
         io,
         "strategy: ",

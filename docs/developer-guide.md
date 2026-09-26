@@ -320,6 +320,19 @@ The run (`apply_rule`) and both previews (`dry_run`, the preview inside `explain
 it. They used to disagree for a write-scoped rule: the previews pruned against the sources
 only, the run against sources plus destination.
 
+### Re-running a set: what the record has to carry
+
+`rerun_rules!` undoes a set's previous firings, so a firing has to say which set it was run
+in. `record_firing!` takes `rule_set` and writes `jayhawk:ruleSet <set>`, plus
+`gist:isBasedOn <set>` alongside the rule it already names. `run_rules` passes the set's IRI
+through `run_rule` and `apply_rule` / `apply_rewrite!`. A bare list passes `nothing`, since it
+has no identity a later rerun could name. `undo_firing!` already deletes every triple about the
+firing, so the tag leaves with the record.
+
+The pre-flight refusals were pulled out of `run_rule` (`check_runnable`) and the set driver
+(`check_rule_sequence`) so that `rerun_rules!` can make them *before* undoing anything. Both
+functions are still called where they came from, so the checks run in exactly one place each.
+
 ### Rewrite is five operations, not one
 
 The obvious shape — a single DELETE/INSERT writing target, firing and tombstone together —

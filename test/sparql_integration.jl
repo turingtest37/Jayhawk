@@ -2159,6 +2159,104 @@ ex:s2 ex:p ex:plain .
         engine_cleanup()
     end
 
+    @testset "bondfix: rerun_rules! replaces the last run" begin
+        # The rule-set counterpart of the shell script's DROP SILENT GRAPH. When an input
+        # changes, running the set again only ADDS, so what the old input derived stays: the
+        # red, measured -- A2's activity gross changed so it no longer matches, and a plain
+        # second run left 15 stale triples the oracle (run on the changed data) does not write.
+        MG3 = "https://w3id.org/moneygraph/ns/data/"
+        BF = "https://w3id.org/moneygraph/ns/rules/bondfix/"
+        GI = "https://w3id.org/semanticarts/ns/ontology/gist/"
+        T, C, U = "$(MG3)__trades-bonds__", "$(MG3)__current__", "$(MG3)__units__"
+        W = "urn:jayhawk:example:bondfix:work"
+        SEC, ACT = "$(MG3)__securities__extra", "$(MG3)__activities__extra"
+        OSEC, OACT = "urn:jayhawk:rerun-test:oracle:sec", "urn:jayhawk:rerun-test:oracle:act"
+        SET = "$(BF)BondFix"
+        drop_all() = Jayhawk.update!(
+            join(("DROP SILENT GRAPH <$g>" for g in (T, C, U, W, SEC, ACT, OSEC, OACT)), " ; "),
+        )
+        quads(g) = Set(
+            (sparql_text(r["s"]), sparql_text(r["p"]), sparql_text(r["o"])) for
+            r in select("SELECT ?s ?p ?o WHERE { GRAPH <$g> { ?s ?p ?o } }")
+        )
+        engine_cleanup()
+        drop_all()
+        for f in ("data.trig", "rules.trig")
+            Jayhawk.load_file!(example("bondfix/$f"))
+        end
+        source = [T, C, U, W]
+
+        first = run_rules(SET; source=source, actor="rerun-test")
+
+        @testset "a set's firings record the set; a member run alone does not" begin
+            recorded = firings(; rule_set=SET)
+            @test Set(f.graph for f in recorded) == Set(f.graph for f in first)
+            @test all(f.rule_set == SET for f in recorded)
+            # Callable, run on its own with the work graph already filled: a firing, but
+            # not the set's -- so a rerun of the set must leave it alone. (Its fact is
+            # already in __securities__extra, so point it at nothing new: undo the set's
+            # Callable firing first, then run the rule alone.)
+            undo_firing!(only(f for f in first if endswith(f.rule, "/Callable")).graph)
+            alone = only(run_rule("$(BF)Callable"; source=source, actor="rerun-test"))
+            @test only(f for f in firings() if f.graph == alone.graph).rule_set == ""
+            undo_firing!(alone.graph)
+        end
+
+        # The input changes: A2's purchase no longer matches its trade.
+        A2 = "$(MG3)_Event_51590610_5DDZBS0_buy_2025-06-02_CAD_-"
+        GROSS = "$(MG3)_Magnitude_securityTradeGrossAmount_cad_4756"
+        Jayhawk.update!("""
+            DELETE DATA { GRAPH <$C> { <$A2> <$(GI)hasMagnitude> <$(GROSS).0> } } ;
+            INSERT DATA { GRAPH <$C> { <$A2> <$(GI)hasMagnitude> <$(GROSS).5> .
+              <$(GROSS).5> <$(GI)hasAspect> <https://w3id.org/moneygraph/ns/taxonomy/_Aspect_securityTradeGrossAmount> ;
+                           <$(GI)numericValue> 4756.5 . } }""")
+
+        # What the oracle writes over the CHANGED data, set aside in graphs of its own.
+        held = (quads(SEC), quads(ACT))
+        Jayhawk.update!("DROP SILENT GRAPH <$SEC> ; DROP SILENT GRAPH <$ACT>")
+        Jayhawk.update!(read(example("bondfix/oracle.rq"), String))
+        Jayhawk.update!("""
+            INSERT { GRAPH <$OSEC> { ?s ?p ?o } } WHERE { GRAPH <$SEC> { ?s ?p ?o } } ;
+            INSERT { GRAPH <$OACT> { ?s ?p ?o } } WHERE { GRAPH <$ACT> { ?s ?p ?o } } ;
+            DROP GRAPH <$SEC> ; DROP GRAPH <$ACT>""")
+        for (g, ts) in zip((SEC, ACT), held)          # and the rules' earlier output back
+            Jayhawk.update!("INSERT DATA { GRAPH <$g> { " *
+                            join(("$(t[1]) $(t[2]) $(t[3]) ." for t in ts), " ") * " } }")
+        end
+
+        @testset "refused before anything is undone" begin
+            before = length(firings(; rule_set=SET))
+            @test_throws ArgumentError rerun_rules!(SET; source=String[], actor="rerun-test")
+            @test length(firings(; rule_set=SET)) == before     # nothing was undone
+        end
+
+        @testset "the MCP tool asks before replacing" begin
+            out = tool_run_rules(SET; source=source, replace=true)
+            @test occursin("Refused: replacing the last run", out)
+            @test occursin("undoes the 7 firing(s)", out)     # Callable was undone above
+        end
+
+        r = rerun_rules!(SET; source=source, actor="rerun-test")
+
+        @testset "the replacement reflects the changed input, nothing stale" begin
+            @test length(r.undone) == 7
+            @test isempty(setdiff(quads(SEC), quads(OSEC)))
+            @test isempty(setdiff(quads(OSEC), quads(SEC)))
+            @test isempty(setdiff(quads(ACT), quads(OACT)))
+            @test isempty(setdiff(quads(OACT), quads(ACT)))
+            @test !any(occursin("2025-09-22", t[1]) for t in quads(SEC))   # A2's event is gone
+        end
+
+        @testset "and the MCP tool does the same, once confirmed" begin
+            out = tool_run_rules(SET; source=source, replace=true, confirm=true)
+            @test occursin("Replaced the last run: undid 8 firing(s)", out)
+            @test quads(SEC) == quads(OSEC) && quads(ACT) == quads(OACT)
+        end
+
+        drop_all()
+        engine_cleanup()
+    end
+
     @testset "the agent-facing tools" begin
         # These are the MCP surface, but they depend on nothing but the engine, so they are
         # exercised here rather than through the protocol. bin/mcp_server.jl is the adapter.

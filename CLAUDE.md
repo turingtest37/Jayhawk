@@ -285,7 +285,14 @@ Two engine fixes fell out of it. Write-scoped firings are pruned against the des
 only (`prune_set`), since a fact already in a source is still new where the rule writes it.
 Multi-pattern parts are joined hub first (`ordered_parts`), since IRI order made one rule
 4.39 s instead of 0.016 s.
-3. **`rerun_rules!`**: undo a set's earlier firings, then run. This is the rule-set
+3. **`rerun_rules!` — built (Round 5).** It undoes a set's recorded firings, newest first,
+   then runs the set, after making every refusal the run would make. Firings now record their
+   `jhp:RuleSet` (`jayhawk:ruleSet`). Measured: after one input changed, a plain second
+   `run_rules` left 15 stale triples, and `rerun_rules!` matched the oracle run on the changed
+   data exactly. MCP: `run_rules` with `replace = true`, which needs `confirm`.
+   Noticed, not fixed: `tool_run_rules` still refuses *any* Rewrite mixed with additive rules,
+   while the harness now allows it when every additive member has a write destination. The
+   MCP check is stricter than the engine. This is the rule-set
    equivalent of the script's `DROP SILENT GRAPH`, and removes exactly what the set asserted.
 
 The decomposition then needs no further engine work:

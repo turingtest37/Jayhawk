@@ -1340,6 +1340,38 @@ contains none. Give the additive members a `jhp:inGraph` destination and the con
 goes away: the working set never grows, the rewrite still has exactly one source, and it reads
 the derived triples from the graph they were written to.
 
+#### Running a set again, as a replacement: `rerun_rules!`
+
+A set's output describes its inputs, and `run_rules` only ever adds. When an input changes,
+running the set again leaves behind whatever the old input derived and the new one does not.
+In bondfix, changing one activity's gross so its purchase stopped matching left **15 stale
+triples**: its first-coupon event, and its interest-days and yield magnitudes. The oracle, run
+on the changed data, does not write them.
+
+```julia
+r = rerun_rules!("https://w3id.org/moneygraph/ns/rules/bondfix/BondFix"; source = src)
+r.undone     # the firing graphs of the last run, undone newest first
+r.firings    # this run's
+```
+
+`rerun_rules!` undoes every firing recorded against the set, newest first, then runs it again.
+That is the rule-set counterpart of a script's `DROP SILENT GRAPH`, and more precise than one.
+It removes exactly what the set asserted, not everything in its destination graphs, and each
+undo is an exact inverse.
+
+- **Only the set's own firings.** Each firing `run_rules` produces for a named set records
+  that set (`jayhawk:ruleSet`, and `f.rule_set` in `firings()`). A member rule run on its own,
+  or an ad-hoc list of rules, records none and is never undone by a rerun.
+- **Checked before anything is undone.** Every refusal the run would make is made first, so
+  a set that cannot run as called does not cost you its previous results. A failure *during*
+  the run is another matter: the old results are gone by then, as they are once a script has
+  dropped its graphs.
+- **Not a cascade.** If something outside the set derived facts from its output, those facts
+  stay. Re-run the downstream set as well.
+
+Over MCP, it is `run_rules` with `replace = true`. Because it removes data, it also needs
+`confirm = true`, and the refusal says how many firings it would undo.
+
 ### Source maps: naming a column instead of a predicate
 
 A pattern scoped to a `gistp:TabularDataSource` compiles to `SERVICE <x-sparql-anything:>`, so

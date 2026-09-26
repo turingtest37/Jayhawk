@@ -177,7 +177,12 @@ function prune_set(spec::RuleSpec, source::AbstractVector)
 end
 
 "Write the provenance record for one firing."
-function record_firing!(f::Firing; actor::AbstractString, ep::SparqlEndpoint=endpoint())
+function record_firing!(
+    f::Firing;
+    actor::AbstractString,
+    rule_set::Union{AbstractString,Nothing}=nothing,
+    ep::SparqlEndpoint=endpoint(),
+)
     srcs = if isempty(f.source)
         ""
     else
@@ -212,6 +217,16 @@ function record_firing!(f::Firing; actor::AbstractString, ep::SparqlEndpoint=end
         ),
         "",
     )
+    # The rule set this firing was run as part of, when there was one. It is what lets a set
+    # be re-run as a replacement: `rerun_rules!` undoes exactly the firings recorded against
+    # the set, and nothing a member rule did when run on its own. gist:isBasedOn says the
+    # same in gist's terms -- the set, like the rule, gave rise to the firing.
+    set_triples = if rule_set === nothing
+        ""
+    else
+        "    <$(f.graph)> <$(JH_NS)ruleSet> <$(check_iri(rule_set))> ;\n" *
+        "        <$(GIST_ONT_NS)isBasedOn> <$(check_iri(rule_set))> .\n"
+    end
     tomb_type = if isempty(f.tombstone)
         ""
     else
@@ -263,7 +278,7 @@ function record_firing!(f::Firing; actor::AbstractString, ep::SparqlEndpoint=end
             <$(JH_NS)actor> "$(escape_literal(actor))" ;
             <$(JH_NS)iteration> $(f.iteration) ;
             <$(JH_NS)tripleCount> $(f.count) .
-    $(srcs)$(tgt)$(rw)$(based)$(tomb_type)  }
+    $(srcs)$(tgt)$(rw)$(based)$(set_triples)$(tomb_type)  }
     } WHERE {
       { SELECT (COALESCE(MAX(?o), 0) + 1 AS ?ord) WHERE {
           GRAPH <$PROVENANCE_GRAPH> { ?any <$(JH_NS)ordinal> ?o } } }
@@ -315,6 +330,7 @@ function apply_rule(
     source::AbstractVector=String[],
     actor::AbstractString="jayhawk",
     iteration::Integer=1,
+    rule_set::Union{AbstractString,Nothing}=nothing,
     ep::SparqlEndpoint=endpoint(),
 )
     # Before writing anything: would any minted IRI be reachable from more than one distinct
@@ -325,7 +341,13 @@ function apply_rule(
     check_target_empty(into; ep=ep)
 
     mode_symbol(spec) === :Rewrite && return apply_rewrite!(
-        spec; into=into, source=source, actor=actor, iteration=iteration, ep=ep
+        spec;
+        into=into,
+        source=source,
+        actor=actor,
+        iteration=iteration,
+        rule_set=rule_set,
+        ep=ep,
     )
 
     update!(insert_query(spec; into=into, from=source); ep=ep)
@@ -360,7 +382,7 @@ function apply_rule(
     if n == 0
         update!("DROP SILENT GRAPH <$into>"; ep=ep)   # contributed nothing; leave no litter
     else
-        record_firing!(f; actor=actor, ep=ep)
+        record_firing!(f; actor=actor, rule_set=rule_set, ep=ep)
     end
     return f
 end
@@ -385,6 +407,7 @@ function apply_rewrite!(
     source::AbstractVector,
     actor::AbstractString,
     iteration::Integer,
+    rule_set::Union{AbstractString,Nothing}=nothing,
     ep::SparqlEndpoint=endpoint(),
 )
     length(source) == 1 || throw(
@@ -422,7 +445,7 @@ function apply_rewrite!(
         update!("DROP SILENT GRAPH <$into>"; ep=ep)
         update!("DROP SILENT GRAPH <$tomb>"; ep=ep)
     else
-        record_firing!(f; actor=actor, ep=ep)
+        record_firing!(f; actor=actor, rule_set=rule_set, ep=ep)
     end
     return f
 end
@@ -454,46 +477,20 @@ function effective_strategy(spec::RuleSpec; strategy::Union{Symbol,Nothing}=noth
 end
 
 """
-    run_rule(rule; source = String[], actor = "jayhawk", max_iterations = 100,
-             ep = endpoint()) -> Vector{Firing}
+    check_runnable(spec; source = String[], strategy = nothing, max_iterations = nothing)
+        -> (mode, strategy, budget)
 
-Apply a rule according to its mode.
+Every refusal `run_rule` makes before it touches the store, as a function of its own.
 
-`Construct` applies once and returns its firing: the result is `f(G)`, referentially
-transparent and composable.
-
-Every firing returned was recorded and can be undone. A pass that changes nothing leaves no
-graph and no provenance, so it is not returned -- under any mode or strategy -- and a rule
-that matches nothing returns an empty vector.
-
-`Assert` iterates. Each round's output joins the working set for the next, so the rule sees
-its own consequences, and iteration stops when a round contributes no new triples -- the
-least fixpoint.
-
-`max_iterations` is a hard stop, and it is **not** belt-and-braces. Monotone rules over a
-fixed set of terms terminate on their own, but `gistp:iriTemplate` mints fresh IRIs, and a
-minting rule run to a fixpoint is no longer plain Datalog -- it is the chase, which is not
-guaranteed to terminate at all. Hitting the cap raises, naming the rule, rather than
-silently returning a partial answer.
-
-**`Assert` requires an explicit `source`.** Each round has to see the previous round's
-output, so the working set grows by one named graph per iteration -- and SPARQL's `USING`
-*replaces* the query's default graph rather than adding to it, with no IRI anywhere that
-denotes the store's own default graph. "The default graph plus the firings so far" is
-therefore not expressible, and the previous behaviour was to quietly evaluate round 2
-onwards against the firing graphs *alone*: the base data fell out of the working set after
-round 1 and the driver returned a strict subset of the least fixpoint while reporting
-convergence. A silently incomplete fixpoint is the worst answer this function can give, so
-it now refuses instead. `Construct` is unaffected -- it applies once, and an empty source
-correctly means the default graph.
+Separate so that a caller about to do something irreversible can ask first. `rerun_rules!`
+undoes a set's previous results before running it again; checking each member here beforehand
+is what keeps an unrunnable set from costing the caller the results it already had.
 """
-function run_rule(
+function check_runnable(
     spec::RuleSpec;
     source::AbstractVector=String[],
-    actor::AbstractString="jayhawk",
     strategy::Union{Symbol,Nothing}=nothing,
     max_iterations::Union{Integer,Nothing}=nothing,
-    ep::SparqlEndpoint=endpoint(),
 )
     mode = mode_symbol(spec)
     strat = effective_strategy(spec; strategy=strategy)
@@ -586,11 +583,63 @@ function run_rule(
         )
     end
 
+    return mode, strat, budget
+end
+
+"""
+    run_rule(rule; source = String[], actor = "jayhawk", max_iterations = 100,
+             ep = endpoint()) -> Vector{Firing}
+
+Apply a rule according to its mode.
+
+`Construct` applies once and returns its firing: the result is `f(G)`, referentially
+transparent and composable.
+
+Every firing returned was recorded and can be undone. A pass that changes nothing leaves no
+graph and no provenance, so it is not returned -- under any mode or strategy -- and a rule
+that matches nothing returns an empty vector.
+
+`Assert` iterates. Each round's output joins the working set for the next, so the rule sees
+its own consequences, and iteration stops when a round contributes no new triples -- the
+least fixpoint.
+
+`max_iterations` is a hard stop, and it is **not** belt-and-braces. Monotone rules over a
+fixed set of terms terminate on their own, but `gistp:iriTemplate` mints fresh IRIs, and a
+minting rule run to a fixpoint is no longer plain Datalog -- it is the chase, which is not
+guaranteed to terminate at all. Hitting the cap raises, naming the rule, rather than
+silently returning a partial answer.
+
+**`Assert` requires an explicit `source`.** Each round has to see the previous round's
+output, so the working set grows by one named graph per iteration -- and SPARQL's `USING`
+*replaces* the query's default graph rather than adding to it, with no IRI anywhere that
+denotes the store's own default graph. "The default graph plus the firings so far" is
+therefore not expressible, and the previous behaviour was to quietly evaluate round 2
+onwards against the firing graphs *alone*: the base data fell out of the working set after
+round 1 and the driver returned a strict subset of the least fixpoint while reporting
+convergence. A silently incomplete fixpoint is the worst answer this function can give, so
+it now refuses instead. `Construct` is unaffected -- it applies once, and an empty source
+correctly means the default graph.
+"""
+function run_rule(
+    spec::RuleSpec;
+    source::AbstractVector=String[],
+    actor::AbstractString="jayhawk",
+    strategy::Union{Symbol,Nothing}=nothing,
+    max_iterations::Union{Integer,Nothing}=nothing,
+    rule_set::Union{AbstractString,Nothing}=nothing,
+    ep::SparqlEndpoint=endpoint(),
+)
+    mode, strat, budget = check_runnable(
+        spec; source=source, strategy=strategy, max_iterations=max_iterations
+    )
+
     firings = Firing[]
     working = String[String.(source)...]
 
     if strat === :Once
-        f = apply_rule(spec; source=working, actor=actor, iteration=1, ep=ep)
+        f = apply_rule(
+            spec; source=working, actor=actor, iteration=1, rule_set=rule_set, ep=ep
+        )
         # A pass that changed nothing has already dropped its graph and recorded no provenance,
         # so handing it back would give the caller a firing that undo_firing! must refuse.
         (f.count > 0 || f.removed > 0) && push!(firings, f)
@@ -598,7 +647,9 @@ function run_rule(
     end
 
     for i in 1:budget
-        f = apply_rule(spec; source=working, actor=actor, iteration=i, ep=ep)
+        f = apply_rule(
+            spec; source=working, actor=actor, iteration=i, rule_set=rule_set, ep=ep
+        )
         # A Rewrite changes the target in place, so its working set never grows; it has
         # converged when a pass neither adds nor removes anything.
         f.count == 0 && f.removed == 0 && return firings
@@ -671,6 +722,7 @@ function run_rules(
         something(max_iterations, set.max_iterations, DEFAULT_MAX_ITERATIONS);
         source=source,
         actor=actor,
+        rule_set=set.iri,
         ep=ep,
     )
 end
@@ -706,15 +758,19 @@ function run_rules(
     )
 end
 
-"The shared driver behind every `run_rules` method. `label` only ever appears in errors."
-function _run_rule_sequence(
+"""
+    check_rule_sequence(specs, label, strategy, budget; source)
+
+Every refusal the set driver makes before running anything -- the set-level counterpart of
+[`check_runnable`](@ref), and separate for the same reason: so `rerun_rules!` can refuse an
+unrunnable set before it undoes the results of the last run.
+"""
+function check_rule_sequence(
     specs::AbstractVector{RuleSpec},
     label::AbstractString,
     set_strategy::Symbol,
     budget::Integer;
     source::AbstractVector,
-    actor::AbstractString,
-    ep::SparqlEndpoint=endpoint(),
 )
     set_strategy in (:Once, :ToFixpoint) || throw(
         ArgumentError(
@@ -764,6 +820,21 @@ function _run_rule_sequence(
                 "store's default graph -- so the working set has to be named graphs.",
             ),
         )
+    return nothing
+end
+
+"The shared driver behind every `run_rules` method. `label` only ever appears in errors."
+function _run_rule_sequence(
+    specs::AbstractVector{RuleSpec},
+    label::AbstractString,
+    set_strategy::Symbol,
+    budget::Integer;
+    source::AbstractVector,
+    actor::AbstractString,
+    rule_set::Union{AbstractString,Nothing}=nothing,
+    ep::SparqlEndpoint=endpoint(),
+)
+    check_rule_sequence(specs, label, set_strategy, budget; source=source)
 
     firings = Firing[]
     working = String[String.(source)...]
@@ -771,7 +842,7 @@ function _run_rule_sequence(
     for pass in 1:budget
         changed = false
         for spec in specs
-            for f in run_rule(spec; source=working, actor=actor, ep=ep)
+            for f in run_rule(spec; source=working, actor=actor, rule_set=rule_set, ep=ep)
                 # Nothing contributed: apply_rule already dropped the graph and wrote no
                 # provenance, so this firing is not undoable and must not be handed back.
                 (f.count == 0 && f.removed == 0) && continue
@@ -1078,12 +1149,17 @@ end
 The provenance log, newest first. Optionally filtered to one rule.
 """
 function firings(;
-    rule::Union{AbstractString,Nothing}=nothing, ep::SparqlEndpoint=endpoint()
+    rule::Union{AbstractString,Nothing}=nothing,
+    rule_set::Union{AbstractString,Nothing}=nothing,
+    ep::SparqlEndpoint=endpoint(),
 )
-    filt = rule === nothing ? "" : "FILTER(?rule = <$(check_iri(rule))>)"
+    filt = string(
+        rule === nothing ? "" : "FILTER(?rule = <$(check_iri(rule))>) ",
+        rule_set === nothing ? "" : "FILTER(?set = <$(check_iri(rule_set))>)",
+    )
     rows = select(
         """
-SELECT ?g ?rule ?at ?n ?actor ?iter ?rem ?tomb ?ord WHERE {
+SELECT ?g ?rule ?at ?n ?actor ?iter ?rem ?tomb ?ord ?set WHERE {
   GRAPH <$PROVENANCE_GRAPH> {
     ?g <$(JH_NS)appliedRule>       ?rule ;
        <$(GIST_ONT_NS)actualStartDateTime> ?at ;
@@ -1093,6 +1169,7 @@ SELECT ?g ?rule ?at ?n ?actor ?iter ?rem ?tomb ?ord WHERE {
     OPTIONAL { ?g <$(JH_NS)removedCount>   ?rem }
     OPTIONAL { ?g <$(JH_NS)tombstoneGraph> ?tomb }
     OPTIONAL { ?g <$(JH_NS)ordinal>        ?ord }
+    OPTIONAL { ?g <$(JH_NS)ruleSet>        ?set }
   } $filt
 } ORDER BY DESC(?at) DESC(COALESCE(?ord, 0)) DESC(?iter)""";
         ep=ep,
@@ -1113,6 +1190,9 @@ SELECT ?g ?rule ?at ?n ?actor ?iter ?rem ?tomb ?ord WHERE {
             # sort key for exactly that reason: an old provenance graph must still read in a
             # sensible order rather than collapsing into one bucket.
             ordinal=haskey(r, "ord") ? parse(Int, (r["ord"]::RDFLiteral).lexical) : 0,
+            # The jhp:RuleSet this firing was run as part of, or "" if it was run alone or
+            # in an ad-hoc list -- which have no identity a later rerun could name.
+            rule_set=haskey(r, "set") ? (r["set"]::IRIRef).value : "",
         ) for r in rows
     ]
 end
@@ -1129,5 +1209,76 @@ export Firing,
     is_firing,
     firings,
     graph_size
-export run_rules, retractions, agent_iri
+"""
+    rerun_rules!(set; source = String[], actor = "jayhawk", strategy = nothing,
+                 max_iterations = nothing, ep = endpoint())
+        -> (undone = Vector{String}, firings = Vector{Firing})
+
+Re-run a rule set as a **replacement** for its last run: undo every firing recorded against
+the set, newest first, then run it again.
+
+A set's output is a view of its inputs, and `run_rules` only adds -- so once the inputs
+change, running again leaves behind whatever the old inputs derived and the new ones do not.
+Measured on bondfix: with one activity's gross changed so its purchase no longer matched, a
+second `run_rules` left 15 stale triples (a first-coupon event, an interest-days and a yield
+magnitude) that the oracle, run on the changed data, does not write. The shell script this
+set replaces handles it with `DROP SILENT GRAPH` on both destinations, which would also drop
+anything else in them. This removes exactly what the set asserted, by undoing its firings --
+each an exact inverse, a Rewrite's included, which is why the order is newest first.
+
+**Only the set's own firings.** A firing records the `jhp:RuleSet` it was run in
+(`jayhawk:ruleSet`). A member rule run on its own, or in an ad-hoc list, records none and is
+left alone -- hence `set` must be a rule set's IRI or spec, never a bare list.
+
+**Checked before anything is undone.** Every refusal the run would make -- the set's
+[`check_rule_sequence`](@ref), each member's compile checks and [`check_runnable`](@ref) --
+is made first, so a set that cannot run does not cost the caller the results of its last
+run. What cannot be checked in advance is a failure during the run itself: by then the old
+results are gone, exactly as they are once the shell script has dropped its graphs.
+
+**Not a cascade.** Undoing does not chase consumers. If something outside the set read its
+output and derived from it, that derivation stays; re-run the downstream set as well.
+"""
+function rerun_rules!(
+    set::RuleSetSpec;
+    source::AbstractVector=String[],
+    actor::AbstractString="jayhawk",
+    strategy::Union{Symbol,Nothing}=nothing,
+    max_iterations::Union{Integer,Nothing}=nothing,
+    ep::SparqlEndpoint=endpoint(),
+)
+    specs = [load_rule(r; ep=ep) for r in set.rules]
+    check_rule_sequence(
+        specs,
+        set.iri,
+        something(strategy, set.strategy, :Once),
+        something(max_iterations, set.max_iterations, DEFAULT_MAX_ITERATIONS);
+        source=source,
+    )
+    for spec in specs
+        check_bound(spec)
+        check_runnable(spec; source=source)
+    end
+
+    undone = String[]
+    for f in firings(; rule_set=set.iri, ep=ep)      # newest first
+        undo_firing!(f.graph; ep=ep)
+        push!(undone, f.graph)
+    end
+    fs = run_rules(
+        set;
+        source=source,
+        actor=actor,
+        strategy=strategy,
+        max_iterations=max_iterations,
+        ep=ep,
+    )
+    return (undone=undone, firings=fs)
+end
+
+function rerun_rules!(set_iri::AbstractString; ep::SparqlEndpoint=endpoint(), kw...)
+    return rerun_rules!(load_rule_set(set_iri; ep=ep); ep=ep, kw...)
+end
+
+export run_rules, rerun_rules!, retractions, agent_iri, check_runnable, check_rule_sequence
 export PROVENANCE_GRAPH, new_firing_graph, new_tombstone_graph

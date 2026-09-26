@@ -98,6 +98,10 @@ run_rules("https://w3id.org/moneygraph/ns/rules/bondfix/BondFix";
                     "urn:jayhawk:example:bondfix:work"])
 ```
 
+The shell script drops both output graphs before it runs, so that the result reflects the
+*current* inputs. The rule-set equivalent is `rerun_rules!`. It undoes exactly the firings
+recorded against `BondFix` and runs the set again, leaving anything else in those graphs alone.
+
 How the query's constructs become rules:
 
 - **The join becomes a fact.** Rule 1 does the heuristic match once. It records the result as
@@ -129,3 +133,4 @@ The issuer's label is re-tested against the description in rule 2 for the same r
 | 3b | `gistp:isMintedBy` | one minting function per class, not the namespace repeated in every rule |
 | 4 | write-scoped firings pruned against the destination only | the issuer's `gist:Organization` typing is already in the trades graph, and the query writes it anyway |
 | 4 | match patterns joined hub first | FirstCouponEvent took 4.39 s with its parts in IRI order and 0.016 s hub first; the oracle takes 0.1 s |
+| 5 | `rerun_rules!`, and firings that record their rule set | after one input changed, a plain re-run left 15 stale triples |
