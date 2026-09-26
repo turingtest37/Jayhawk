@@ -78,20 +78,25 @@ bf:BondFix_8 rdf:type gist:OrderedMember ; gist:isMemberOf bf:BondFix ;
 #    How moneygraph mints IRIs -- stated once, shared by every rule that mints
 # ===========================================================================================
 
+# Every template follows doc/iri-grammar.md: the class, then one ':'-separated part per slot.
+# ':' is outside the set ENCODE_FOR_URI leaves alone, so no slot value can forge a separator
+# (_Requirement_separator_colon), and each slot is encoded exactly once, by the template.
+
+# A transaction event, the shape the activity conversions mint: account, symbol, action,
+# date, currency, and a discriminator telling apart two otherwise identical events.
 bf:_MintingFunction_Event a gistp:MintingFunction ;
     gistp:namespace "https://w3id.org/moneygraph/ns/data/"^^xsd:anyURI ;
-    gistp:localTemplate "_Event_{key}" .
+    gistp:localTemplate "_Event:{account}:{symbol}:{action}:{date}:{currency}:{discriminator}" .
 
 bf:_MintingFunction_CouponPaymentSchedule a gistp:MintingFunction ;
     gistp:namespace "https://w3id.org/moneygraph/ns/data/"^^xsd:anyURI ;
-    gistp:localTemplate "_CouponPaymentSchedule_{symbol}" .
+    gistp:localTemplate "_CouponPaymentSchedule:{symbol}" .
 
 bf:_MintingFunction_YieldMagnitude a gistp:MintingFunction ;
     gistp:namespace "https://w3id.org/moneygraph/ns/data/"^^xsd:anyURI ;
-    gistp:localTemplate "_Magnitude_yieldToMaturity_{value}" .
+    gistp:localTemplate "_Magnitude:yieldToMaturity:{value}" .
 
-# The work graph's own nodes. ':' separates the two slots because it is outside the set
-# ENCODE_FOR_URI leaves alone, so no value can forge it (_Requirement_separator_colon).
+# The work graph's own nodes, on the same separator.
 bf:_MintingFunction_Match a gistp:MintingFunction ;
     gistp:namespace "urn:jayhawk:example:bondfix:match:" ;
     gistp:localTemplate "{activity}:{trade}" .
@@ -153,8 +158,10 @@ bf:_curKey  a gistp:LiteralVariable , gistp:SparqlVariable ;
     gistp:variableText "?curKey" ; gistp:requiresDatatype xsd:string .
 bf:_disc    a gistp:LiteralVariable , gistp:SparqlVariable ;
     gistp:variableText "?disc" ; gistp:requiresDatatype xsd:string .
-bf:_evtKey  a gistp:LiteralVariable , gistp:SparqlVariable ;
-    gistp:variableText "?evtKey" ; gistp:requiresDatatype xsd:string .
+bf:_action  a gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?action" ; gistp:requiresDatatype xsd:string .
+bf:_ncDay   a gistp:LiteralVariable , gistp:SparqlVariable ;
+    gistp:variableText "?ncDay" ; gistp:requiresDatatype xsd:string .
 bf:_ytm     a gistp:LiteralVariable , gistp:SparqlVariable ;
     gistp:variableText "?ytm" ; gistp:requiresDatatype xsd:decimal .
 
@@ -164,7 +171,12 @@ bf:_sched a gistp:SparqlVariable ; gistp:variableText "?_sched" ;
     gistp:hasSlot [ a gistp:TemplateSlot ; gistp:slotName "symbol" ; gistp:slotValue bf:_eqSym ] .
 bf:_evt a gistp:SparqlVariable ; gistp:variableText "?_evt" ;
     gistp:isMintedBy bf:_MintingFunction_Event ;
-    gistp:hasSlot [ a gistp:TemplateSlot ; gistp:slotName "key" ; gistp:slotValue bf:_evtKey ] .
+    gistp:hasSlot [ a gistp:TemplateSlot ; gistp:slotName "account" ;       gistp:slotValue bf:_acctKey ] ,
+                  [ a gistp:TemplateSlot ; gistp:slotName "symbol" ;        gistp:slotValue bf:_eqSym ] ,
+                  [ a gistp:TemplateSlot ; gistp:slotName "action" ;        gistp:slotValue bf:_action ] ,
+                  [ a gistp:TemplateSlot ; gistp:slotName "date" ;          gistp:slotValue bf:_ncDay ] ,
+                  [ a gistp:TemplateSlot ; gistp:slotName "currency" ;      gistp:slotValue bf:_curKey ] ,
+                  [ a gistp:TemplateSlot ; gistp:slotName "discriminator" ; gistp:slotValue bf:_disc ] .
 bf:_ytmMag a gistp:SparqlVariable ; gistp:variableText "?_ytmMag" ;
     gistp:isMintedBy bf:_MintingFunction_YieldMagnitude ;
     gistp:hasSlot [ a gistp:TemplateSlot ; gistp:slotName "value" ; gistp:slotValue bf:_ytm ] .
@@ -402,10 +414,11 @@ bf:FirstCouponEvent
         # The query's discriminator, verbatim: it tells two purchases of one bond apart.
         [ a jhp:Binding ; jhp:bindsVariable bf:_disc ;
           jhp:bindText '''MD5(STR(round((?qty + ?price + ?gross + ?comm + ?net)*1000)/1000))''' ] ,
-        # The whole local part as one value: the query joins its parts with "_", which a
-        # template cannot place between two slots unambiguously.
-        [ a jhp:Binding ; jhp:bindsVariable bf:_evtKey ;
-          jhp:bindText '''CONCAT(?acctKey, "_", ?eqSym, "_first_coupon_", STRBEFORE(STR(?ncDate), "T"), "_", ?curKey, "_", ?disc)''' ] .
+        # The event's two other parts: what kind of event, and its day.
+        [ a jhp:Binding ; jhp:bindsVariable bf:_action ;
+          jhp:bindText '''"first_coupon"''' ] ,
+        [ a jhp:Binding ; jhp:bindsVariable bf:_ncDay ;
+          jhp:bindText '''STRBEFORE(STR(?ncDate), "T")''' ] .
 
 bf:Event_Work    a gistp:SparqlPattern ; jhp:inGraph <urn:jayhawk:example:bondfix:work> .
 bf:Event_Holding a gistp:SparqlPattern ; jhp:inGraph mg3:__current__ .

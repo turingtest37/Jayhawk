@@ -237,33 +237,23 @@ WHERE
     BIND(REPLACE(UCASE(STR(?__symbol_str_norm)), "\\W+", "-") AS ?__eq_symbol)
 
 #    # Transaction key = convenience binding for making new IRIs
-    BIND(CONCAT(
-        ?__acct_key,'_',
-        ?__eq_symbol,'_',
-        'first_coupon_',
-        STRBEFORE(STR(?__next_cpn_dt),"T"),'_',
-        ?__currency_key
-        ) AS ?__tx_key)
+    BIND(CONCAT(?__acct_key, ':', ?__eq_symbol, ':first_coupon:', ENCODE_FOR_URI(STR(STRBEFORE(STR(?__next_cpn_dt),"T"))), ':', ENCODE_FOR_URI(STR(?__currency_key))) AS ?__tx_key)
 
 ## Sum of qty,price,gross,commission,net as a discrimator to create a unique Event IRI
     BIND(MD5(STR(round((?__trade_purch_amt + ?__trade_price_amt + ?__trade_gross_amt + ?__trade_commission_amt + ?__trade_net_amt)*1000)/1000)) AS ?__discriminator_str)
 
 # Next Coupon Event
     # BIND(STRBEFORE(STR(?__next_cpn_dt),"T") AS ?__next_cpn_key)
-    BIND(IRI(CONCAT(
-        STR(mg3:),
-        '_Event_',
-        ?__tx_key,'_',
-        ?__discriminator_str)) AS ?__1st_coupon_evt)        
+    BIND(IRI(CONCAT(STR(mg3:), '_Event:', ?__tx_key, ':', ENCODE_FOR_URI(STR(?__discriminator_str)))) AS ?__1st_coupon_evt)        
 
     # Coupon Payment Terms
 #    BIND(IRI(CONCAT(STR(mg3:),'_CouponPaymentTerms_', ?__eq_symbol)) AS ?__coupon_payment_terms)
     # Coupon Payment Schedule
-    BIND(IRI(CONCAT(STR(mg3:),'_CouponPaymentSchedule_', ?__eq_symbol)) AS ?__coupon_payment_schedule)
+    BIND(IRI(CONCAT(STR(mg3:), '_CouponPaymentSchedule:', ?__eq_symbol)) AS ?__coupon_payment_schedule)
     # Coupon
 #    BIND(IRI(CONCAT(STR(mg3:),'_Magnitude_annual_percent_', STR(?__coupon * 100))) AS ?__coupon_rate_magn)
     # Magnitude for YTM
-    BIND(IRI(CONCAT(STR(mg3:),'_Magnitude_yieldToMaturity_', STR(?__ytm_num))) AS ?__ytm_magn)
+    BIND(IRI(CONCAT(STR(mg3:), '_Magnitude:yieldToMaturity:', ENCODE_FOR_URI(STR(?__ytm_num)))) AS ?__ytm_magn)
         
 }
 #ORDER BY ?__purch_dt

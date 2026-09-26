@@ -2202,8 +2202,8 @@ ex:s2 ex:p ex:plain .
         end
 
         # The input changes: A2's purchase no longer matches its trade.
-        A2 = "$(MG3)_Event_51590610_5DDZBS0_buy_2025-06-02_CAD_-"
-        GROSS = "$(MG3)_Magnitude_securityTradeGrossAmount_cad_4756"
+        A2 = "$(MG3)_Event:51590610:5DDZBS0:buy:2025-06-02:CAD:-"
+        GROSS = "$(MG3)_Magnitude:securityTradeGrossAmount:cad:4756"
         Jayhawk.update!("""
             DELETE DATA { GRAPH <$C> { <$A2> <$(GI)hasMagnitude> <$(GROSS).0> } } ;
             INSERT DATA { GRAPH <$C> { <$A2> <$(GI)hasMagnitude> <$(GROSS).5> .

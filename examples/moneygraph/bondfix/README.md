@@ -126,7 +126,12 @@ How the query's constructs become rules:
 - **Derived keys become `jhp:hasBinding`s**, with the query's expressions carried over
   verbatim: symbol normalisation, the `\W+` slug, the date prefix and the MD5 discriminator.
 - **Minted IRIs come from one `gistp:MintingFunction` per kind of IRI**, shared by every rule
-  that mints that kind.
+  that mints that kind. They follow moneygraph's IRI grammar (`doc/iri-grammar.md` there):
+  the class, then one `:`-separated part per slot, each encoded once. So the first-coupon
+  event is `_Event:{account}:{symbol}:{action}:{date}:{currency}:{discriminator}`, the same
+  six parts the activity conversions mint, with `action` bound to `"first_coupon"`. Under
+  the old `_` joins the query had to build the whole key as one value, because `_` between
+  two slots is ambiguous (`_Requirement_separator_colon`); with `:` every part is a slot.
 
 **Assumed, and true of moneygraph's pipeline:** the attribute values the query reads off one
 entity are single-valued, such as one label per issuer and one net amount per trade. Where

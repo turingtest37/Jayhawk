@@ -274,8 +274,9 @@ Three engine gaps stand between it and a working rule set, taken in this order:
    filter may test a source-mapped column (it was refused as unbound).
    **`gistp:MintingFunction` — built (Round 3b).** `gistp:isMintedBy` is compiled as
    another spelling of `iriTemplate` (namespace + localTemplate), so the bondfix rules share
-   one function per class (`_Event_`, `_CouponPaymentSchedule_`, `_Magnitude_`) instead of
-   repeating `mg3:` in each template. Its `gist:conformsTo` policy is recorded, not enforced.
+   one function per class (`_Event:`, `_CouponPaymentSchedule:`, `_Magnitude:`) instead of
+   repeating `mg3:` in each template. Since moneygraph moved to its `:` IRI grammar, each
+   part of a composite key is its own slot; the event function has six. Its `gist:conformsTo` policy is recorded, not enforced.
    Its namespace may be an `xsd:anyURI` or an `xsd:string` (gistPatterns `afbc219`: the
    equivalent class takes either, and `≤1 namespace` makes one of each inconsistent).
 **Round 4 is done: the rule set reproduces the oracle quad for quad** (43 + 35, none missing,
