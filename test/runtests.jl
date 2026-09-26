@@ -175,10 +175,12 @@ end
         WHERE {
           ?_ID_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/semanticarts/ns/ontology/gist/ID> .
           ?_ID_1 <https://w3id.org/semanticarts/ns/ontology/gist/containedText> ?idText .
-          ?_Person_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/semanticarts/ns/ontology/gist/Person> .
           ?_Person_1 <https://w3id.org/semanticarts/ns/ontology/gist/isIdentifiedBy> ?_ID_1 .
+          ?_Person_1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/semanticarts/ns/ontology/gist/Person> .
         }
         """
+        # isIdentifiedBy before the Person type: text order would put the type first, and it
+        # shares no variable with the ?_ID_1 lines before it (see bgp_text).
         # note: patterns are sorted on load, so build the spec in sorted order to compare
         spec = person_to_employee()
         sorted = RuleSpec(
@@ -2268,6 +2270,31 @@ end
         @test findfirst("knows", q).start < findfirst("owns> ?_X", q).start
         # equally connected parts keep IRI order, so the golden above still holds
         @test [p.graph for p in Jayhawk.ordered_parts(pair())] == ["$(R)Pair_Left", "$(R)Pair_Right"]
+    end
+
+    @testset "a part's triples are emitted connected, never in bare text order" begin
+        # The same plan, one level down: Fuseki's in-memory engine runs a BGP's triples in
+        # the order written. Sorted as text, ?_A's and ?_B's constant-object triples come
+        # first and share nothing, so the store cross-multiplies them before ?_g joins them.
+        # Measured on bondfix's MatchTradeToHolding over the live moneygraph inputs: over
+        # 90 s in text order, 1.2 s connected.
+        t(s, p, o) = PatternTriple(iri("$(R)$s"), iri("$(EX)$p"), o isa String ? iri("$(R)$o") : o)
+        ts = [t("_A", "p", iri("$(EX)x")), t("_B", "p", iri("$(EX)y")),
+              t("_g", "q", "_A"), t("_g", "q", "_B")]
+        lines = split(Jayhawk.bgp_text(ts, pair()), "\n")
+        @test strip.(lines) == [
+            "?_A <$(EX)p> <$(EX)x> .", "?_g <$(EX)q> ?_A .",
+            "?_g <$(EX)q> ?_B .", "?_B <$(EX)p> <$(EX)y> .",
+        ]
+        seen = Set{String}()
+        for (i, l) in enumerate(lines)
+            vs = Set(m.match for m in eachmatch(r"\?\w+", l))
+            i == 1 || @test !isempty(intersect(vs, seen))
+            union!(seen, vs)
+        end
+        # already connected in text order: unchanged, so every existing golden still holds
+        conn = [t("_A", "p", "_X"), t("_B", "q", "_X")]
+        @test Jayhawk.bgp_text(conn, pair()) == join(sort(split(Jayhawk.bgp_text(conn, pair()), "\n")), "\n")
     end
 
     @testset "what a multi-pattern L refuses" begin

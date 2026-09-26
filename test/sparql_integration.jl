@@ -2125,7 +2125,7 @@ ex:s2 ex:p ex:plain .
 
         @testset "eight rules, in the declared order, each to its own destination" begin
             @test [split(f.rule, "/")[end] for f in fs] == [
-                "MatchTradeToHolding", "ListingAndIssuer", "Callable", "CouponTerms",
+                "_Rule:bondfix:matchTradeToHolding", "ListingAndIssuer", "Callable", "CouponTerms",
                 "CouponMonths", "FirstCouponEvent", "InterestDaysPaid", "YieldToMaturity",
             ]
             @test fs[1].target == W && fs[1].count == 36      # four matches, nine facts each

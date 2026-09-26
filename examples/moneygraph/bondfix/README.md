@@ -150,3 +150,4 @@ The issuer's label is re-tested against the description in rule 2 for the same r
 | 4 | match patterns joined hub first | FirstCouponEvent took 4.39 s with its parts in IRI order and 0.016 s hub first; the oracle takes 0.1 s |
 | 5 | `rerun_rules!`, and firings that record their rule set | after one input changed, a plain re-run left 15 stale triples |
 | 6 | the default endpoint is read from the environment at load | `JAYHAWK_SPARQL_SERVICE` was baked in at precompile, so moneygraph's script ran against the Jayhawk test store instead of its compute store |
+| live | a part's triples emitted connected, not in text order | the first run on live data (4,301 trade + 27,112 holding triples): MatchTradeToHolding ran over 90 s and hit the client's 30 s timeout in text order, 1.2 s connected. Output then equalled the oracle's over the same inputs, 398 + 264 triples |

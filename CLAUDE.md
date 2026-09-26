@@ -299,6 +299,13 @@ Multi-pattern parts are joined hub first (`ordered_parts`), since IRI order made
    refreshed. Verified end to end against a stand-in store. The deployment exposed a real
    bug: `JAYHAWK_SPARQL_SERVICE` was baked in at precompile, so the override was ignored.
    It is now read at load (`endpoint_from_env` in `__init__`).
+   **First live run (moneygraph Round 7).** Real data exposed what the fixture could not:
+   `bgp_text` emitted a part's triples in text order, and Fuseki's in-memory engine runs a
+   BGP as written, so two unrelated triples side by side were a cross product --
+   MatchTradeToHolding ran over 90 s on 4,301 + 27,112 triples. Lines are now pulled forward
+   to stay connected (text order otherwise, so a connected BGP renders as before; one golden
+   line moved): 1.2 s. The set then matched the oracle over the live inputs exactly, 398 +
+   264 triples, and every IRI it minted fits moneygraph's grammar.
    Noticed, not fixed: `tool_run_rules` still refuses *any* Rewrite mixed with additive rules,
    while the harness now allows it when every additive member has a write destination. The
    MCP check is stricter than the engine. This is the rule-set

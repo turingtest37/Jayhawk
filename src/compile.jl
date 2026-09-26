@@ -1192,16 +1192,41 @@ function term_sparql(t::RDFTerm, spec::RuleSpec)
     return sparql_text(t)
 end
 
-"Render a list of pattern triples as a Basic Graph Pattern."
+"""
+    bgp_text(ts, spec; indent = "  ") -> String
+
+Render a list of pattern triples as a Basic Graph Pattern, in an order that is both
+deterministic and a sound join order.
+
+Sorted HERE, not only in load_pattern. "Same spec, same bytes" has to hold for every
+RuleSpec however it was built -- including one an MCP client hands in -- and a BGP is a set,
+so the order it was written in carries no meaning to preserve.
+
+But the order it is *emitted* in does carry meaning to the store: Fuseki's in-memory engine
+runs a BGP's triples as written, so text order that puts two unrelated triples side by side
+is a cross product. So: text order, except that when the next line shares no variable with
+the lines already emitted, the first later line that does is pulled forward. A BGP already
+connected in text order renders exactly as before. Measured on bondfix's MatchTradeToHolding
+over the live moneygraph inputs: over 90 s in text order, 1.2 s connected -- the same
+lesson as [`ordered_parts`](@ref), one level down.
+"""
 function bgp_text(ts::Vector{PatternTriple}, spec::RuleSpec; indent::AbstractString="  ")
-    # Sorted HERE, not only in load_pattern. "Same spec, same bytes" has to hold for every
-    # RuleSpec however it was built -- including one an MCP client hands in -- and a BGP is
-    # a set, so the order it was written in carries no meaning to preserve.
-    lines = (
+    lines = sort!([
         "$indent$(term_sparql(t.subject, spec)) $(term_sparql(t.predicate, spec)) " *
         "$(term_sparql(t.object, spec)) ." for t in ts
-    )
-    return join(sort(collect(lines)), "\n")
+    ])
+    vars = [Set(m.match for m in eachmatch(r"\?\w+", l)) for l in lines]
+    rest, out, bound = collect(eachindex(lines)), Int[], Set{String}()
+    while !isempty(rest)
+        k = 1
+        if !isempty(out) && isempty(intersect(vars[rest[1]], bound))
+            k = something(findfirst(i -> !isempty(intersect(vars[i], bound)), rest), 1)
+        end
+        i = popat!(rest, k)
+        push!(out, i)
+        union!(bound, vars[i])
+    end
+    return join(lines[out], "\n")
 end
 
 "Every distinct SPARQL variable appearing anywhere in a pattern."

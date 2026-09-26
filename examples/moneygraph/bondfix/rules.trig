@@ -58,7 +58,7 @@ bf:BondFix
     jhp:strategy jhp:Once .
 
 bf:BondFix_1 rdf:type gist:OrderedMember ; gist:isMemberOf bf:BondFix ;
-    gist:providesOrderFor bf:MatchTradeToHolding ; gist:sequence 1 .
+    gist:providesOrderFor bf:_Rule:bondfix:matchTradeToHolding ; gist:sequence 1 .
 bf:BondFix_2 rdf:type gist:OrderedMember ; gist:isMemberOf bf:BondFix ;
     gist:providesOrderFor bf:ListingAndIssuer ; gist:sequence 2 .
 bf:BondFix_3 rdf:type gist:OrderedMember ; gist:isMemberOf bf:BondFix ;
@@ -189,14 +189,14 @@ bf:_ytmMag a gistp:SparqlVariable ; gistp:variableText "?_ytmMag" ;
 #    1. MatchTradeToHolding -- the join, recorded as a fact
 # ===========================================================================================
 
-bf:MatchTradeToHolding
+bf:_Rule:bondfix:matchTradeToHolding
     rdf:type jhp:Rule ;
     skos:prefLabel "Match a bond trade to the holding and purchase it belongs to" ;
     skos:definition """The query's heuristic join: same maturity, same purchase date, gross and
                        net amounts, and the issuer's name in the holding's description. The
                        match is written as a node naming every entity it ties together.""" ;
-    jhp:hasMatchPattern bf:Match_Trade , bf:Match_Holding , bf:Match_Units ;
-    jhp:hasConstructPattern bf:Match_R ;
+    jhp:hasMatchPattern bf:_SparqlPattern:bondfix:match:Trade , bf:_SparqlPattern:bondfix:match:Holding , bf:_SparqlPattern:bondfix:match:Units ;
+    jhp:hasConstructPattern bf:_SparqlPattern:bondfix:match:R ;
     jhp:rewriteMode jhp:_RewriteMode_assert ;
     jhp:strategy jhp:Once ;
     jhp:hasFilterCondition
@@ -211,12 +211,12 @@ bf:MatchTradeToHolding
         [ a jhp:FilterCondition ; skos:prefLabel "the issuer is named in the description" ;
           jhp:filterText "CONTAINS(?desc, ?istr)" ] .
 
-bf:Match_Trade   a gistp:SparqlPattern ; jhp:inGraph mg3:__trades-bonds__ .
-bf:Match_Holding a gistp:SparqlPattern ; jhp:inGraph mg3:__current__ .
-bf:Match_Units   a gistp:SparqlPattern ; jhp:inGraph mg3:__units__ .
-bf:Match_R       a gistp:SparqlPattern ; jhp:inGraph <urn:jayhawk:example:bondfix:work> .
+bf:_SparqlPattern:bondfix:match:Trade   a gistp:SparqlPattern ; jhp:inGraph mg3:__trades-bonds__ .
+bf:_SparqlPattern:bondfix:match:Holding a gistp:SparqlPattern ; jhp:inGraph mg3:__current__ .
+bf:_SparqlPattern:bondfix:match:Units   a gistp:SparqlPattern ; jhp:inGraph mg3:__units__ .
+bf:_SparqlPattern:bondfix:match:R       a gistp:SparqlPattern ; jhp:inGraph <urn:jayhawk:example:bondfix:work> .
 
-bf:Match_Trade {
+bf:_SparqlPattern:bondfix:match:Trade {
     bf:_tacct gist:hasPositionIn bf:_tsec ; gist:isAffectedBy bf:_tpe .
     bf:_tpe gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
             mg:transactionDate "?tpd"^^gistp:var ;
@@ -235,7 +235,7 @@ bf:Match_Trade {
                mg:plannedOccursDate "?tmat"^^gistp:var .
 }
 
-bf:Match_Holding {
+bf:_SparqlPattern:bondfix:match:Holding {
     bf:_secacct gist:hasPositionIn bf:_bond ; gist:isMemberOf bf:_portfolio ; gist:isAffectedBy bf:_ape .
     bf:_ape gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
             mg:transactionDate "?pd"^^gistp:var ;
@@ -256,11 +256,11 @@ bf:Match_Holding {
 }
 
 # Only so a trade whose currency has no code does not match -- the query requires one.
-bf:Match_Units {
+bf:_SparqlPattern:bondfix:match:Units {
     bf:_uom gist:symbol "?cur"^^gistp:var .
 }
 
-bf:Match_R {
+bf:_SparqlPattern:bondfix:match:R {
     bf:_match rdf:type mgw:Match ;
               mgw:activity bf:_ape ;
               mgw:trade bf:_tpe ;
