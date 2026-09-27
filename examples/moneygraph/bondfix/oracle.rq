@@ -22,9 +22,7 @@ PREFIX owl: <http://www.w3.org/2002/07/owl#>
 INSERT
 {
 GRAPH mg3:__securities__extra {
-    ?__bond_iri mg:isListedOn ?__exchange ;
-        mg:isIssuedBy ?__issuer_iri ;
-    .
+    ?__bond_iri mg:isIssuedBy ?__issuer_iri .
     ?__issuer_iri a gist:Organization ;
         gist:name ?__issuer_str ;
         skos:prefLabel ?__issuer_str ;
@@ -122,8 +120,7 @@ WHERE
 ## trade ytm magn
 #            ?__trade_ytm_magn gist:hasAspect mgx:_Aspect_yieldToMaturity ; gist:numericValue ?__ytm_num .
 #
-             ?__trade_security mg:isListedOn ?__exchange ; 
-                mg:hasRepaymentTerms ?__bond_repayment_conditions_temp ;
+             ?__trade_security mg:hasRepaymentTerms ?__bond_repayment_conditions_temp ;
                 mg:isIssuedBy ?__issuer_iri ;
             .
             ?__issuer_iri skos:prefLabel ?__issuer_str .
@@ -161,8 +158,9 @@ WHERE
     } # inner select
 
     GRAPH mg3:__current__ {
-    ?__secacct gist:hasPositionIn ?__bond_iri ;
-        gist:isMemberOf ?__portfolio_account ;
+    ?__secacct gist:hasPositionIn ?__bond_iri .
+    ?__holding mg:isHoldingOf ?__secacct ;
+        mg:isHoldingIn ?__portfolio_account ;
     .
         
     OPTIONAL { 
@@ -237,9 +235,11 @@ WHERE
             ?__equity_symbol_str)) AS ?__symbol_str_norm)
     # Equity Symbol
     BIND(REPLACE(UCASE(STR(?__symbol_str_norm)), "\\W+", "-") AS ?__eq_symbol)
+    # Listing: a bond's is its market, from its currency (moneygraph doc/iri-grammar.md, rule 9)
+    BIND(IF(?__currency = "USD", "US", "CA") AS ?__listing_key)
 
 #    # Transaction key = convenience binding for making new IRIs
-    BIND(CONCAT(?__acct_key, ':', ?__eq_symbol, ':first_coupon:', ENCODE_FOR_URI(STR(STRBEFORE(STR(?__next_cpn_dt),"T"))), ':', ENCODE_FOR_URI(STR(?__currency_key))) AS ?__tx_key)
+    BIND(CONCAT(?__acct_key, ':', ?__listing_key, ':', ?__eq_symbol, ':first_coupon:', ENCODE_FOR_URI(STR(STRBEFORE(STR(?__next_cpn_dt),"T"))), ':', ENCODE_FOR_URI(STR(?__currency_key))) AS ?__tx_key)
 
 ## Sum of qty,price,gross,commission,net as a discrimator to create a unique Event IRI
     BIND(MD5(STR(round((?__trade_purch_amt + ?__trade_price_amt + ?__trade_gross_amt + ?__trade_commission_amt + ?__trade_net_amt)*1000)/1000)) AS ?__discriminator_str)
@@ -251,7 +251,7 @@ WHERE
     # Coupon Payment Terms
 #    BIND(IRI(CONCAT(STR(mg3:),'_CouponPaymentTerms_', ?__eq_symbol)) AS ?__coupon_payment_terms)
     # Coupon Payment Schedule
-    BIND(IRI(CONCAT(STR(mg3:), '_CouponPaymentSchedule:', ?__eq_symbol)) AS ?__coupon_payment_schedule)
+    BIND(IRI(CONCAT(STR(mg3:), '_CouponPaymentSchedule:', ?__listing_key, ':', ?__eq_symbol)) AS ?__coupon_payment_schedule)
     # Coupon
 #    BIND(IRI(CONCAT(STR(mg3:),'_Magnitude_annual_percent_', STR(?__coupon * 100))) AS ?__coupon_rate_magn)
     # Magnitude for YTM

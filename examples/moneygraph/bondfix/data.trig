@@ -70,13 +70,15 @@ mg3:__trades-bonds__ {
         gist:numericValue 10000 .
 
     # ---- A1: COGECO 2031, 2025-03-18 (live) ----------------------------------------------
-    mg3:_InvestmentAccount:8:db22390a48c0c4ca06a700406d768411 a gist:InvestmentAccount ;
-        gist:hasPositionIn mg3:_MarketableSecurity:db22390a48c0c4ca06a700406d768411 ;
-        gist:isAffectedBy mg3:_Event:8:db22390a48c0c4ca06a700406d768411:buy:2025-03-18:a631446d5b5ae7a26aa6264b957c47ff ,
-                          mg3:_Event:8:db22390a48c0c4ca06a700406d768411:int:2025-03-22T00-00-00 ;
-        gist:isMemberOf mg3:_InvestmentPortfolio:8 .
+    mg3:_InvestmentAccount:8:CA:db22390a48c0c4ca06a700406d768411 a gist:InvestmentAccount ;
+        gist:hasPositionIn mg3:_MarketableSecurity:CA:db22390a48c0c4ca06a700406d768411 ;
+        gist:isAffectedBy mg3:_Event:8:CA:db22390a48c0c4ca06a700406d768411:buy:2025-03-18:a631446d5b5ae7a26aa6264b957c47ff ,
+                          mg3:_Event:8:CA:db22390a48c0c4ca06a700406d768411:int:2025-03-22T00-00-00 .
+    mg3:_SecurityHolding:8:CA:db22390a48c0c4ca06a700406d768411 a mg:SecurityHolding ;
+        mg:isHoldingOf mg3:_InvestmentAccount:8:CA:db22390a48c0c4ca06a700406d768411 ;
+        mg:isHoldingIn mg3:_InvestmentPortfolio:8 .
 
-    mg3:_Event:8:db22390a48c0c4ca06a700406d768411:buy:2025-03-18:a631446d5b5ae7a26aa6264b957c47ff a gist:Event ;
+    mg3:_Event:8:CA:db22390a48c0c4ca06a700406d768411:buy:2025-03-18:a631446d5b5ae7a26aa6264b957c47ff a gist:Event ;
         gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
         mg:transactionDate "2025-03-18T00:00:00"^^xsd:dateTime ;
         gist:hasMagnitude mg3:_Magnitude:securityShareCount:5000 ,
@@ -107,41 +109,43 @@ mg3:__trades-bonds__ {
         gist:hasUnitOfMeasure gistd:_UnitOfMeasure_day ;
         gist:numericValue 178 .
 
-    mg3:_MarketableSecurity:db22390a48c0c4ca06a700406d768411
+    mg3:_Event:8:CA:db22390a48c0c4ca06a700406d768411:buy:2025-03-18:a631446d5b5ae7a26aa6264b957c47ff mg:isExecutedOn mg3:_Exchange:cu .
+    mg3:_MarketableSecurity:CA:db22390a48c0c4ca06a700406d768411
         skos:note "COGECO COMMUNICATIONS INC" ;
-        mg:isListedOn mg3:_Exchange:cu ;
         mg:isIssuedBy mg3:_Organization:cogeco-communications-inc ;
-        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:db22390a48c0c4ca06a700406d768411 ;
-        mg:hasInterestPaymentTerms mg3:_CouponPaymentTerms:db22390a48c0c4ca06a700406d768411 .
+        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:CA:db22390a48c0c4ca06a700406d768411 ;
+        mg:hasInterestPaymentTerms mg3:_CouponPaymentTerms:CA:db22390a48c0c4ca06a700406d768411 .
     mg3:_Organization:cogeco-communications-inc a gist:Organization ;
         skos:prefLabel "COGECO COMMUNICATIONS INC" ;
         gist:name "COGECO COMMUNICATIONS INC" .
-    mg3:_BondRepaymentTerms:db22390a48c0c4ca06a700406d768411 a mg:BondRepaymentTerms ;
+    mg3:_BondRepaymentTerms:CA:db22390a48c0c4ca06a700406d768411 a mg:BondRepaymentTerms ;
         mg:callable true ;
-        mg:specifies mg3:_Event:debtPrincipalRepayment:8:db22390a48c0c4ca06a700406d768411 .
-    mg3:_Event:debtPrincipalRepayment:8:db22390a48c0c4ca06a700406d768411 a gist:Event , gist:ScheduledEvent ;
+        mg:specifies mg3:_Event:debtPrincipalRepayment:8:CA:db22390a48c0c4ca06a700406d768411 .
+    mg3:_Event:debtPrincipalRepayment:8:CA:db22390a48c0c4ca06a700406d768411 a gist:Event , gist:ScheduledEvent ;
         gist:isCategorizedBy mgx:_FinancialBusinessEventType_debtPrincipalRepayment ;
         mg:plannedOccursDate "2031-09-22T00:00:00"^^xsd:dateTime .
-    mg3:_CouponPaymentTerms:db22390a48c0c4ca06a700406d768411
-        mg:specifies mg3:_CouponPaymentSchedule:db22390a48c0c4ca06a700406d768411 ,
+    mg3:_CouponPaymentTerms:CA:db22390a48c0c4ca06a700406d768411
+        mg:specifies mg3:_CouponPaymentSchedule:CA:db22390a48c0c4ca06a700406d768411 ,
                      mg3:_Magnitude:annualPercent:02.991 ;
         mg:couponPaymentMonthNumber 3 , 9 ;
         mg:couponPaymentMonthDayNumber 22 .
-    mg3:_CouponPaymentSchedule:db22390a48c0c4ca06a700406d768411 a mg:CouponPaymentSchedule .
-    mg3:_Event:8:db22390a48c0c4ca06a700406d768411:int:2025-03-22T00-00-00 a gist:ScheduledEvent ;
+    mg3:_CouponPaymentSchedule:CA:db22390a48c0c4ca06a700406d768411 a mg:CouponPaymentSchedule .
+    mg3:_Event:8:CA:db22390a48c0c4ca06a700406d768411:int:2025-03-22T00-00-00 a gist:ScheduledEvent ;
         skos:prefLabel "First coupon after purchase: 2025-03-22" ;
         gist:isCategorizedBy mgx:_FinancialBusinessEventType_interestRemittance ;
-        gist:isMemberOf mg3:_CouponPaymentSchedule:db22390a48c0c4ca06a700406d768411 ;
+        gist:isMemberOf mg3:_CouponPaymentSchedule:CA:db22390a48c0c4ca06a700406d768411 ;
         mg:plannedOccursDate "2025-03-22T00:00:00"^^xsd:dateTime .
 
     # ---- A2: COGECO 2031 again, 2025-06-02 -----------------------------------------------
-    mg3:_InvestmentAccount:8:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 a gist:InvestmentAccount ;
-        gist:hasPositionIn mg3:_MarketableSecurity:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 ;
-        gist:isAffectedBy mg3:_Event:8:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17:buy:2025-06-02:0c9e1f3a7d2b4c68e5a0f9b1d3c7e2a4 ,
-                          mg3:_Event:8:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17:int:2025-09-22T00-00-00 ;
-        gist:isMemberOf mg3:_InvestmentPortfolio:8 .
+    mg3:_InvestmentAccount:8:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 a gist:InvestmentAccount ;
+        gist:hasPositionIn mg3:_MarketableSecurity:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 ;
+        gist:isAffectedBy mg3:_Event:8:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17:buy:2025-06-02:0c9e1f3a7d2b4c68e5a0f9b1d3c7e2a4 ,
+                          mg3:_Event:8:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17:int:2025-09-22T00-00-00 .
+    mg3:_SecurityHolding:8:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 a mg:SecurityHolding ;
+        mg:isHoldingOf mg3:_InvestmentAccount:8:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 ;
+        mg:isHoldingIn mg3:_InvestmentPortfolio:8 .
 
-    mg3:_Event:8:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17:buy:2025-06-02:0c9e1f3a7d2b4c68e5a0f9b1d3c7e2a4 a gist:Event ;
+    mg3:_Event:8:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17:buy:2025-06-02:0c9e1f3a7d2b4c68e5a0f9b1d3c7e2a4 a gist:Event ;
         gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
         mg:transactionDate "2025-06-02T00:00:00"^^xsd:dateTime ;
         gist:hasMagnitude mg3:_Magnitude:securityShareCount:5000 ,
@@ -172,37 +176,39 @@ mg3:__trades-bonds__ {
         gist:hasUnitOfMeasure gistd:_UnitOfMeasure_day ;
         gist:numericValue 71 .
 
-    mg3:_MarketableSecurity:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17
+    mg3:_Event:8:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17:buy:2025-06-02:0c9e1f3a7d2b4c68e5a0f9b1d3c7e2a4 mg:isExecutedOn mg3:_Exchange:cu .
+    mg3:_MarketableSecurity:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17
         skos:note "COGECO COMMUNICATIONS INC" ;
-        mg:isListedOn mg3:_Exchange:cu ;
         mg:isIssuedBy mg3:_Organization:cogeco-communications-inc ;
-        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 ;
-        mg:hasInterestPaymentTerms mg3:_CouponPaymentTerms:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 .
-    mg3:_BondRepaymentTerms:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 a mg:BondRepaymentTerms ;
+        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 ;
+        mg:hasInterestPaymentTerms mg3:_CouponPaymentTerms:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 .
+    mg3:_BondRepaymentTerms:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 a mg:BondRepaymentTerms ;
         mg:callable true ;
-        mg:specifies mg3:_Event:debtPrincipalRepayment:8:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 .
-    mg3:_Event:debtPrincipalRepayment:8:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 a gist:Event , gist:ScheduledEvent ;
+        mg:specifies mg3:_Event:debtPrincipalRepayment:8:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 .
+    mg3:_Event:debtPrincipalRepayment:8:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 a gist:Event , gist:ScheduledEvent ;
         gist:isCategorizedBy mgx:_FinancialBusinessEventType_debtPrincipalRepayment ;
         mg:plannedOccursDate "2031-09-22T00:00:00"^^xsd:dateTime .
-    mg3:_CouponPaymentTerms:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17
-        mg:specifies mg3:_CouponPaymentSchedule:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 ,
+    mg3:_CouponPaymentTerms:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17
+        mg:specifies mg3:_CouponPaymentSchedule:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 ,
                      mg3:_Magnitude:annualPercent:02.991 ;
         mg:couponPaymentMonthNumber 3 , 9 ;
         mg:couponPaymentMonthDayNumber 22 .
-    mg3:_CouponPaymentSchedule:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 a mg:CouponPaymentSchedule .
-    mg3:_Event:8:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17:int:2025-09-22T00-00-00 a gist:ScheduledEvent ;
+    mg3:_CouponPaymentSchedule:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 a mg:CouponPaymentSchedule .
+    mg3:_Event:8:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17:int:2025-09-22T00-00-00 a gist:ScheduledEvent ;
         skos:prefLabel "First coupon after purchase: 2025-09-22" ;
         gist:isCategorizedBy mgx:_FinancialBusinessEventType_interestRemittance ;
-        gist:isMemberOf mg3:_CouponPaymentSchedule:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 ;
+        gist:isMemberOf mg3:_CouponPaymentSchedule:CA:6f1d0c2e9b7a4e53a1c8d2f04b3e9a17 ;
         mg:plannedOccursDate "2025-09-22T00:00:00"^^xsd:dateTime .
 
     # ---- B: ONTARIO strip 2028 (live shape; no coupon terms, no interest days) -----------
-    mg3:_InvestmentAccount:8:5991a0e9e8d554844a55751e0dd2a4d3 a gist:InvestmentAccount ;
-        gist:hasPositionIn mg3:_MarketableSecurity:5991a0e9e8d554844a55751e0dd2a4d3 ;
-        gist:isAffectedBy mg3:_Event:8:5991a0e9e8d554844a55751e0dd2a4d3:buy:2025-04-07:3e7b1a9c5d2f4e80b6a1c9d7e3f5a2b8 ;
-        gist:isMemberOf mg3:_InvestmentPortfolio:8 .
+    mg3:_InvestmentAccount:8:CA:5991a0e9e8d554844a55751e0dd2a4d3 a gist:InvestmentAccount ;
+        gist:hasPositionIn mg3:_MarketableSecurity:CA:5991a0e9e8d554844a55751e0dd2a4d3 ;
+        gist:isAffectedBy mg3:_Event:8:CA:5991a0e9e8d554844a55751e0dd2a4d3:buy:2025-04-07:3e7b1a9c5d2f4e80b6a1c9d7e3f5a2b8 .
+    mg3:_SecurityHolding:8:CA:5991a0e9e8d554844a55751e0dd2a4d3 a mg:SecurityHolding ;
+        mg:isHoldingOf mg3:_InvestmentAccount:8:CA:5991a0e9e8d554844a55751e0dd2a4d3 ;
+        mg:isHoldingIn mg3:_InvestmentPortfolio:8 .
 
-    mg3:_Event:8:5991a0e9e8d554844a55751e0dd2a4d3:buy:2025-04-07:3e7b1a9c5d2f4e80b6a1c9d7e3f5a2b8 a gist:Event ;
+    mg3:_Event:8:CA:5991a0e9e8d554844a55751e0dd2a4d3:buy:2025-04-07:3e7b1a9c5d2f4e80b6a1c9d7e3f5a2b8 a gist:Event ;
         gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
         mg:transactionDate "2025-04-07T00:00:00"^^xsd:dateTime ;
         gist:hasMagnitude mg3:_Magnitude:securityShareCount:10000 ,
@@ -228,29 +234,31 @@ mg3:__trades-bonds__ {
         gist:hasUnitOfMeasure mg:_RatioUnit_annualYield ;
         gist:numericValue 0.03031 .
 
-    mg3:_MarketableSecurity:5991a0e9e8d554844a55751e0dd2a4d3
+    mg3:_Event:8:CA:5991a0e9e8d554844a55751e0dd2a4d3:buy:2025-04-07:3e7b1a9c5d2f4e80b6a1c9d7e3f5a2b8 mg:isExecutedOn mg3:_Exchange:cu .
+    mg3:_MarketableSecurity:CA:5991a0e9e8d554844a55751e0dd2a4d3
         skos:note "ONTARIO PROVINCE" ;
-        mg:isListedOn mg3:_Exchange:cu ;
         mg:isIssuedBy mg3:_Organization:ontario-province ;
-        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:5991a0e9e8d554844a55751e0dd2a4d3 .
+        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:CA:5991a0e9e8d554844a55751e0dd2a4d3 .
     mg3:_Organization:ontario-province a gist:Organization ;
         skos:prefLabel "ONTARIO PROVINCE" ;
         gist:name "ONTARIO PROVINCE" .
-    mg3:_BondRepaymentTerms:5991a0e9e8d554844a55751e0dd2a4d3 a mg:BondRepaymentTerms ;
+    mg3:_BondRepaymentTerms:CA:5991a0e9e8d554844a55751e0dd2a4d3 a mg:BondRepaymentTerms ;
         mg:callable false ;
-        mg:specifies mg3:_Event:debtPrincipalRepayment:8:5991a0e9e8d554844a55751e0dd2a4d3 .
-    mg3:_Event:debtPrincipalRepayment:8:5991a0e9e8d554844a55751e0dd2a4d3 a gist:Event , gist:ScheduledEvent ;
+        mg:specifies mg3:_Event:debtPrincipalRepayment:8:CA:5991a0e9e8d554844a55751e0dd2a4d3 .
+    mg3:_Event:debtPrincipalRepayment:8:CA:5991a0e9e8d554844a55751e0dd2a4d3 a gist:Event , gist:ScheduledEvent ;
         gist:isCategorizedBy mgx:_FinancialBusinessEventType_debtPrincipalRepayment ;
         mg:plannedOccursDate "2028-06-02T00:00:00"^^xsd:dateTime .
 
     # ---- C: ENBRIDGE 2033 (live) -- decoy, the activity's gross differs ------------------
-    mg3:_InvestmentAccount:8:d4477f5a63d0b80110526c631ae32b62 a gist:InvestmentAccount ;
-        gist:hasPositionIn mg3:_MarketableSecurity:d4477f5a63d0b80110526c631ae32b62 ;
-        gist:isAffectedBy mg3:_Event:8:d4477f5a63d0b80110526c631ae32b62:buy:2025-03-18:0b6b4e2ba19f3ec45a4e4666ba01d96f ,
-                          mg3:_Event:8:d4477f5a63d0b80110526c631ae32b62:int:2025-03-21T00-00-00 ;
-        gist:isMemberOf mg3:_InvestmentPortfolio:8 .
+    mg3:_InvestmentAccount:8:CA:d4477f5a63d0b80110526c631ae32b62 a gist:InvestmentAccount ;
+        gist:hasPositionIn mg3:_MarketableSecurity:CA:d4477f5a63d0b80110526c631ae32b62 ;
+        gist:isAffectedBy mg3:_Event:8:CA:d4477f5a63d0b80110526c631ae32b62:buy:2025-03-18:0b6b4e2ba19f3ec45a4e4666ba01d96f ,
+                          mg3:_Event:8:CA:d4477f5a63d0b80110526c631ae32b62:int:2025-03-21T00-00-00 .
+    mg3:_SecurityHolding:8:CA:d4477f5a63d0b80110526c631ae32b62 a mg:SecurityHolding ;
+        mg:isHoldingOf mg3:_InvestmentAccount:8:CA:d4477f5a63d0b80110526c631ae32b62 ;
+        mg:isHoldingIn mg3:_InvestmentPortfolio:8 .
 
-    mg3:_Event:8:d4477f5a63d0b80110526c631ae32b62:buy:2025-03-18:0b6b4e2ba19f3ec45a4e4666ba01d96f a gist:Event ;
+    mg3:_Event:8:CA:d4477f5a63d0b80110526c631ae32b62:buy:2025-03-18:0b6b4e2ba19f3ec45a4e4666ba01d96f a gist:Event ;
         gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
         mg:transactionDate "2025-03-18T00:00:00"^^xsd:dateTime ;
         gist:hasMagnitude mg3:_Magnitude:securityShareCount:15000 ,
@@ -281,39 +289,41 @@ mg3:__trades-bonds__ {
         gist:hasUnitOfMeasure gistd:_UnitOfMeasure_day ;
         gist:numericValue 179 .
 
-    mg3:_MarketableSecurity:d4477f5a63d0b80110526c631ae32b62
+    mg3:_Event:8:CA:d4477f5a63d0b80110526c631ae32b62:buy:2025-03-18:0b6b4e2ba19f3ec45a4e4666ba01d96f mg:isExecutedOn mg3:_Exchange:cu .
+    mg3:_MarketableSecurity:CA:d4477f5a63d0b80110526c631ae32b62
         skos:note "ENBRIDGE INC" ;
-        mg:isListedOn mg3:_Exchange:cu ;
         mg:isIssuedBy mg3:_Organization:enbridge-inc ;
-        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:d4477f5a63d0b80110526c631ae32b62 ;
-        mg:hasInterestPaymentTerms mg3:_CouponPaymentTerms:d4477f5a63d0b80110526c631ae32b62 .
+        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:CA:d4477f5a63d0b80110526c631ae32b62 ;
+        mg:hasInterestPaymentTerms mg3:_CouponPaymentTerms:CA:d4477f5a63d0b80110526c631ae32b62 .
     mg3:_Organization:enbridge-inc a gist:Organization ;
         skos:prefLabel "ENBRIDGE INC" ;
         gist:name "ENBRIDGE INC" .
-    mg3:_BondRepaymentTerms:d4477f5a63d0b80110526c631ae32b62 a mg:BondRepaymentTerms ;
+    mg3:_BondRepaymentTerms:CA:d4477f5a63d0b80110526c631ae32b62 a mg:BondRepaymentTerms ;
         mg:callable true ;
-        mg:specifies mg3:_Event:debtPrincipalRepayment:8:d4477f5a63d0b80110526c631ae32b62 .
-    mg3:_Event:debtPrincipalRepayment:8:d4477f5a63d0b80110526c631ae32b62 a gist:Event , gist:ScheduledEvent ;
+        mg:specifies mg3:_Event:debtPrincipalRepayment:8:CA:d4477f5a63d0b80110526c631ae32b62 .
+    mg3:_Event:debtPrincipalRepayment:8:CA:d4477f5a63d0b80110526c631ae32b62 a gist:Event , gist:ScheduledEvent ;
         gist:isCategorizedBy mgx:_FinancialBusinessEventType_debtPrincipalRepayment ;
         mg:plannedOccursDate "2033-09-21T00:00:00"^^xsd:dateTime .
-    mg3:_CouponPaymentTerms:d4477f5a63d0b80110526c631ae32b62
-        mg:specifies mg3:_CouponPaymentSchedule:d4477f5a63d0b80110526c631ae32b62 ;
+    mg3:_CouponPaymentTerms:CA:d4477f5a63d0b80110526c631ae32b62
+        mg:specifies mg3:_CouponPaymentSchedule:CA:d4477f5a63d0b80110526c631ae32b62 ;
         mg:couponPaymentMonthNumber 3 , 9 ;
         mg:couponPaymentMonthDayNumber 21 .
-    mg3:_CouponPaymentSchedule:d4477f5a63d0b80110526c631ae32b62 a mg:CouponPaymentSchedule .
-    mg3:_Event:8:d4477f5a63d0b80110526c631ae32b62:int:2025-03-21T00-00-00 a gist:ScheduledEvent ;
+    mg3:_CouponPaymentSchedule:CA:d4477f5a63d0b80110526c631ae32b62 a mg:CouponPaymentSchedule .
+    mg3:_Event:8:CA:d4477f5a63d0b80110526c631ae32b62:int:2025-03-21T00-00-00 a gist:ScheduledEvent ;
         skos:prefLabel "First coupon after purchase: 2025-03-21" ;
         gist:isCategorizedBy mgx:_FinancialBusinessEventType_interestRemittance ;
-        gist:isMemberOf mg3:_CouponPaymentSchedule:d4477f5a63d0b80110526c631ae32b62 ;
+        gist:isMemberOf mg3:_CouponPaymentSchedule:CA:d4477f5a63d0b80110526c631ae32b62 ;
         mg:plannedOccursDate "2025-03-21T00:00:00"^^xsd:dateTime .
 
     # ---- D: ROYAL BANK 2035 (live) -- decoy, the holding's description omits the issuer --
-    mg3:_InvestmentAccount:8:83b12bcb0f597b4dfd1f60188edf061f a gist:InvestmentAccount ;
-        gist:hasPositionIn mg3:_MarketableSecurity:83b12bcb0f597b4dfd1f60188edf061f ;
-        gist:isAffectedBy mg3:_Event:8:83b12bcb0f597b4dfd1f60188edf061f:buy:2025-03-18:1750008d9e1d7bba9a70bf62a660d001 ;
-        gist:isMemberOf mg3:_InvestmentPortfolio:8 .
+    mg3:_InvestmentAccount:8:CA:83b12bcb0f597b4dfd1f60188edf061f a gist:InvestmentAccount ;
+        gist:hasPositionIn mg3:_MarketableSecurity:CA:83b12bcb0f597b4dfd1f60188edf061f ;
+        gist:isAffectedBy mg3:_Event:8:CA:83b12bcb0f597b4dfd1f60188edf061f:buy:2025-03-18:1750008d9e1d7bba9a70bf62a660d001 .
+    mg3:_SecurityHolding:8:CA:83b12bcb0f597b4dfd1f60188edf061f a mg:SecurityHolding ;
+        mg:isHoldingOf mg3:_InvestmentAccount:8:CA:83b12bcb0f597b4dfd1f60188edf061f ;
+        mg:isHoldingIn mg3:_InvestmentPortfolio:8 .
 
-    mg3:_Event:8:83b12bcb0f597b4dfd1f60188edf061f:buy:2025-03-18:1750008d9e1d7bba9a70bf62a660d001 a gist:Event ;
+    mg3:_Event:8:CA:83b12bcb0f597b4dfd1f60188edf061f:buy:2025-03-18:1750008d9e1d7bba9a70bf62a660d001 a gist:Event ;
         gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
         mg:transactionDate "2025-03-18T00:00:00"^^xsd:dateTime ;
         gist:hasMagnitude mg3:_Magnitude:securityShareCount:15000 ,
@@ -339,29 +349,31 @@ mg3:__trades-bonds__ {
         gist:hasUnitOfMeasure mg:_RatioUnit_annualYield ;
         gist:numericValue 0.03998 .
 
-    mg3:_MarketableSecurity:83b12bcb0f597b4dfd1f60188edf061f
+    mg3:_Event:8:CA:83b12bcb0f597b4dfd1f60188edf061f:buy:2025-03-18:1750008d9e1d7bba9a70bf62a660d001 mg:isExecutedOn mg3:_Exchange:cu .
+    mg3:_MarketableSecurity:CA:83b12bcb0f597b4dfd1f60188edf061f
         skos:note "ROYAL BANK OF CANADA" ;
-        mg:isListedOn mg3:_Exchange:cu ;
         mg:isIssuedBy mg3:_Organization:royal-bank-of-canada ;
-        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:83b12bcb0f597b4dfd1f60188edf061f .
+        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:CA:83b12bcb0f597b4dfd1f60188edf061f .
     mg3:_Organization:royal-bank-of-canada a gist:Organization ;
         skos:prefLabel "ROYAL BANK OF CANADA" ;
         gist:name "ROYAL BANK OF CANADA" .
-    mg3:_BondRepaymentTerms:83b12bcb0f597b4dfd1f60188edf061f a mg:BondRepaymentTerms ;
+    mg3:_BondRepaymentTerms:CA:83b12bcb0f597b4dfd1f60188edf061f a mg:BondRepaymentTerms ;
         mg:callable true ;
-        mg:specifies mg3:_Event:debtPrincipalRepayment:8:83b12bcb0f597b4dfd1f60188edf061f .
-    mg3:_Event:debtPrincipalRepayment:8:83b12bcb0f597b4dfd1f60188edf061f a gist:Event , gist:ScheduledEvent ;
+        mg:specifies mg3:_Event:debtPrincipalRepayment:8:CA:83b12bcb0f597b4dfd1f60188edf061f .
+    mg3:_Event:debtPrincipalRepayment:8:CA:83b12bcb0f597b4dfd1f60188edf061f a gist:Event , gist:ScheduledEvent ;
         gist:isCategorizedBy mgx:_FinancialBusinessEventType_debtPrincipalRepayment ;
         mg:plannedOccursDate "2035-10-17T00:00:00"^^xsd:dateTime .
 
     # ---- E: APPLE 2030, USD --------------------------------------------------------------
-    mg3:_InvestmentAccount:8:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b a gist:InvestmentAccount ;
-        gist:hasPositionIn mg3:_MarketableSecurity:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b ;
-        gist:isAffectedBy mg3:_Event:8:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b:buy:2025-05-12:5d8a2c4e6f1b3d7a9c0e2f4b6d8a1c3e ,
-                          mg3:_Event:8:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b:int:2025-08-20T00-00-00 ;
-        gist:isMemberOf mg3:_InvestmentPortfolio:8 .
+    mg3:_InvestmentAccount:8:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b a gist:InvestmentAccount ;
+        gist:hasPositionIn mg3:_MarketableSecurity:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b ;
+        gist:isAffectedBy mg3:_Event:8:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b:buy:2025-05-12:5d8a2c4e6f1b3d7a9c0e2f4b6d8a1c3e ,
+                          mg3:_Event:8:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b:int:2025-08-20T00-00-00 .
+    mg3:_SecurityHolding:8:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b a mg:SecurityHolding ;
+        mg:isHoldingOf mg3:_InvestmentAccount:8:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b ;
+        mg:isHoldingIn mg3:_InvestmentPortfolio:8 .
 
-    mg3:_Event:8:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b:buy:2025-05-12:5d8a2c4e6f1b3d7a9c0e2f4b6d8a1c3e a gist:Event ;
+    mg3:_Event:8:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b:buy:2025-05-12:5d8a2c4e6f1b3d7a9c0e2f4b6d8a1c3e a gist:Event ;
         gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
         mg:transactionDate "2025-05-12T00:00:00"^^xsd:dateTime ;
         gist:hasMagnitude mg3:_Magnitude:securityShareCount:10000 ,
@@ -396,30 +408,30 @@ mg3:__trades-bonds__ {
         gist:hasUnitOfMeasure gistd:_UnitOfMeasure_day ;
         gist:numericValue 82 .
 
-    mg3:_MarketableSecurity:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b
+    mg3:_Event:8:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b:buy:2025-05-12:5d8a2c4e6f1b3d7a9c0e2f4b6d8a1c3e mg:isExecutedOn mg3:_Exchange:us .
+    mg3:_MarketableSecurity:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b
         skos:note "APPLE INC" ;
-        mg:isListedOn mg3:_Exchange:us ;
         mg:isIssuedBy mg3:_Organization:apple-inc ;
-        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b ;
-        mg:hasInterestPaymentTerms mg3:_CouponPaymentTerms:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b .
+        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b ;
+        mg:hasInterestPaymentTerms mg3:_CouponPaymentTerms:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b .
     mg3:_Organization:apple-inc a gist:Organization ;
         skos:prefLabel "APPLE INC" ;
         gist:name "APPLE INC" .
-    mg3:_BondRepaymentTerms:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b a mg:BondRepaymentTerms ;
+    mg3:_BondRepaymentTerms:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b a mg:BondRepaymentTerms ;
         mg:callable true ;
-        mg:specifies mg3:_Event:debtPrincipalRepayment:8:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b .
-    mg3:_Event:debtPrincipalRepayment:8:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b a gist:Event , gist:ScheduledEvent ;
+        mg:specifies mg3:_Event:debtPrincipalRepayment:8:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b .
+    mg3:_Event:debtPrincipalRepayment:8:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b a gist:Event , gist:ScheduledEvent ;
         gist:isCategorizedBy mgx:_FinancialBusinessEventType_debtPrincipalRepayment ;
         mg:plannedOccursDate "2030-08-20T00:00:00"^^xsd:dateTime .
-    mg3:_CouponPaymentTerms:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b
-        mg:specifies mg3:_CouponPaymentSchedule:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b ;
+    mg3:_CouponPaymentTerms:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b
+        mg:specifies mg3:_CouponPaymentSchedule:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b ;
         mg:couponPaymentMonthNumber 2 , 8 ;
         mg:couponPaymentMonthDayNumber 20 .
-    mg3:_CouponPaymentSchedule:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b a mg:CouponPaymentSchedule .
-    mg3:_Event:8:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b:int:2025-08-20T00-00-00 a gist:ScheduledEvent ;
+    mg3:_CouponPaymentSchedule:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b a mg:CouponPaymentSchedule .
+    mg3:_Event:8:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b:int:2025-08-20T00-00-00 a gist:ScheduledEvent ;
         skos:prefLabel "First coupon after purchase: 2025-08-20" ;
         gist:isCategorizedBy mgx:_FinancialBusinessEventType_interestRemittance ;
-        gist:isMemberOf mg3:_CouponPaymentSchedule:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b ;
+        gist:isMemberOf mg3:_CouponPaymentSchedule:US:9b2e4f6a1c3d5e7f8a0b2c4d6e8f1a3b ;
         mg:plannedOccursDate "2025-08-20T00:00:00"^^xsd:dateTime .
 }
 
@@ -432,38 +444,40 @@ mg3:__current__ {
     mg3:_ID:InvestmentPortfolio:51590610 a gist:ID ; gist:uniqueText "51590610" .
 
     # ---- A: COGECO 2031 (live), held once, bought twice -----------------------------------
-    mg3:_InvestmentAccount:51590610:5DDZBS0 a gist:InvestmentAccount ;
+    mg3:_InvestmentAccount:51590610:CA:5DDZBS0 a gist:InvestmentAccount ;
         skos:prefLabel "DI:5DDZBS0" ;
-        gist:hasPositionIn mg3:_MarketableSecurity:5DDZBS0 ;
-        gist:isMemberOf mg3:_InvestmentPortfolio:51590610 ;
-        gist:isAffectedBy mg3:_Event:51590610:5DDZBS0:buy:2025-03-18:CAD:- ,
-                          mg3:_Event:51590610:5DDZBS0:buy:2025-06-02:CAD:- .
-    mg3:_MarketableSecurity:5DDZBS0 a mg:Bond , mg:MarketableSecurity ;
+        gist:hasPositionIn mg3:_MarketableSecurity:CA:5DDZBS0 ;
+        gist:isAffectedBy mg3:_Event:51590610:CA:5DDZBS0:buy:2025-03-18:CAD:- ,
+                          mg3:_Event:51590610:CA:5DDZBS0:buy:2025-06-02:CAD:- .
+    mg3:_SecurityHolding:51590610:CA:5DDZBS0 a mg:SecurityHolding ;
+        mg:isHoldingOf mg3:_InvestmentAccount:51590610:CA:5DDZBS0 ;
+        mg:isHoldingIn mg3:_InvestmentPortfolio:51590610 .
+    mg3:_MarketableSecurity:CA:5DDZBS0 a mg:Bond , mg:MarketableSecurity ;
         skos:prefLabel "5DDZBS0" ;
         gist:description "COGECO COMMUNICATIONS INC SENIOR UNSEC NOTES DUE 09/22/2031  INT  2.991%" ;
         gist:isCategorizedBy mgx:_MarketableSecurityType_bond ;
-        gist:isIdentifiedBy mg3:_ID:marketableSecurity:5DDZBS0 ;
-        mg:hasInterestPaymentTerms mg3:_CouponPaymentTerms:5DDZBS0 ;
-        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:5DDZBS0 .
-    mg3:_ID:marketableSecurity:5DDZBS0 a gist:ID ;
+        gist:isIdentifiedBy mg3:_ID:marketableSecurity:CA:5DDZBS0 ;
+        mg:hasInterestPaymentTerms mg3:_CouponPaymentTerms:CA:5DDZBS0 ;
+        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:CA:5DDZBS0 .
+    mg3:_ID:marketableSecurity:CA:5DDZBS0 a gist:ID ;
         gist:isCategorizedBy mgx:_MarketableSecurityIdentifierType_qtBondId ;
         gist:uniqueText "5DDZBS0" .
-    mg3:_BondRepaymentTerms:5DDZBS0 a mg:BondRepaymentTerms ;
-        mg:specifies mg3:_Event:debtPrincipalRepayment:51590610:5DDZBS0 .
-    mg3:_Event:debtPrincipalRepayment:51590610:5DDZBS0 a gist:Event , gist:ScheduledEvent ;
+    mg3:_BondRepaymentTerms:CA:5DDZBS0 a mg:BondRepaymentTerms ;
+        mg:specifies mg3:_Event:debtPrincipalRepayment:51590610:CA:5DDZBS0 .
+    mg3:_Event:debtPrincipalRepayment:51590610:CA:5DDZBS0 a gist:Event , gist:ScheduledEvent ;
         gist:isCategorizedBy mgx:_FinancialBusinessEventType_debtPrincipalRepayment ;
         mg:plannedOccursDate "2031-09-22T00:00:00"^^xsd:dateTime .
-    mg3:_CouponPaymentTerms:5DDZBS0 a mg:CouponPaymentTerms ;
+    mg3:_CouponPaymentTerms:CA:5DDZBS0 a mg:CouponPaymentTerms ;
         skos:prefLabel "5DDZBS0 2.991%" ;
-        mg:specifies mg3:_CouponPaymentSchedule:5DDZBS0 .
-    mg3:_CouponPaymentSchedule:5DDZBS0 a mg:CouponPaymentSchedule .
+        mg:specifies mg3:_CouponPaymentSchedule:CA:5DDZBS0 .
+    mg3:_CouponPaymentSchedule:CA:5DDZBS0 a mg:CouponPaymentSchedule .
 
-    mg3:_Event:51590610:5DDZBS0:buy:2025-03-18:CAD:- a gist:Event ;
+    mg3:_Event:51590610:CA:5DDZBS0:buy:2025-03-18:CAD:- a gist:Event ;
         gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
         mg:transactionDate "2025-03-18T00:00:00"^^xsd:dateTime ;
         gist:hasMagnitude mg3:_Magnitude:securityTradeGrossAmount:cad:4735.2 ,
                           mg3:_Magnitude:securityTradeNetAmount:cad:4808.13 .
-    mg3:_Event:51590610:5DDZBS0:buy:2025-06-02:CAD:- a gist:Event ;
+    mg3:_Event:51590610:CA:5DDZBS0:buy:2025-06-02:CAD:- a gist:Event ;
         gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
         mg:transactionDate "2025-06-02T00:00:00"^^xsd:dateTime ;
         gist:hasMagnitude mg3:_Magnitude:securityTradeGrossAmount:cad:4756.0 ,
@@ -486,22 +500,24 @@ mg3:__current__ {
         gist:numericValue 4785.51 .
 
     # ---- B: ONTARIO strip 2028 -- no coupon terms ---------------------------------------
-    mg3:_InvestmentAccount:51590610:5CPNON8 a gist:InvestmentAccount ;
-        gist:hasPositionIn mg3:_MarketableSecurity:5CPNON8 ;
-        gist:isMemberOf mg3:_InvestmentPortfolio:51590610 ;
-        gist:isAffectedBy mg3:_Event:51590610:5CPNON8:buy:2025-04-07:CAD:- .
-    mg3:_MarketableSecurity:5CPNON8 a mg:Bond , mg:MarketableSecurity ;
+    mg3:_InvestmentAccount:51590610:CA:5CPNON8 a gist:InvestmentAccount ;
+        gist:hasPositionIn mg3:_MarketableSecurity:CA:5CPNON8 ;
+        gist:isAffectedBy mg3:_Event:51590610:CA:5CPNON8:buy:2025-04-07:CAD:- .
+    mg3:_SecurityHolding:51590610:CA:5CPNON8 a mg:SecurityHolding ;
+        mg:isHoldingOf mg3:_InvestmentAccount:51590610:CA:5CPNON8 ;
+        mg:isHoldingIn mg3:_InvestmentPortfolio:51590610 .
+    mg3:_MarketableSecurity:CA:5CPNON8 a mg:Bond , mg:MarketableSecurity ;
         gist:description "CPN ONTARIO PROVINCE BK ENTRY DUE 06/02/2028" ;
         gist:isCategorizedBy mgx:_MarketableSecurityType_bond ;
-        gist:isIdentifiedBy mg3:_ID:marketableSecurity:5CPNON8 ;
-        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:5CPNON8 .
-    mg3:_ID:marketableSecurity:5CPNON8 a gist:ID ; gist:uniqueText "5CPNON8" .
-    mg3:_BondRepaymentTerms:5CPNON8 a mg:BondRepaymentTerms ;
-        mg:specifies mg3:_Event:debtPrincipalRepayment:51590610:5CPNON8 .
-    mg3:_Event:debtPrincipalRepayment:51590610:5CPNON8 a gist:Event , gist:ScheduledEvent ;
+        gist:isIdentifiedBy mg3:_ID:marketableSecurity:CA:5CPNON8 ;
+        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:CA:5CPNON8 .
+    mg3:_ID:marketableSecurity:CA:5CPNON8 a gist:ID ; gist:uniqueText "5CPNON8" .
+    mg3:_BondRepaymentTerms:CA:5CPNON8 a mg:BondRepaymentTerms ;
+        mg:specifies mg3:_Event:debtPrincipalRepayment:51590610:CA:5CPNON8 .
+    mg3:_Event:debtPrincipalRepayment:51590610:CA:5CPNON8 a gist:Event , gist:ScheduledEvent ;
         gist:isCategorizedBy mgx:_FinancialBusinessEventType_debtPrincipalRepayment ;
         mg:plannedOccursDate "2028-06-02T00:00:00"^^xsd:dateTime .
-    mg3:_Event:51590610:5CPNON8:buy:2025-04-07:CAD:- a gist:Event ;
+    mg3:_Event:51590610:CA:5CPNON8:buy:2025-04-07:CAD:- a gist:Event ;
         gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
         mg:transactionDate "2025-04-07T00:00:00"^^xsd:dateTime ;
         gist:hasMagnitude mg3:_Magnitude:securityTradeGrossAmount:cad:9187.5 ,
@@ -516,22 +532,24 @@ mg3:__current__ {
         gist:numericValue 9187.5 .
 
     # ---- C: ENBRIDGE 2033 -- decoy: gross 14031.01, the trade says 14031.0 ----------------
-    mg3:_InvestmentAccount:51590610:5CQRSE4 a gist:InvestmentAccount ;
-        gist:hasPositionIn mg3:_MarketableSecurity:5CQRSE4 ;
-        gist:isMemberOf mg3:_InvestmentPortfolio:51590610 ;
-        gist:isAffectedBy mg3:_Event:51590610:5CQRSE4:buy:2025-03-18:CAD:- .
-    mg3:_MarketableSecurity:5CQRSE4 a mg:Bond , mg:MarketableSecurity ;
+    mg3:_InvestmentAccount:51590610:CA:5CQRSE4 a gist:InvestmentAccount ;
+        gist:hasPositionIn mg3:_MarketableSecurity:CA:5CQRSE4 ;
+        gist:isAffectedBy mg3:_Event:51590610:CA:5CQRSE4:buy:2025-03-18:CAD:- .
+    mg3:_SecurityHolding:51590610:CA:5CQRSE4 a mg:SecurityHolding ;
+        mg:isHoldingOf mg3:_InvestmentAccount:51590610:CA:5CQRSE4 ;
+        mg:isHoldingIn mg3:_InvestmentPortfolio:51590610 .
+    mg3:_MarketableSecurity:CA:5CQRSE4 a mg:Bond , mg:MarketableSecurity ;
         gist:description "ENBRIDGE INC SR UNSECURED MTN DUE 09/21/2033  INT  3.100%" ;
         gist:isCategorizedBy mgx:_MarketableSecurityType_bond ;
-        gist:isIdentifiedBy mg3:_ID:marketableSecurity:5CQRSE4 ;
-        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:5CQRSE4 .
-    mg3:_ID:marketableSecurity:5CQRSE4 a gist:ID ; gist:uniqueText "5CQRSE4" .
-    mg3:_BondRepaymentTerms:5CQRSE4 a mg:BondRepaymentTerms ;
-        mg:specifies mg3:_Event:debtPrincipalRepayment:51590610:5CQRSE4 .
-    mg3:_Event:debtPrincipalRepayment:51590610:5CQRSE4 a gist:Event , gist:ScheduledEvent ;
+        gist:isIdentifiedBy mg3:_ID:marketableSecurity:CA:5CQRSE4 ;
+        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:CA:5CQRSE4 .
+    mg3:_ID:marketableSecurity:CA:5CQRSE4 a gist:ID ; gist:uniqueText "5CQRSE4" .
+    mg3:_BondRepaymentTerms:CA:5CQRSE4 a mg:BondRepaymentTerms ;
+        mg:specifies mg3:_Event:debtPrincipalRepayment:51590610:CA:5CQRSE4 .
+    mg3:_Event:debtPrincipalRepayment:51590610:CA:5CQRSE4 a gist:Event , gist:ScheduledEvent ;
         gist:isCategorizedBy mgx:_FinancialBusinessEventType_debtPrincipalRepayment ;
         mg:plannedOccursDate "2033-09-21T00:00:00"^^xsd:dateTime .
-    mg3:_Event:51590610:5CQRSE4:buy:2025-03-18:CAD:- a gist:Event ;
+    mg3:_Event:51590610:CA:5CQRSE4:buy:2025-03-18:CAD:- a gist:Event ;
         gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
         mg:transactionDate "2025-03-18T00:00:00"^^xsd:dateTime ;
         gist:hasMagnitude mg3:_Magnitude:securityTradeGrossAmount:cad:14031.01 ,
@@ -546,22 +564,24 @@ mg3:__current__ {
         gist:numericValue 14259.04 .
 
     # ---- D: ROYAL BANK 2035 -- decoy: amounts agree, description says "RBC" --------------
-    mg3:_InvestmentAccount:51590610:5DRBCF2 a gist:InvestmentAccount ;
-        gist:hasPositionIn mg3:_MarketableSecurity:5DRBCF2 ;
-        gist:isMemberOf mg3:_InvestmentPortfolio:51590610 ;
-        gist:isAffectedBy mg3:_Event:51590610:5DRBCF2:buy:2025-03-18:CAD:- .
-    mg3:_MarketableSecurity:5DRBCF2 a mg:Bond , mg:MarketableSecurity ;
+    mg3:_InvestmentAccount:51590610:CA:5DRBCF2 a gist:InvestmentAccount ;
+        gist:hasPositionIn mg3:_MarketableSecurity:CA:5DRBCF2 ;
+        gist:isAffectedBy mg3:_Event:51590610:CA:5DRBCF2:buy:2025-03-18:CAD:- .
+    mg3:_SecurityHolding:51590610:CA:5DRBCF2 a mg:SecurityHolding ;
+        mg:isHoldingOf mg3:_InvestmentAccount:51590610:CA:5DRBCF2 ;
+        mg:isHoldingIn mg3:_InvestmentPortfolio:51590610 .
+    mg3:_MarketableSecurity:CA:5DRBCF2 a mg:Bond , mg:MarketableSecurity ;
         gist:description "RBC SR UNSECURED FIXED TO FLOAT DUE 10/17/2035  INT  4.464%" ;
         gist:isCategorizedBy mgx:_MarketableSecurityType_bond ;
-        gist:isIdentifiedBy mg3:_ID:marketableSecurity:5DRBCF2 ;
-        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:5DRBCF2 .
-    mg3:_ID:marketableSecurity:5DRBCF2 a gist:ID ; gist:uniqueText "5DRBCF2" .
-    mg3:_BondRepaymentTerms:5DRBCF2 a mg:BondRepaymentTerms ;
-        mg:specifies mg3:_Event:debtPrincipalRepayment:51590610:5DRBCF2 .
-    mg3:_Event:debtPrincipalRepayment:51590610:5DRBCF2 a gist:Event , gist:ScheduledEvent ;
+        gist:isIdentifiedBy mg3:_ID:marketableSecurity:CA:5DRBCF2 ;
+        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:CA:5DRBCF2 .
+    mg3:_ID:marketableSecurity:CA:5DRBCF2 a gist:ID ; gist:uniqueText "5DRBCF2" .
+    mg3:_BondRepaymentTerms:CA:5DRBCF2 a mg:BondRepaymentTerms ;
+        mg:specifies mg3:_Event:debtPrincipalRepayment:51590610:CA:5DRBCF2 .
+    mg3:_Event:debtPrincipalRepayment:51590610:CA:5DRBCF2 a gist:Event , gist:ScheduledEvent ;
         gist:isCategorizedBy mgx:_FinancialBusinessEventType_debtPrincipalRepayment ;
         mg:plannedOccursDate "2035-10-17T00:00:00"^^xsd:dateTime .
-    mg3:_Event:51590610:5DRBCF2:buy:2025-03-18:CAD:- a gist:Event ;
+    mg3:_Event:51590610:CA:5DRBCF2:buy:2025-03-18:CAD:- a gist:Event ;
         gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
         mg:transactionDate "2025-03-18T00:00:00"^^xsd:dateTime ;
         gist:hasMagnitude mg3:_Magnitude:securityTradeGrossAmount:cad:15550.8 ,
@@ -581,24 +601,26 @@ mg3:__current__ {
     mg3:_ID:InvestmentPortfolio:53349655 a gist:ID ; gist:uniqueText "53349655" .
 
     # ---- E: APPLE 2030, USD; the symbol carries a venue suffix ---------------------------
-    mg3:_InvestmentAccount:53349655:037833DX5 a gist:InvestmentAccount ;
-        gist:hasPositionIn mg3:_MarketableSecurity:037833DX5 ;
-        gist:isMemberOf mg3:_InvestmentPortfolio:53349655 ;
-        gist:isAffectedBy mg3:_Event:53349655:037833DX5:buy:2025-05-12:USD:- .
-    mg3:_MarketableSecurity:037833DX5 a mg:Bond , mg:MarketableSecurity ;
+    mg3:_InvestmentAccount:53349655:US:037833DX5 a gist:InvestmentAccount ;
+        gist:hasPositionIn mg3:_MarketableSecurity:US:037833DX5 ;
+        gist:isAffectedBy mg3:_Event:53349655:US:037833DX5:buy:2025-05-12:USD:- .
+    mg3:_SecurityHolding:53349655:US:037833DX5 a mg:SecurityHolding ;
+        mg:isHoldingOf mg3:_InvestmentAccount:53349655:US:037833DX5 ;
+        mg:isHoldingIn mg3:_InvestmentPortfolio:53349655 .
+    mg3:_MarketableSecurity:US:037833DX5 a mg:Bond , mg:MarketableSecurity ;
         gist:description "APPLE INC SR UNSECURED DUE 08/20/2030  INT  1.650%" ;
         gist:isCategorizedBy mgx:_MarketableSecurityType_bond ;
-        gist:isIdentifiedBy mg3:_ID:marketableSecurity:037833DX5 ;
-        mg:hasInterestPaymentTerms mg3:_CouponPaymentTerms:037833DX5 ;
-        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:037833DX5 .
-    mg3:_ID:marketableSecurity:037833DX5 a gist:ID ; gist:uniqueText "037833dx5.U" .
-    mg3:_BondRepaymentTerms:037833DX5 a mg:BondRepaymentTerms ;
-        mg:specifies mg3:_Event:debtPrincipalRepayment:53349655:037833DX5 .
-    mg3:_Event:debtPrincipalRepayment:53349655:037833DX5 a gist:Event , gist:ScheduledEvent ;
+        gist:isIdentifiedBy mg3:_ID:marketableSecurity:US:037833DX5 ;
+        mg:hasInterestPaymentTerms mg3:_CouponPaymentTerms:US:037833DX5 ;
+        mg:hasRepaymentTerms mg3:_BondRepaymentTerms:US:037833DX5 .
+    mg3:_ID:marketableSecurity:US:037833DX5 a gist:ID ; gist:uniqueText "037833dx5.U" .
+    mg3:_BondRepaymentTerms:US:037833DX5 a mg:BondRepaymentTerms ;
+        mg:specifies mg3:_Event:debtPrincipalRepayment:53349655:US:037833DX5 .
+    mg3:_Event:debtPrincipalRepayment:53349655:US:037833DX5 a gist:Event , gist:ScheduledEvent ;
         gist:isCategorizedBy mgx:_FinancialBusinessEventType_debtPrincipalRepayment ;
         mg:plannedOccursDate "2030-08-20T00:00:00"^^xsd:dateTime .
-    mg3:_CouponPaymentTerms:037833DX5 a mg:CouponPaymentTerms .
-    mg3:_Event:53349655:037833DX5:buy:2025-05-12:USD:- a gist:Event ;
+    mg3:_CouponPaymentTerms:US:037833DX5 a mg:CouponPaymentTerms .
+    mg3:_Event:53349655:US:037833DX5:buy:2025-05-12:USD:- a gist:Event ;
         gist:isCategorizedBy gist:_FinancialBusinessEventType_purchase ;
         mg:transactionDate "2025-05-12T00:00:00"^^xsd:dateTime ;
         gist:hasMagnitude mg3:_Magnitude:securityTradeGrossAmount:usd:9612.0 ,

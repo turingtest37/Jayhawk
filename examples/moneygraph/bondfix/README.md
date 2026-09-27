@@ -4,8 +4,9 @@ moneygraph's `bin/fix-missing-bond-data.sh` runs one ~200-line SPARQL update,
 `queries/fix-missing-bond-data.rq`. It pairs each bond **trade** (parsed from trade-confirmation
 text into `__trades-bonds__`) with the **holding and purchase activity** it corresponds to in
 `__current__`. It then copies onto the holding the facts only the confirmation carries:
-exchange, issuer, callable flag, coupon terms, first coupon, yield to maturity, days of
-interest paid. The output goes to `__securities__extra` and `__activities__extra`.
+issuer, callable flag, coupon terms, first coupon, yield to maturity, days of
+interest paid. (It also copied the exchange, until moneygraph recognised that as the venue
+the trade was executed on -- a bond is listed nowhere.) The output goes to `__securities__extra` and `__activities__extra`.
 
 This directory is where that update becomes an ordered `jhp:RuleSet` of small rules, held to
 **the same output, quad for quad**. The plan and its reasoning are in the Jayhawk
@@ -83,7 +84,7 @@ they write exactly `expected.nq`: 43 + 35 quads, none missing and none extra.
 | # | Rule | Reads | Writes | Stands for, in the query |
 |---|---|---|---|---|
 | 1 | MatchTradeToHolding | trades, holdings, units | work | the join and its FILTERs |
-| 2 | ListingAndIssuer | work, trades, holdings | securities | exchange, issuer, issuer's name |
+| 2 | ListingAndIssuer | work, trades, holdings | securities | issuer, issuer's name |
 | 3 | Callable | work, trades | securities | the callable flag |
 | 4 | CouponTerms | work, holdings | securities | the OPTIONAL on the holding's coupon terms |
 | 5 | CouponMonths | work, holdings, trades | securities | both coupon OPTIONALs together |
@@ -153,3 +154,14 @@ The issuer's label is re-tested against the description in rule 2 for the same r
 | 5 | `rerun_rules!`, and firings that record their rule set | after one input changed, a plain re-run left 15 stale triples |
 | 6 | the default endpoint is read from the environment at load | `JAYHAWK_SPARQL_SERVICE` was baked in at precompile, so moneygraph's script ran against the Jayhawk test store instead of its compute store |
 | live | a part's triples emitted connected, not in text order | the first run on live data (4,301 trade + 27,112 holding triples): MatchTradeToHolding ran over 90 s and hit the client's 30 s timeout in text order, 1.2 s connected. Output then equalled the oracle's over the same inputs, 398 + 264 triples |
+
+## 2026-09-27: moneygraph's listing prefix and `mg:SecurityHolding`
+
+moneygraph now puts a listing before every symbol in an IRI -- for a bond, its market (`CA`,
+`US`) from its currency -- and ties a security account to its portfolio through an
+`mg:SecurityHolding` (`mg:isHoldingOf`, `mg:isHoldingIn`) instead of `gist:isMemberOf`. A trade's
+`EX` venue moved from the security (`mg:isListedOn`) to the trade (`mg:isExecutedOn`). The fixture's
+IRIs and shapes follow, the oracle and the rules match the holding and mint
+`_CouponPaymentSchedule:{listing}:{symbol}` and `_Event:{account}:{listing}:{symbol}:...`, and
+`expected.nq` was regenerated from the oracle: 40 securities quads (the three `isListedOn` gone),
+35 activities quads.

@@ -2087,7 +2087,7 @@ ex:s2 ex:p ex:plain .
         @test isempty(setdiff(quads(ACT), quads(XACT)))
         @test isempty(setdiff(quads(XACT), quads(ACT)))
         # and the golden is not vacuous: both decoys are absent, every real match is present
-        @test length(quads(XSEC)) == 43 && length(quads(XACT)) == 35
+        @test length(quads(XSEC)) == 40 && length(quads(XACT)) == 35
         subjects = join(first.(collect(quads(SEC))), " ")
         @test !occursin("5CQRSE4", subjects)    # C: gross off by a cent
         @test !occursin("5DRBCF2", subjects)    # D: description never names the issuer
@@ -2202,7 +2202,7 @@ ex:s2 ex:p ex:plain .
         end
 
         # The input changes: A2's purchase no longer matches its trade.
-        A2 = "$(MG3)_Event:51590610:5DDZBS0:buy:2025-06-02:CAD:-"
+        A2 = "$(MG3)_Event:51590610:CA:5DDZBS0:buy:2025-06-02:CAD:-"
         GROSS = "$(MG3)_Magnitude:securityTradeGrossAmount:cad:4756"
         Jayhawk.update!("""
             DELETE DATA { GRAPH <$C> { <$A2> <$(GI)hasMagnitude> <$(GROSS).0> } } ;
