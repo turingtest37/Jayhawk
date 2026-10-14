@@ -468,9 +468,9 @@ sparql_integration.jl:317-366, is the natural regression). Files: `src/harness.j
   - *Until then* an aggregating rule must be refused by name, not left to fail on an unbound
     variable: today `jhp:hasAggregation` is silently ignored, and a rule whose R does not
     happen to read the total would run as if it had none.
-  - *Proof.* `GraphFuncCobol/tools/jayhawk_check.py` expects R04, R06 and R08 refused; with
-    this done it should expect all nine to reproduce `patterns.py`, and
-    `harness/differential_test.py` can then drive Jayhawk against the real COBOL.
+  - *Proof.* `GraphFuncCobol/examples/efita3b8/jayhawk/jayhawk_check.py` expects R04, R06 and
+    R08 refused; with this done it should expect all nine to reproduce `patterns.py`, and the
+    example's `harness/differential_test.py` can then drive Jayhawk against the real COBOL.
 - **Item-at-a-time rule sets: `jhp:forEach`, `jhp:orderBy` (vocabulary landed, compiler
   not)** — a `jhp:RuleSet` whose `jhp:forEach` pattern is matched once, sorted by `jhp:orderBy`,
   and for each item runs the member rules in sequence with the item's variables bound by a
@@ -493,7 +493,7 @@ sparql_integration.jl:317-366, is the natural regression). Files: `src/harness.j
     is to `jhp:bindText`; compile it with the same tree emitter, as a `FILTER` after the
     bindings. New functions: `jhp:_Function_lessThanOrEqual`, `jhp:_Function_substring`
     (`SUBSTR`), and `jhp:_Function_lessThan` now also compares strings.
-  - *Proof.* GraphFuncCobol's `carddemo/` example (CardDemo's CBTRN02C, daily transaction
+  - *Proof.* GraphFuncCobol's `examples/carddemo/` example (CardDemo's CBTRN02C, daily transaction
     posting) needs all of it, and has a differential test against the real program.
 
 ## Verification (every round)
