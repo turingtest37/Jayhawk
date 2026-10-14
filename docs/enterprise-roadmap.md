@@ -446,6 +446,31 @@ sparql_integration.jl:317-366, is the natural regression). Files: `src/harness.j
   3's machinery plus a convergence contract.
 - **Write destination for compute rules** — no construct pattern to hang `jhp:inGraph` on;
   needs a vocabulary decision before promotion/undo-from-destination can apply.
+- **Expression trees and aggregation (vocabulary landed, compiler not)** — JayhawkPatterningDefinitions
+  now defines `jhp:bindExpression` (a binding's value as a tree: `jhp:function` over `jhp:args`,
+  functions `jhp:_Function_add` … `_roundHalfAwayFromZero`) and `jhp:hasAggregation`
+  (`jhp:aggregateFunction` sum/count/min/max/avg, `jhp:aggregatesVariable`,
+  `jhp:bindsVariable`), with shapes in JayhawkPatternShapes. Jayhawk compiles neither.
+  Deferred because the first user, GraphFuncCobol's EFITA3B8 rules, runs on a Python reference
+  compiler and feeds Jayhawk a generated copy with each tree written out as `jhp:bindText`.
+  What the work is:
+  - *Trees.* In `compile.jl` beside `P_BINDTEXT`: read `jhp:bindExpression`, refuse a binding
+    with both or neither, emit SPARQL per function (`_roundHalfAwayFromZero` is
+    `IF(x < 0, -ROUND(-x), ROUND(x))`, not `ROUND`), check arity and that every IRI argument is
+    a declared variable, and feed the tree's variables to `ordered_bindings` so dependency
+    order and cycle refusal work unchanged.
+  - *Aggregation.* Wrap `where_body` in `{ SELECT ?g… (AGG(?x) AS ?y) WHERE { L, NACs } GROUP BY
+    ?g… }`, grouping by every variable R, a binding or a mint slot reads that L binds, minus the
+    folded ones; bindings and mints go outside the subquery. Refuse a folded variable read after
+    the fold, `jhp:_RewriteMode_rewrite`, and `ToFixpoint` on the rule or on a set containing it
+    (a fold is not monotone). Watch the default: Jayhawk runs Assert to a fixpoint unless told
+    otherwise, which is why the shapes require `jhp:strategy jhp:Once` on an aggregating rule.
+  - *Until then* an aggregating rule must be refused by name, not left to fail on an unbound
+    variable: today `jhp:hasAggregation` is silently ignored, and a rule whose R does not
+    happen to read the total would run as if it had none.
+  - *Proof.* `GraphFuncCobol/tools/jayhawk_check.py` expects R04, R06 and R08 refused; with
+    this done it should expect all nine to reproduce `patterns.py`, and
+    `harness/differential_test.py` can then drive Jayhawk against the real COBOL.
 
 ## Verification (every round)
 
