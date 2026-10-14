@@ -471,6 +471,30 @@ sparql_integration.jl:317-366, is the natural regression). Files: `src/harness.j
   - *Proof.* `GraphFuncCobol/tools/jayhawk_check.py` expects R04, R06 and R08 refused; with
     this done it should expect all nine to reproduce `patterns.py`, and
     `harness/differential_test.py` can then drive Jayhawk against the real COBOL.
+- **Item-at-a-time rule sets: `jhp:forEach`, `jhp:orderBy` (vocabulary landed, compiler
+  not)** — a `jhp:RuleSet` whose `jhp:forEach` pattern is matched once, sorted by `jhp:orderBy`,
+  and for each item runs the member rules in sequence with the item's variables bound by a
+  `VALUES` clause, each item seeing what the previous ones changed. This is the one thing a
+  whole-set pass or a fixpoint cannot do: a running total checked against a limit, first come
+  first served. Same deferral as above; the reference implementation is `RuleBase.items` and
+  `_pass_items` in GraphFuncCobol's `compiler/patterns.py`.
+  - *Harness.* `run_rules` today makes one pass over a set (or `ToFixpoint` passes). Add the item
+    loop around it: one `SELECT DISTINCT` over the item pattern with `ORDER BY`, refuse a tie
+    (two items equal on every key) and a key mixing kinds, then per item per member, splice
+    `VALUES` into the member's `WHERE` (`where_body` already emits `VALUES` for `gistp:oneOf`).
+    Each member firing is its own firing graph, so undo stays per firing; consider grouping a
+    whole item's firings under one ordinal so "undo this item" is one operation.
+  - *Refuse* a member that mentions none of the item's variables (it would run against the
+    whole graph once per item), and an `orderBy` variable the item pattern does not bind.
+  - *Cost.* N items × M members queries. Fine for a day's postings; for millions of items the
+    fix is to partition by an independent key (each account's transactions only interact with
+    each other) and run partitions in parallel, which needs the order to be declared per key.
+  - *Tree-form filters.* `jhp:filterExpression` is to `jhp:filterText` what `jhp:bindExpression`
+    is to `jhp:bindText`; compile it with the same tree emitter, as a `FILTER` after the
+    bindings. New functions: `jhp:_Function_lessThanOrEqual`, `jhp:_Function_substring`
+    (`SUBSTR`), and `jhp:_Function_lessThan` now also compares strings.
+  - *Proof.* GraphFuncCobol's `carddemo/` example (CardDemo's CBTRN02C, daily transaction
+    posting) needs all of it, and has a differential test against the real program.
 
 ## Verification (every round)
 
